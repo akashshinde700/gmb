@@ -13,31 +13,34 @@ function delegate(type: ContentType) {
 }
 
 export function sanitize(type: ContentType, body: Record<string, unknown>) {
+  // image/url fields may hold canvas-downscaled dataURLs (~2.5MB encoded)
   const s = (k: string, max = 4000) => (body[k] === undefined ? undefined : String(body[k]).slice(0, max));
+  const img = (k: string) => (body[k] === undefined ? undefined : String(body[k]).slice(0, 2_600_000));
   const n = (k: string) => (body[k] === undefined || body[k] === null || body[k] === "" ? null : Number(body[k]));
   const b = (k: string) => (body[k] === undefined ? undefined : Boolean(body[k]));
 
   switch (type) {
     case "services": return {
-      name: s("name", 150), description: s("description", 3000), image: s("image", 1000),
+      name: s("name", 150), description: s("description", 3000), image: img("image"),
       icon: s("icon", 50), price: s("price", 60), featured: b("featured"),
       sortOrder: body.sortOrder === undefined ? undefined : Number(body.sortOrder),
     };
     case "products": return {
       name: s("name", 150), sku: s("sku", 60), category: s("category", 100),
       shortDesc: s("shortDesc", 300), description: s("description", 4000),
-      price: n("price"), salePrice: n("salePrice"), image: s("image", 1000),
+      price: n("price"), salePrice: n("salePrice"), image: img("image"),
+      videoUrl: s("videoUrl", 1000),
       hidePrice: b("hidePrice"), featured: b("featured"),
       sortOrder: body.sortOrder === undefined ? undefined : Number(body.sortOrder),
     };
     case "gallery": return {
-      url: s("url", 1000), caption: s("caption", 200), alt: s("alt", 200),
+      url: img("url"), caption: s("caption", 200), alt: s("alt", 200),
       sortOrder: body.sortOrder === undefined ? undefined : Number(body.sortOrder),
     };
     case "testimonials": return {
       name: s("name", 100), role: s("role", 100), content: s("content", 1500),
       rating: body.rating === undefined ? undefined : Math.min(5, Math.max(1, Number(body.rating))),
-      avatar: s("avatar", 1000),
+      avatar: img("avatar"),
       sortOrder: body.sortOrder === undefined ? undefined : Number(body.sortOrder),
     };
     case "faqs": return {
@@ -46,7 +49,7 @@ export function sanitize(type: ContentType, body: Record<string, unknown>) {
     };
     case "blog": return {
       title: s("title", 200), excerpt: s("excerpt", 400), content: s("content", 50000),
-      cover: s("cover", 1000), author: s("author", 100), category: s("category", 100),
+      cover: img("cover"), author: s("author", 100), category: s("category", 100),
       tags: s("tags", 300),
       published: b("published"),
       slug: body.slug === undefined ? undefined : String(body.slug).toLowerCase().replace(/[^a-z0-9\s-]/g, "").replace(/\s+/g, "-").slice(0, 150),

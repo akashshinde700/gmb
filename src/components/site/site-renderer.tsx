@@ -10,7 +10,7 @@ import { api } from "@/lib/api-client";
 import type { SitePayload, SiteSection, SiteTheme } from "@/lib/types";
 import {
   Hero, Stats, About, Services, Products, WhyUs, Gallery, Testimonials,
-  FaqSection, CtaBanner, Hours, Contact,
+  FaqSection, CtaBanner, Payment, Hours, Contact,
 } from "@/components/site/sections";
 
 export type Device = "desktop" | "tablet" | "mobile";
@@ -93,11 +93,13 @@ export default function SiteRenderer({ payload, mode = "live", device = "desktop
 
   const waNumber = (business.whatsapp || business.phone || "").replace(/[^\d]/g, "");
   const containerWidth = website.theme?.containerWidth === "wide" ? "max-w-7xl" : "max-w-6xl";
+  const hasPayment = Boolean(business.upiId || business.paymentQrUrl);
   const navLinks = sections
-    .filter((s) => ["services", "products", "gallery", "testimonials", "faq", "contact", "about"].includes(s.type))
+    .filter((s) => ["services", "products", "gallery", "testimonials", "faq", "payment", "contact", "about"].includes(s.type))
+    .filter((s) => s.type !== "payment" || hasPayment)
     .map((s) => ({
       href: `#${s.type === "about" ? "top" : s.type}`,
-      label: s.type === "whyUs" ? "Why Us" : s.type.charAt(0).toUpperCase() + s.type.slice(1),
+      label: s.type === "whyUs" ? "Why Us" : s.type === "payment" ? "Pay Now" : s.type.charAt(0).toUpperCase() + s.type.slice(1),
     }));
 
   const deviceWidth = device === "mobile" ? "max-w-[420px]" : device === "tablet" ? "max-w-[820px]" : "max-w-full";
@@ -273,6 +275,7 @@ function renderSection(
     case "testimonials": return <Testimonials key={section.id} section={section} testimonials={ctx.testimonials} />;
     case "faq": return <FaqSection key={section.id} section={section} />;
     case "cta": return <CtaBanner key={section.id} section={section} business={ctx.business} onCta={ctx.track} />;
+    case "payment": return <Payment key={section.id} section={section} business={ctx.business} onCta={ctx.track} />;
     case "hours": return <Hours key={section.id} section={section} business={ctx.business} />;
     case "contact": return <Contact key={section.id} section={section} business={ctx.business} onCta={ctx.track} submitLead={ctx.submitLead} />;
     default: return null;

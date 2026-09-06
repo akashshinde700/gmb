@@ -13,7 +13,7 @@ export async function GET(req: Request) {
     },
   });
 
-  let serialized = null;
+  let serialized: Record<string, unknown> | null = null;
   if (business) {
     const { serializeBusiness, serializeWebsite, serializeSub } = await import("@/lib/serialize");
     serialized = {

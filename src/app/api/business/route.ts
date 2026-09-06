@@ -17,13 +17,15 @@ export async function PUT(req: Request) {
   if (!business) return fail("No business found. Complete onboarding first.", 404);
 
   const body = (await req.json()) as Record<string, unknown>;
-  const str = (key: string, max = 2000) =>
+  // dataURL uploads (logo/cover/QR) can be large — allow up to ~2.5MB encoded
+  const str = (key: string, max = 2_600_000) =>
     body[key] === undefined ? undefined : String(body[key]).slice(0, max).trim();
 
   const data: Record<string, string> = {};
   const fields = ["name", "tagline", "description", "ownerName", "phone", "whatsapp", "email",
     "address", "city", "state", "pincode", "establishedYear", "gstin", "logoUrl", "coverUrl",
-    "brandPrimary", "brandSecondary", "brandAccent", "templateId", "gmbUrl", "mapsUrl", "placeId"];
+    "brandPrimary", "brandSecondary", "brandAccent", "templateId", "gmbUrl", "mapsUrl", "placeId",
+    "upiId", "paymentQrUrl"];
   for (const f of fields) {
     const v = str(f);
     if (v !== undefined) data[f] = v;

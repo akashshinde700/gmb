@@ -4,12 +4,13 @@
 // leads, seo, analytics, subscription, settings. All data via api client.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  AlertCircle, ArrowLeft, BarChart3, Bell, Briefcase, Building2, CheckCircle2,
-  ChevronDown, ChevronUp, Clock, CreditCard, Download, ExternalLink, Eye, EyeOff,
-  Globe, GripVertical, HelpCircle, Image as ImageIcon, Inbox, Info, LayoutDashboard,
-  LayoutTemplate, Loader2, LogOut, Mail, MapPin, Menu, MessageCircle, Monitor,
-  Newspaper, Package, Pencil, Phone, Plus, Quote, Rocket, Save, Search, Settings,
-  ShieldCheck, Smartphone, Sparkles, Star, Tablet, Trash2, TrendingUp, Users, XCircle,
+  AlertCircle, ArrowLeft, BarChart3, Bell, Briefcase, Building2, Check, CheckCircle2,
+  ChevronDown, ChevronUp, Clock, Copy, CreditCard, Download, ExternalLink, Eye, EyeOff,
+  Globe, GripVertical, HelpCircle, Image as ImageIcon, ImagePlus, Inbox, Info, LayoutDashboard,
+  LayoutTemplate, Link2, Loader2, LogOut, Mail, MapPin, Menu, MessageCircle, Monitor,
+  Newspaper, Package, Palette, Pencil, Phone, Play, Plus, QrCode, Quote, Rocket, Save, Search, Settings,
+  ShieldCheck, Smartphone, Sparkles, Star, Tablet, Trash2, TrendingUp, Upload, Users, XCircle,
+  Youtube,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import {
@@ -20,6 +21,9 @@ import { useApp } from "@/store/app-store";
 import type { BusinessWithMeta, DashboardTab } from "@/store/app-store";
 import { computeHealth } from "@/lib/health";
 import { DEFAULT_THEME, SECTION_LIBRARY } from "@/lib/sections";
+import { BRAND_PALETTES } from "@/lib/palettes";
+import { isValidUpiId, upiDeepLink, youtubeId } from "@/lib/site-utils";
+import QRCode from "react-qr-code";
 import type {
   AnalyticsSummary, BlogPost, Business, Faq, GalleryItem, Lead,
   LeadStatus, Plan, Product, Service, SitePayload, SiteSection, SiteTheme, Testimonial, WebsiteData,
@@ -913,6 +917,12 @@ function defaultSectionContent(type: string, name: string): Rec {
       return { title: "Frequently Asked Questions", items: [] };
     case "cta":
       return { title: "Ready to get started?", subtitle: "Call, WhatsApp or send an enquiry — we respond fast.", primary: "Call Now", secondary: "WhatsApp Us" };
+    case "payment":
+      return {
+        title: "Scan & Pay",
+        subtitle: "Pay securely via UPI — scan the QR or tap the button below.",
+        note: "After payment, share the screenshot on WhatsApp for confirmation.",
+      };
     case "contact":
       return { title: "Contact Us", subtitle: "Send an enquiry and we will get back to you within 24 hours.", mapUrl: "" };
     case "hours":
@@ -1142,6 +1152,9 @@ function BuilderTab({ business, content }: { business: BusinessWithMeta; content
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => void publish()} disabled={publishing}>
+                <Rocket className="h-4 w-4" /> {dirty ? "Publish changes" : "Re-publish"}
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={() => openSite(business.slug, "dashboard")}>
                 <ExternalLink className="h-4 w-4" /> View live site
               </DropdownMenuItem>
@@ -1312,13 +1325,13 @@ function ThemePanel({ theme, setTheme, onUpdateBrand, business }: {
   const [open, setOpen] = useState(false);
   const set = (k: keyof SiteTheme, v: string) => setTheme({ ...theme, [k]: v } as SiteTheme);
 
-  const presets: { name: string; colors: [string, string, string] }[] = [
-    { name: "Emerald", colors: ["#059669", "#064e3b", "#f59e0b"] },
-    { name: "Teal", colors: ["#0d9488", "#134e4a", "#f59e0b"] },
-    { name: "Warm", colors: ["#d97706", "#78350f", "#f59e0b"] },
-    { name: "Rose", colors: ["#e11d48", "#4c0519", "#f59e0b"] },
-    { name: "Slate", colors: ["#3f3f46", "#18181b", "#f59e0b"] },
-  ];
+  // active palette = one whose colors match the current brand colors exactly
+  const activePalette = BRAND_PALETTES.find(
+    (p) =>
+      p.colors[0].toLowerCase() === (business.brandPrimary || "").toLowerCase() &&
+      p.colors[1].toLowerCase() === (business.brandSecondary || "").toLowerCase() &&
+      p.colors[2].toLowerCase() === (business.brandAccent || "").toLowerCase(),
+  );
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
@@ -1385,49 +1398,71 @@ function ThemePanel({ theme, setTheme, onUpdateBrand, business }: {
           </div>
           <Separator />
           <div>
-            <p className="mb-2 text-xs font-medium text-zinc-600">Brand colors</p>
-            <div className="mb-3 flex flex-wrap gap-2">
-              {presets.map((p) => (
-                <button
-                  key={p.name}
-                  type="button"
-                  title={p.name}
-                  aria-label={`Apply ${p.name} palette`}
-                  onClick={() => {
-                    onUpdateBrand("brandPrimary", p.colors[0]);
-                    onUpdateBrand("brandSecondary", p.colors[1]);
-                    onUpdateBrand("brandAccent", p.colors[2]);
-                  }}
-                  className="flex h-8 w-14 overflow-hidden rounded-lg border shadow-sm transition hover:scale-105"
-                >
-                  <span className="h-full flex-1" style={{ background: p.colors[0] }} />
-                  <span className="h-full flex-1" style={{ background: p.colors[1] }} />
-                  <span className="h-full flex-1" style={{ background: p.colors[2] }} />
-                </button>
-              ))}
+            <p className="mb-2 flex items-center gap-1.5 text-xs font-medium text-zinc-600">
+              <Palette className="h-3.5 w-3.5 text-amber-500" /> Color palettes
+              {activePalette && (
+                <span className="ml-auto rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+                  {activePalette.name}
+                </span>
+              )}
+            </p>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {BRAND_PALETTES.map((p) => {
+                const active = activePalette?.name === p.name;
+                return (
+                  <button
+                    key={p.name}
+                    type="button"
+                    aria-label={`Apply ${p.name} palette`}
+                    aria-pressed={active}
+                    onClick={() => {
+                      onUpdateBrand("brandPrimary", p.colors[0]);
+                      onUpdateBrand("brandSecondary", p.colors[1]);
+                      onUpdateBrand("brandAccent", p.colors[2]);
+                    }}
+                    className={cn(
+                      "group flex items-center gap-2 rounded-xl border bg-white p-2 text-left transition hover:border-emerald-300 hover:shadow-sm",
+                      active ? "border-emerald-500 ring-1 ring-emerald-500" : "border-zinc-200",
+                    )}
+                  >
+                    <span className="flex h-7 w-12 shrink-0 overflow-hidden rounded-md border shadow-sm">
+                      <span className="h-full flex-1" style={{ background: p.colors[0] }} />
+                      <span className="h-full flex-1" style={{ background: p.colors[1] }} />
+                      <span className="h-full flex-1" style={{ background: p.colors[2] }} />
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block truncate text-[11px] font-semibold text-zinc-800">{p.name}</span>
+                      <span className="block truncate text-[10px] text-zinc-400">{p.mood}</span>
+                    </span>
+                  </button>
+                );
+              })}
             </div>
-            <div className="grid grid-cols-3 gap-2">
-              {([
-                { key: "brandPrimary" as const, label: "Primary" },
-                { key: "brandSecondary" as const, label: "Secondary" },
-                { key: "brandAccent" as const, label: "Accent" },
-              ]).map((c) => (
-                <label key={c.key} className="flex cursor-pointer flex-col items-center gap-1.5 rounded-xl border p-2 transition hover:border-emerald-300">
-                  <span
-                    className="h-8 w-full rounded-lg border"
-                    style={{ background: (business[c.key] as string) || "#059669" }}
-                  />
-                  <span className="text-[10px] font-medium text-zinc-500">{c.label}</span>
-                  <input
-                    type="color"
-                    value={(business[c.key] as string) || "#059669"}
-                    onChange={(e) => onUpdateBrand(c.key, e.target.value)}
-                    className="sr-only"
-                    aria-label={`${c.label} color picker`}
-                  />
-                </label>
-              ))}
-            </div>
+            <p className="mt-2 text-[11px] text-zinc-400">
+              One click applies the full palette to your live preview — or fine-tune each color below.
+            </p>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            {([
+              { key: "brandPrimary" as const, label: "Primary" },
+              { key: "brandSecondary" as const, label: "Secondary" },
+              { key: "brandAccent" as const, label: "Accent" },
+            ]).map((c) => (
+              <label key={c.key} className="flex cursor-pointer flex-col items-center gap-1.5 rounded-xl border p-2 transition hover:border-emerald-300">
+                <span
+                  className="h-8 w-full rounded-lg border"
+                  style={{ background: (business[c.key] as string) || "#059669" }}
+                />
+                <span className="text-[10px] font-medium text-zinc-500">{c.label}</span>
+                <input
+                  type="color"
+                  value={(business[c.key] as string) || "#059669"}
+                  onChange={(e) => onUpdateBrand(c.key, e.target.value)}
+                  className="sr-only"
+                  aria-label={`${c.label} color picker`}
+                />
+              </label>
+            ))}
           </div>
         </CollapsibleContent>
       </Card>
@@ -1611,6 +1646,24 @@ function SectionEditor({ section, onSave, onCancel }: {
             {strField("secondary", "Secondary button")}
           </>
         )}
+        {section.type === "payment" && (
+          <>
+            {strField("title", "Title", "Scan & Pay")}
+            <Labeled label="Subtitle">
+              <Textarea value={String(c.subtitle ?? "")} rows={2} className="rounded-xl" onChange={(e) => set("subtitle", e.target.value)} />
+            </Labeled>
+            <Labeled label="Note under the QR">
+              <Textarea value={String(c.note ?? "")} rows={2} className="rounded-xl" placeholder="After payment, share the screenshot on WhatsApp…" onChange={(e) => set("note", e.target.value)} />
+            </Labeled>
+            <Alert className="rounded-xl border-emerald-200 bg-emerald-50">
+              <QrCode className="h-4 w-4 text-emerald-600" />
+              <AlertTitle className="text-sm text-emerald-900">QR code comes from your business profile</AlertTitle>
+              <AlertDescription className="text-xs text-emerald-800">
+                Add your UPI ID or upload your QR image in <strong>Business → Payments &amp; QR</strong>. Visitors see this section only after you set that up.
+              </AlertDescription>
+            </Alert>
+          </>
+        )}
         {section.type === "contact" && (
           <>
             {strField("title", "Title")}
@@ -1664,6 +1717,7 @@ function BusinessTab({ business }: { business: BusinessWithMeta }) {
     email: business.email, address: business.address, city: business.city, state: business.state,
     pincode: business.pincode, establishedYear: business.establishedYear, gstin: business.gstin,
     logoUrl: business.logoUrl, coverUrl: business.coverUrl, gmbUrl: business.gmbUrl, mapsUrl: business.mapsUrl,
+    upiId: business.upiId ?? "", paymentQrUrl: business.paymentQrUrl ?? "",
   });
   const [hours, setHours] = useState<Rec>(() => {
     const stored = (business.hours ?? {}) as Rec;
@@ -1730,31 +1784,84 @@ function BusinessTab({ business }: { business: BusinessWithMeta }) {
           <Card className="rounded-2xl p-6">
             <h2 className="mb-4 text-sm font-bold uppercase tracking-wider text-zinc-400">Images &amp; Google</h2>
             <div className="space-y-4">
-              {([
-                { key: "logoUrl" as const, label: "Logo URL" },
-                { key: "coverUrl" as const, label: "Cover image URL" },
-              ]).map((f) => (
-                <div key={f.key} className="flex items-end gap-3">
-                  {form[f.key] ? (
-                    <img src={form[f.key]} alt={`${f.label} preview`} className="h-14 w-14 shrink-0 rounded-xl border object-cover" />
-                  ) : (
-                    <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border border-dashed bg-zinc-50 text-zinc-300">
-                      <ImageIcon className="h-5 w-5" />
-                    </span>
-                  )}
-                  <div className="flex-1">
-                    <Labeled label={f.label} hint="Paste an image URL (hosted or from your gallery)">
-                      <Input className="rounded-xl" value={form[f.key]} onChange={(e) => setF(f.key, e.target.value)} placeholder="https://…" />
-                    </Labeled>
-                  </div>
-                </div>
-              ))}
+              <ImageInput
+                label="Business logo"
+                value={form.logoUrl}
+                onChange={(v) => setF("logoUrl", v)}
+                hint="Square logo works best — shown in your website header & footer."
+                maxWidth={480}
+                square
+              />
+              <ImageInput
+                label="Cover image"
+                value={form.coverUrl}
+                onChange={(v) => setF("coverUrl", v)}
+                hint="Wide photo of your shop, team or work — used in the hero & about sections."
+                maxWidth={1400}
+              />
               <Labeled label="Google Business Profile URL" hint="Link your GMB listing for local SEO">
                 <Input className="rounded-xl" value={form.gmbUrl} onChange={(e) => setF("gmbUrl", e.target.value)} placeholder="https://business.google.com/…" />
               </Labeled>
               <Labeled label="Google Maps URL">
                 <Input className="rounded-xl" value={form.mapsUrl} onChange={(e) => setF("mapsUrl", e.target.value)} placeholder="https://maps.app.goo.gl/…" />
               </Labeled>
+            </div>
+          </Card>
+
+          <Card className="rounded-2xl p-6">
+            <h2 className="mb-1 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-zinc-400">
+              <QrCode className="h-4 w-4 text-emerald-600" /> Payments &amp; QR code
+            </h2>
+            <p className="mb-4 text-xs text-zinc-500">
+              Let customers pay you directly — a <strong>Scan &amp; Pay</strong> section with your QR + UPI ID appears on your website.
+            </p>
+            <div className="grid gap-5 sm:grid-cols-[auto_1fr] sm:items-start">
+              {/* live QR preview */}
+              <div className="mx-auto w-fit rounded-2xl border-2 border-emerald-100 bg-white p-3 shadow-sm">
+                {form.upiId && isValidUpiId(form.upiId) && !form.paymentQrUrl ? (
+                  <QRCode value={upiDeepLink(form.upiId, form.name, "Website payment")} size={132} bgColor="#ffffff" fgColor="#134e4a" />
+                ) : form.paymentQrUrl ? (
+                  <img src={form.paymentQrUrl} alt="Payment QR preview" className="h-[132px] w-[132px] object-contain" />
+                ) : (
+                  <div className="flex h-[132px] w-[132px] flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed border-zinc-200 text-zinc-300">
+                    <QrCode className="h-8 w-8" />
+                    <span className="text-[10px] font-medium">QR preview</span>
+                  </div>
+                )}
+                <p className="mt-1.5 text-center text-[9px] font-bold uppercase tracking-widest text-zinc-400">Live preview</p>
+              </div>
+              <div className="space-y-4">
+                <Labeled
+                  label="UPI ID"
+                  hint={form.upiId && !isValidUpiId(form.upiId)
+                    ? "Looks invalid — format should be like name@okhdfcbank or shop@paytm"
+                    : "A QR is generated automatically from your UPI ID"}
+                >
+                  <Input
+                    className={cn("rounded-xl font-mono", form.upiId && !isValidUpiId(form.upiId) && "border-red-300 focus-visible:ring-red-200")}
+                    value={form.upiId}
+                    onChange={(e) => setF("upiId", e.target.value)}
+                    placeholder="yourname@okhdfcbank"
+                  />
+                </Labeled>
+                <ImageInput
+                  label="Your bank / GPay QR image (optional)"
+                  value={form.paymentQrUrl}
+                  onChange={(v) => setF("paymentQrUrl", v)}
+                  hint="Already have a printed QR from your bank or GPay? Upload it — it replaces the auto-generated QR."
+                  maxWidth={800}
+                  square
+                />
+                {form.upiId && isValidUpiId(form.upiId) && (
+                  <div className="flex items-start gap-2 rounded-xl bg-emerald-50 p-3 text-xs text-emerald-800">
+                    <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+                    <span>
+                      Visitors will see a <strong>Pay Now</strong> button that opens GPay/PhonePe/Paytm with your UPI ID
+                      pre-filled — plus the QR to scan.
+                    </span>
+                  </div>
+                )}
+              </div>
             </div>
           </Card>
 
@@ -1802,13 +1909,125 @@ function BusinessTab({ business }: { business: BusinessWithMeta }) {
   );
 }
 
+/* ------------------------------ image input --------------------------------- */
+
+/** File upload (canvas-downscaled dataURL) or pasted URL, with live preview. */
+function ImageInput({ label, value, onChange, hint, maxWidth = 1000, square = false }: {
+  label: string; value: string; onChange: (v: string) => void;
+  hint?: string; maxWidth?: number; square?: boolean;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  function pick(file: File) {
+    setErr(null);
+    if (!file.type.startsWith("image/")) {
+      setErr("Please choose an image file (JPG, PNG, WebP).");
+      return;
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      setErr("Image is too large — keep it under 8 MB.");
+      return;
+    }
+    setBusy(true);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const scale = Math.min(1, maxWidth / Math.max(img.width, img.height));
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.round(img.width * scale);
+          canvas.height = Math.round(img.height * scale);
+          const ctx = canvas.getContext("2d");
+          if (!ctx) throw new Error("canvas");
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          onChange(canvas.toDataURL("image/jpeg", 0.82));
+        } catch {
+          setErr("Could not process this image — try a different one.");
+        } finally {
+          setBusy(false);
+        }
+      };
+      img.onerror = () => { setErr("Could not read this image."); setBusy(false); };
+      img.src = String(reader.result);
+    };
+    reader.onerror = () => { setErr("Could not read the file."); setBusy(false); };
+    reader.readAsDataURL(file);
+  }
+
+  return (
+    <div>
+      <Label className="text-xs font-medium text-zinc-600">{label}</Label>
+      <div className="mt-1.5 flex items-start gap-3">
+        {value ? (
+          <div className="relative shrink-0">
+            <img
+              src={value}
+              alt={`${label} preview`}
+              className={cn("rounded-xl border object-cover", square ? "h-20 w-20" : "h-20 w-32")}
+            />
+            <button
+              type="button"
+              aria-label="Remove image"
+              onClick={() => onChange("")}
+              className="absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full bg-zinc-900 text-white shadow transition hover:bg-red-600"
+            >
+              <XCircle className="h-4 w-4" />
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            aria-label={`Upload ${label}`}
+            className={cn(
+              "flex shrink-0 flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed border-zinc-300 bg-zinc-50 text-zinc-400 transition hover:border-emerald-400 hover:text-emerald-600",
+              square ? "h-20 w-20" : "h-20 w-32",
+            )}
+          >
+            {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : <ImagePlus className="h-5 w-5" />}
+            <span className="text-[10px] font-medium">Upload</span>
+          </button>
+        )}
+        <div className="min-w-0 flex-1 space-y-1.5">
+          <div className="relative">
+            <Link2 className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+            <Input
+              className="rounded-xl pl-8"
+              value={value.startsWith("data:") ? "" : value}
+              placeholder="or paste image URL (https://…)"
+              onChange={(e) => onChange(e.target.value)}
+            />
+          </div>
+          <p className="text-[11px] leading-snug text-zinc-400">
+            {err ? <span className="font-medium text-red-600">{err}</span> : hint || "Upload from your phone/computer, or paste a hosted URL."}
+          </p>
+        </div>
+      </div>
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        className="sr-only"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) pick(f);
+          e.target.value = "";
+        }}
+      />
+    </div>
+  );
+}
+
 /* ========================= 4. CONTENT CRUD (x6 types) ======================= */
 
 type CrudType = "services" | "products" | "gallery" | "testimonials" | "faqs" | "blog";
 
 interface CrudField {
   key: string; label: string;
-  type: "text" | "textarea" | "number" | "switch" | "select";
+  type: "text" | "textarea" | "number" | "switch" | "select" | "image";
   options?: { value: string; label: string }[];
   placeholder?: string; required?: boolean; full?: boolean; hint?: string;
 }
@@ -1837,11 +2056,13 @@ const CRUD_CONFIG: Record<CrudType, CrudCfg> = {
       { key: "icon", label: "Icon", type: "select", options: SERVICE_ICON_OPTIONS },
       { key: "price", label: "Price label", type: "text", placeholder: "₹499 onwards" },
       { key: "description", label: "Description", type: "textarea", full: true, placeholder: "What is included, how long it takes…" },
+      { key: "image", label: "Service photo", type: "image", full: true, hint: "Shown at the top of the service card on your website" },
       { key: "featured", label: "Featured service", type: "switch" },
     ],
-    defaults: { name: "", icon: "zap", price: "", description: "", featured: false },
+    defaults: { name: "", icon: "zap", price: "", description: "", image: "", featured: false },
     rowTitle: (r) => String(r.name ?? ""),
     rowSub: (r) => truncate(String(r.description ?? ""), 140),
+    rowThumb: (r) => String(r.image ?? ""),
     rowBadges: (r) => (
       <>
         {r.featured ? <Badge className="border-amber-200 bg-amber-100 text-amber-800"><Star className="h-3 w-3" /> Featured</Badge> : null}
@@ -1861,14 +2082,18 @@ const CRUD_CONFIG: Record<CrudType, CrudCfg> = {
       { key: "salePrice", label: "Sale price (₹)", type: "number", placeholder: "Optional" },
       { key: "shortDesc", label: "Short description", type: "text", full: true, placeholder: "One line shown on the card" },
       { key: "description", label: "Full description", type: "textarea", full: true },
+      { key: "image", label: "Product photo", type: "image", full: true, hint: "Upload a clear photo — shown on your website catalogue" },
+      { key: "videoUrl", label: "YouTube video link", type: "text", full: true, hint: "Paste a YouTube link (watch, youtu.be or shorts) — a play button appears on the product card" },
       { key: "hidePrice", label: "Hide price (enquire only)", type: "switch" },
       { key: "featured", label: "Featured product", type: "switch" },
     ],
-    defaults: { name: "", sku: "", category: "", price: "", salePrice: "", shortDesc: "", description: "", hidePrice: false, featured: false },
+    defaults: { name: "", sku: "", category: "", price: "", salePrice: "", shortDesc: "", description: "", image: "", videoUrl: "", hidePrice: false, featured: false },
     rowTitle: (r) => String(r.name ?? ""),
     rowSub: (r) => truncate(String(r.shortDesc || r.description || ""), 140),
+    rowThumb: (r) => String(r.image ?? ""),
     rowBadges: (r) => (
       <>
+        {r.videoUrl && youtubeId(String(r.videoUrl)) ? <Badge className="border-red-200 bg-red-50 text-red-700"><Youtube className="h-3 w-3" /> Video</Badge> : null}
         {r.hidePrice ? <Badge variant="outline">Price hidden</Badge>
           : r.salePrice ? <Badge className="border-emerald-200 bg-emerald-100 text-emerald-700">{rupee(Number(r.salePrice))}</Badge>
           : r.price ? <Badge variant="outline">{rupee(Number(r.price))}</Badge> : null}
@@ -1881,7 +2106,7 @@ const CRUD_CONFIG: Record<CrudType, CrudCfg> = {
     empty: "No photos yet — showcase your work",
     emptyHint: "Real photos of your work build trust. Add 4–8 of your best ones.",
     fields: [
-      { key: "url", label: "Image URL", type: "text", required: true, full: true, placeholder: "https://…" },
+      { key: "url", label: "Photo", type: "image", required: true, full: true },
       { key: "caption", label: "Caption", type: "text", placeholder: "Office wiring project, Baner" },
       { key: "alt", label: "Alt text (SEO)", type: "text", placeholder: "Describe the photo for Google" },
     ],
@@ -1930,7 +2155,7 @@ const CRUD_CONFIG: Record<CrudType, CrudCfg> = {
       { key: "slug", label: "URL slug", type: "text", full: true, hint: "Auto-filled from title — edit if you like" },
       { key: "category", label: "Category", type: "text" },
       { key: "tags", label: "Tags", type: "text", placeholder: "tips, wiring, safety" },
-      { key: "cover", label: "Cover image URL", type: "text", full: true, placeholder: "https://…" },
+      { key: "cover", label: "Cover image", type: "image", full: true },
       { key: "excerpt", label: "Excerpt", type: "textarea", full: true, placeholder: "1–2 line summary shown in lists" },
       { key: "content", label: "Content", type: "textarea", full: true },
       { key: "published", label: "Published", type: "switch" },
@@ -2109,6 +2334,8 @@ function CrudDialog({ type, open, onOpenChange, editing, onSaved }: {
                   <Label className="text-xs font-medium text-zinc-600">{f.label}</Label>
                   <Switch checked={Boolean(form[f.key])} onCheckedChange={(v) => setF(f.key, v)} />
                 </div>
+              ) : f.type === "image" ? (
+                <ImageInput label={f.label} value={String(form[f.key] ?? "")} onChange={(v) => setF(f.key, v)} hint={f.hint} />
               ) : f.type === "select" ? (
                 <Labeled label={f.label}>
                   <Select value={String(form[f.key] ?? "")} onValueChange={(v) => setF(f.key, v)}>

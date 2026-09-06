@@ -5,8 +5,11 @@ import {
   Zap, Factory, Wrench, Sun, Coffee, Pizza, EggFried, PartyPopper, Sparkles,
   Briefcase, Package, Heart, Star, Quote, Phone, Mail, MapPin, Clock, ChevronDown,
   MessageCircle, Send, Loader2, CheckCircle2, Shield, Award, Users,
+  Play, X, Copy, Check, QrCode as QrIcon, Youtube,
 } from "lucide-react";
+import QRCode from "react-qr-code";
 import type { Business, Service, Product, SiteSection, Testimonial, GalleryItem } from "@/lib/types";
+import { upiDeepLink, youtubeId } from "@/lib/site-utils";
 
 const ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   zap: Zap, factory: Factory, wrench: Wrench, sun: Sun, coffee: Coffee, pizza: Pizza,
@@ -140,16 +143,27 @@ function Services({ section, services, onCta }: { section: SiteSection; services
           {services.map((s) => {
             const Icon = ICONS[s.icon] || Sparkles;
             return (
-              <div key={s.id} className="group rounded-[var(--brand-radius-lg)] bg-white p-6 shadow-sm ring-1 ring-[var(--brand-border)] transition hover:shadow-lg hover:-translate-y-0.5">
-                <div className="flex h-12 w-12 items-center justify-center rounded-[var(--brand-radius)] bg-[var(--brand-primary)]/10 text-[var(--brand-primary)]">
-                  <Icon className="h-6 w-6" />
+              <div key={s.id} className="group overflow-hidden rounded-[var(--brand-radius-lg)] bg-white shadow-sm ring-1 ring-[var(--brand-border)] transition hover:shadow-lg hover:-translate-y-0.5">
+                {s.image ? (
+                  <div className="aspect-[16/9] overflow-hidden bg-[var(--brand-primary)]/10">
+                    { }
+                    <img src={s.image} alt={s.name} className="h-full w-full object-cover transition duration-300 group-hover:scale-105" />
+                  </div>
+                ) : (
+                  <div className="px-6 pt-6">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-[var(--brand-radius)] bg-[var(--brand-primary)]/10 text-[var(--brand-primary)]">
+                      <Icon className="h-6 w-6" />
+                    </div>
+                  </div>
+                )}
+                <div className="p-6">
+                  <h3 className="text-lg font-semibold text-[var(--brand-secondary)]">{s.name}</h3>
+                  <p className="mt-2 text-sm leading-relaxed text-[var(--brand-muted)]">{s.description}</p>
+                  {s.price && <p className="mt-3 text-sm font-semibold text-[var(--brand-primary)]">{s.price}</p>}
+                  <a href="#contact" onClick={() => onCta("CTA_CALL")} className="mt-4 inline-flex items-center gap-1 text-sm font-semibold text-[var(--brand-primary)] group-hover:gap-2 transition-all">
+                    Enquire Now <Send className="h-3.5 w-3.5" />
+                  </a>
                 </div>
-                <h3 className="mt-4 text-lg font-semibold text-[var(--brand-secondary)]">{s.name}</h3>
-                <p className="mt-2 text-sm leading-relaxed text-[var(--brand-muted)]">{s.description}</p>
-                {s.price && <p className="mt-3 text-sm font-semibold text-[var(--brand-primary)]">{s.price}</p>}
-                <a href="#contact" onClick={() => onCta("CTA_CALL")} className="mt-4 inline-flex items-center gap-1 text-sm font-semibold text-[var(--brand-primary)] group-hover:gap-2 transition-all">
-                  Enquire Now <Send className="h-3.5 w-3.5" />
-                </a>
               </div>
             );
           })}
@@ -162,6 +176,7 @@ function Services({ section, services, onCta }: { section: SiteSection; services
 // ---------- PRODUCTS ----------
 function Products({ section, products, onCta }: { section: SiteSection; products: Product[]; onCta: (t: string) => void }) {
   const c = section.content as { title?: string; subtitle?: string };
+  const [videoProduct, setVideoProduct] = useState<Product | null>(null);
   if (!products.length) return null;
   const fmt = (p: Product) =>
     p.hidePrice ? null : p.salePrice != null ? (
@@ -172,29 +187,82 @@ function Products({ section, products, onCta }: { section: SiteSection; products
       <div className="mx-auto max-w-6xl px-4 sm:px-6">
         <SectionTitle title={c.title || "Our Products"} subtitle={c.subtitle} />
         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-          {products.map((p) => (
-            <div key={p.id} className="flex flex-col overflow-hidden rounded-[var(--brand-radius-lg)] bg-white shadow-sm ring-1 ring-[var(--brand-border)] transition hover:shadow-lg">
-              <div className="aspect-[4/3] bg-[var(--brand-primary)]/10 flex items-center justify-center overflow-hidden">
-                {p.image ? (
-                   
-                  <img src={p.image} alt={p.name} className="h-full w-full object-cover" />
-                ) : (
-                  <Package className="h-10 w-10 text-[var(--brand-primary)]/50" />
-                )}
-              </div>
-              <div className="flex flex-1 flex-col p-4">
-                {p.category && <span className="text-xs font-medium uppercase tracking-wide text-[var(--brand-primary)]">{p.category}</span>}
-                <h3 className="mt-1 font-semibold text-[var(--brand-secondary)]">{p.name}</h3>
-                {p.shortDesc && <p className="mt-1 line-clamp-2 text-sm text-[var(--brand-muted)]">{p.shortDesc}</p>}
-                <div className="mt-3 flex items-center justify-between">
-                  <span className="text-base">{fmt(p) ?? <span className="text-sm font-semibold text-[var(--brand-primary)]">Enquire for price</span>}</span>
-                  <a href="#contact" onClick={() => onCta("CTA_CALL")} className="rounded-[var(--brand-radius)] bg-[var(--brand-primary)] px-3 py-1.5 text-xs font-semibold text-white hover:brightness-110 transition">Enquire</a>
+          {products.map((p) => {
+            const vid = p.videoUrl ? youtubeId(p.videoUrl) : null;
+            return (
+              <div key={p.id} className="flex flex-col overflow-hidden rounded-[var(--brand-radius-lg)] bg-white shadow-sm ring-1 ring-[var(--brand-border)] transition hover:shadow-lg">
+                <div className="relative aspect-[4/3] bg-[var(--brand-primary)]/10 flex items-center justify-center overflow-hidden">
+                  {p.image ? (
+                     
+                    <img src={p.image} alt={p.name} className="h-full w-full object-cover" />
+                  ) : (
+                    <Package className="h-10 w-10 text-[var(--brand-primary)]/50" />
+                  )}
+                  {vid && (
+                    <button
+                      type="button"
+                      onClick={() => setVideoProduct(p)}
+                      aria-label={`Watch video of ${p.name}`}
+                      className="group/btn absolute inset-0 flex items-center justify-center bg-black/0 transition hover:bg-black/25"
+                    >
+                      <span className="flex h-11 w-11 items-center justify-center rounded-full bg-black/60 text-white shadow-lg backdrop-blur transition group-hover/btn:scale-110">
+                        <Play className="h-5 w-5 fill-white" />
+                      </span>
+                    </button>
+                  )}
+                </div>
+                <div className="flex flex-1 flex-col p-4">
+                  {p.category && <span className="text-xs font-medium uppercase tracking-wide text-[var(--brand-primary)]">{p.category}</span>}
+                  <h3 className="mt-1 font-semibold text-[var(--brand-secondary)]">{p.name}</h3>
+                  {p.shortDesc && <p className="mt-1 line-clamp-2 text-sm text-[var(--brand-muted)]">{p.shortDesc}</p>}
+                  {vid && (
+                    <button
+                      type="button"
+                      onClick={() => setVideoProduct(p)}
+                      className="mt-2 inline-flex w-fit items-center gap-1.5 text-xs font-semibold text-red-600 hover:text-red-700"
+                    >
+                      <Youtube className="h-4 w-4" /> Watch video
+                    </button>
+                  )}
+                  <div className="mt-3 flex items-center justify-between">
+                    <span className="text-base">{fmt(p) ?? <span className="text-sm font-semibold text-[var(--brand-primary)]">Enquire for price</span>}</span>
+                    <a href="#contact" onClick={() => onCta("CTA_CALL")} className="rounded-[var(--brand-radius)] bg-[var(--brand-primary)] px-3 py-1.5 text-xs font-semibold text-white hover:brightness-110 transition">Enquire</a>
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
+      {videoProduct && youtubeId(videoProduct.videoUrl) && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Video of ${videoProduct.name}`}
+          onClick={() => setVideoProduct(null)}
+        >
+          <div className="relative w-full max-w-3xl" onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              onClick={() => setVideoProduct(null)}
+              aria-label="Close video"
+              className="absolute -top-10 right-0 flex h-8 w-8 items-center justify-center rounded-full bg-white/15 text-white transition hover:bg-white/30"
+            >
+              <X className="h-5 w-5" />
+            </button>
+            <div className="overflow-hidden rounded-xl shadow-2xl" style={{ aspectRatio: "16/9" }}>
+              <iframe
+                src={`https://www.youtube-nocookie.com/embed/${youtubeId(videoProduct.videoUrl)}?autoplay=1&rel=0`}
+                title={`Video of ${videoProduct.name}`}
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowFullScreen
+                className="h-full w-full border-0"
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
@@ -323,6 +391,78 @@ function CtaBanner({ section, business, onCta }: { section: SiteSection; busines
                 <span className="inline-flex items-center gap-2"><MessageCircle className="h-4 w-4" />{c.secondary || "WhatsApp Us"}</span>
               </a>
             )}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ---------- PAYMENT QR (Scan & Pay) ----------
+function Payment({ section, business, onCta }: { section: SiteSection; business: Business; onCta: (t: string) => void }) {
+  const c = section.content as { title?: string; subtitle?: string; note?: string };
+  const [copied, setCopied] = useState(false);
+  const upi = (business.upiId || "").trim();
+  const customQr = (business.paymentQrUrl || "").trim();
+  if (!upi && !customQr) return null; // nothing configured yet
+
+  const payLink = upi ? upiDeepLink(upi, business.name, "Website payment") : "";
+
+  async function copyUpi() {
+    if (!upi) return;
+    try {
+      await navigator.clipboard.writeText(upi);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch { /* clipboard unavailable */ }
+  }
+
+  return (
+    <section id="payment" className="bg-[var(--brand-surface)] py-16 md:py-20">
+      <div className="mx-auto max-w-4xl px-4 sm:px-6">
+        <SectionTitle title={c.title || "Scan & Pay"} subtitle={c.subtitle} />
+        <div className="mx-auto flex max-w-xl flex-col items-center gap-8 rounded-[var(--brand-radius-lg)] bg-white p-8 shadow-sm ring-1 ring-[var(--brand-border)] sm:flex-row sm:items-center">
+          {/* QR */}
+          <div className="shrink-0 rounded-[var(--brand-radius-lg)] border-2 border-[var(--brand-primary)]/20 bg-white p-3 shadow-sm">
+            {customQr ? (
+               
+              <img src={customQr} alt={`${business.name} payment QR code`} className="h-44 w-44 object-contain" />
+            ) : (
+              <QRCode value={payLink} size={176} bgColor="#ffffff" fgColor="var(--brand-secondary)" />
+            )}
+            <p className="mt-2 text-center text-[10px] font-semibold uppercase tracking-widest text-[var(--brand-muted)]">
+              UPI · QR Code
+            </p>
+          </div>
+          {/* Details */}
+          <div className="flex-1 text-center sm:text-left">
+            <p className="text-sm text-[var(--brand-muted)]">Pay to</p>
+            <p className="text-lg font-bold text-[var(--brand-secondary)]">{business.name}</p>
+            {upi && (
+              <button
+                type="button"
+                onClick={() => void copyUpi()}
+                className="mt-3 inline-flex items-center gap-2 rounded-[var(--brand-radius)] border border-[var(--brand-border)] bg-[var(--brand-surface)] px-3 py-2 text-sm font-semibold text-[var(--brand-body)] transition hover:border-[var(--brand-primary)]"
+                aria-label="Copy UPI ID"
+              >
+                <QrIcon className="h-4 w-4 text-[var(--brand-primary)]" />
+                <span className="font-mono">{upi}</span>
+                {copied ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4 text-[var(--brand-muted)]" />}
+              </button>
+            )}
+            {payLink && (
+              <div className="mt-4">
+                <a
+                  href={payLink}
+                  onClick={() => onCta("CTA_CALL")}
+                  className="inline-flex items-center justify-center gap-2 rounded-[var(--brand-radius)] bg-[var(--brand-primary)] px-6 py-3 text-sm font-semibold text-white shadow transition hover:brightness-110 active:scale-95"
+                >
+                  <QrIcon className="h-4 w-4" /> Pay via UPI app
+                </a>
+                <p className="mt-2 text-[11px] text-[var(--brand-muted)]">GPay · PhonePe · Paytm · BHIM — opens your UPI app</p>
+              </div>
+            )}
+            {c.note && <p className="mt-4 text-xs leading-relaxed text-[var(--brand-muted)]">{c.note}</p>}
           </div>
         </div>
       </div>
@@ -477,4 +617,4 @@ function Contact({ section, business, onCta, submitLead }: {
   );
 }
 
-export { Hero, Stats, About, Services, Products, WhyUs, Gallery, Testimonials, FaqSection, CtaBanner, Hours, Contact, SectionTitle, ICONS };
+export { Hero, Stats, About, Services, Products, WhyUs, Gallery, Testimonials, FaqSection, CtaBanner, Payment, Hours, Contact, SectionTitle, ICONS };

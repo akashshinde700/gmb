@@ -48,6 +48,8 @@ export interface Business {
   gmbUrl: string;
   mapsUrl: string;
   placeId: string;
+  upiId: string;
+  paymentQrUrl: string;
   hours: BusinessHours;
   socials: SocialLinks;
   status: BusinessStatus;
@@ -56,7 +58,7 @@ export interface Business {
 
 export type SectionType =
   | "hero" | "about" | "stats" | "services" | "products" | "whyUs"
-  | "gallery" | "testimonials" | "faq" | "cta" | "contact" | "hours";
+  | "gallery" | "testimonials" | "faq" | "cta" | "payment" | "contact" | "hours";
 
 export interface SiteSection {
   id: string;
@@ -91,7 +93,7 @@ export interface Service {
 
 export interface Product {
   id: string; name: string; sku: string; category: string; shortDesc: string; description: string;
-  price: number | null; salePrice: number | null; image: string; hidePrice: boolean; featured: boolean; sortOrder: number;
+  price: number | null; salePrice: number | null; image: string; videoUrl: string; hidePrice: boolean; featured: boolean; sortOrder: number;
 }
 
 export interface GalleryItem { id: string; url: string; caption: string; alt: string; sortOrder: number; }

@@ -9,7 +9,8 @@ type BizRow = {
   ownerName: string; phone: string; whatsapp: string; email: string; address: string; city: string;
   state: string; country: string; pincode: string; establishedYear: string; gstin: string; logoUrl: string;
   coverUrl: string; brandPrimary: string; brandSecondary: string; brandAccent: string; templateId: string;
-  gmbUrl: string; mapsUrl: string; placeId: string; hoursJson: string; socialsJson: string; status: string;
+  gmbUrl: string; mapsUrl: string; placeId: string; upiId: string; paymentQrUrl: string;
+  hoursJson: string; socialsJson: string; status: string;
   createdAt: Date;
 };
 
@@ -21,7 +22,7 @@ export function serializeBusiness(b: BizRow) {
     pincode: b.pincode, establishedYear: b.establishedYear, gstin: b.gstin, logoUrl: b.logoUrl,
     coverUrl: b.coverUrl, brandPrimary: b.brandPrimary, brandSecondary: b.brandSecondary,
     brandAccent: b.brandAccent, templateId: b.templateId, gmbUrl: b.gmbUrl, mapsUrl: b.mapsUrl,
-    placeId: b.placeId,
+    placeId: b.placeId, upiId: b.upiId, paymentQrUrl: b.paymentQrUrl,
     hours: parseJson<BusinessHours>(b.hoursJson, {}),
     socials: parseJson<SocialLinks>(b.socialsJson, {}),
     status: b.status, createdAt: b.createdAt.toISOString(),

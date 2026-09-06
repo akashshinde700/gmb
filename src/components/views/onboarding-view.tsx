@@ -29,6 +29,7 @@ import { useToast } from "@/hooks/use-toast";
 import { api, ApiError } from "@/lib/api-client";
 import { SECTION_LIBRARY } from "@/lib/sections";
 import type { AiSiteContent } from "@/lib/sections";
+import { BRAND_PALETTES } from "@/lib/palettes";
 import type { Plan, TemplateDef } from "@/lib/types";
 import { useApp } from "@/store/app-store";
 import type { BusinessWithMeta } from "@/store/app-store";
@@ -990,7 +991,44 @@ export default function OnboardingView() {
 
                 {/* Brand colors */}
                 <div className="space-y-4 rounded-2xl border border-zinc-200 p-4 sm:p-5">
-                  <p className="text-sm font-semibold text-zinc-800">Brand colors</p>
+                  <p className="flex items-center gap-1.5 text-sm font-semibold text-zinc-800">
+                    <Palette className="h-4 w-4 text-amber-500" aria-hidden="true" /> Color palette
+                  </p>
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    {BRAND_PALETTES.map((p) => {
+                      const active =
+                        p.colors[0].toLowerCase() === form.brandPrimary.toLowerCase() &&
+                        p.colors[1].toLowerCase() === form.brandSecondary.toLowerCase() &&
+                        p.colors[2].toLowerCase() === form.brandAccent.toLowerCase();
+                      return (
+                        <button
+                          key={p.name}
+                          type="button"
+                          aria-pressed={active}
+                          aria-label={`Use ${p.name} palette`}
+                          onClick={() => {
+                            setField("brandPrimary", p.colors[0]);
+                            setField("brandSecondary", p.colors[1]);
+                            setField("brandAccent", p.colors[2]);
+                          }}
+                          className={`flex items-center gap-2 rounded-xl border bg-white p-2 text-left transition hover:border-emerald-400 hover:shadow-sm ${
+                            active ? "border-emerald-500 ring-1 ring-emerald-500" : "border-zinc-200"
+                          }`}
+                        >
+                          <span className="flex h-7 w-9 shrink-0 overflow-hidden rounded-md border border-zinc-100">
+                            <span className="h-full flex-1" style={{ background: p.colors[0] }} />
+                            <span className="h-full flex-1" style={{ background: p.colors[1] }} />
+                            <span className="h-full flex-1" style={{ background: p.colors[2] }} />
+                          </span>
+                          <span className="min-w-0">
+                            <span className="block truncate text-[11px] font-semibold text-zinc-800">{p.name}</span>
+                            <span className="block truncate text-[10px] text-zinc-400">{p.mood}</span>
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="text-xs text-zinc-400">Pick a ready palette — or fine-tune each color below.</p>
                   <div className="grid gap-4 sm:grid-cols-3">
                     <ColorField
                       id="brand-primary"

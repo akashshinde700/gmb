@@ -14,6 +14,7 @@ export const SECTION_LIBRARY: {
   { type: "testimonials", name: "Testimonials", description: "Customer reviews & ratings", icon: "quote" },
   { type: "faq", name: "FAQ", description: "Answer engine optimized questions", icon: "help-circle" },
   { type: "cta", name: "CTA Banner", description: "Call / WhatsApp conversion banner", icon: "phone" },
+  { type: "payment", name: "Payment QR", description: "Scan & Pay with UPI — QR code + pay link", icon: "qr-code" },
   { type: "hours", name: "Business Hours", description: "Weekly opening hours", icon: "clock" },
   { type: "contact", name: "Contact & Map", description: "Enquiry form, map & details", icon: "map-pin" },
 ];
@@ -43,6 +44,8 @@ interface BuildInput {
     name: string; category: string; tagline: string; description: string; city: string;
     phone: string; whatsapp: string; email: string; address: string; establishedYear: string;
     brandPrimary: string; brandSecondary: string; brandAccent: string; coverUrl: string; mapsUrl: string;
+    upiId?: string; paymentQrUrl?: string;
+    state?: string; pincode?: string;
   };
   ai?: AiSiteContent | null;
 }
@@ -132,6 +135,14 @@ export function generateSite({ business, ai }: BuildInput): GeneratedSite {
         title: `Ready to work with ${business.name}?`,
         subtitle: "Get in touch today — call, WhatsApp or send an enquiry. We respond fast.",
         primary: "Call Now", secondary: "WhatsApp Us",
+      },
+    },
+    {
+      id: sid(), type: "payment", visible: true,
+      content: {
+        title: "Scan & Pay",
+        subtitle: `Pay securely via UPI — ${business.name}`,
+        note: "After payment, share the screenshot on WhatsApp for confirmation.",
       },
     },
     { id: sid(), type: "hours", visible: true, content: { title: "Business Hours" } },

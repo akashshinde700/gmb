@@ -52,6 +52,8 @@ model Business {
   gmbUrl          String   @default("")
   mapsUrl         String   @default("")
   placeId         String   @default("")
+  upiId           String   @default("")  // UPI VPA e.g. name@okicici — used for payment QR
+  paymentQrUrl    String   @default("")  // custom QR image (dataURL or hosted URL); auto-generated when empty
   hoursJson       String   @default("{}") // {mon:"9:00-18:00",...} + {days:[...]}
   socialsJson     String   @default("{}") // {facebook,instagram,youtube,linkedin,x,pinterest}
   status          String   @default("DRAFT") // DRAFT | PUBLISHED | SUSPENDED | EXPIRED | ARCHIVED
@@ -113,6 +115,7 @@ model Product {
   price       Float?
   salePrice   Float?
   image       String   @default("")
+  videoUrl    String   @default("") // YouTube link for the product demo/review
   hidePrice   Boolean  @default(false)
   featured    Boolean  @default(false)
   sortOrder   Int      @default(0)

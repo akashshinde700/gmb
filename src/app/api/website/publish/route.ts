@@ -4,6 +4,7 @@ import { computeHealth } from "@/lib/health";
 import { serializeWebsite } from "@/lib/serialize";
 import { parseJson } from "@/lib/sections";
 import type { SiteSection } from "@/lib/types";
+import type { Business } from "@prisma/client";
 
 /** POST /api/website/publish — validate & publish the tenant website */
 export async function POST(req: Request) {
@@ -63,7 +64,7 @@ export async function POST(req: Request) {
   return ok({ ...serializeWebsite(w), businessStatus: b.status, health });
 }
 
-function serializeBusinessLite(b: typeof business) {
+function serializeBusinessLite(b: Business) {
   return {
     ...b,
     hours: parseJson(b.hoursJson, {}), socials: parseJson(b.socialsJson, {}),
