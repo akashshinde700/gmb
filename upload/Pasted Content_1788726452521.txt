@@ -1,0 +1,2139 @@
+Bilkul. Aapka idea basically **“Website-as-a-Service (WaaS) + Local Business SaaS Platform”** hona chahiye—jahan kisi bhi business ko coding/developer ke bina aapke domain/platform se professional website mil sake.
+
+Neeche main aapke liye ek **complete master prompt** de raha hoon jo aap Cursor / Claude Code / Lovable / Bolt / AI coding agent ko de sakte ho.
+
+# Build a Production-Ready Multi-Tenant Business Website SaaS Platform
+
+## 1. Product Vision
+
+Build a complete **multi-tenant SaaS platform** that allows any offline/local business that does not currently have a website to create and launch a professional business website using our platform.
+
+The platform should work like:
+
+**Customer visits our main website → selects “Create Your Website” → enters business details → selects a plan/template → adds business information, services, products, images, contact details, GMB/Google Business Profile link, social links, etc. → previews website → purchases plan → website goes LIVE automatically.**
+
+The system must be designed as a **real commercial SaaS product**, not as a simple website generator.
+
+The goal is to generate recurring revenue through:
+
+* Monthly subscriptions
+* Yearly subscriptions
+* Premium templates
+* Premium SEO/AEO/GEO features
+* Custom domain
+* Business email
+* Additional pages
+* Additional locations
+* Lead management
+* Analytics
+* AI content generation
+* Maintenance packages
+* Featured listings
+* Add-on services
+
+---
+
+# 2. Core Architecture
+
+Build the system as a proper **multi-tenant SaaS architecture**.
+
+There should be three major areas:
+
+### A. Public SaaS Website
+
+Our main platform website where customers can:
+
+* Learn about the service
+* See templates
+* See pricing
+* See features
+* See demo websites
+* Compare plans
+* Start free trial
+* Create website
+* Login
+* Contact sales
+
+### B. Customer Business Dashboard
+
+Each business/customer gets their own dashboard where they can manage:
+
+* Business profile
+* Website
+* Pages
+* Sections
+* Services
+* Products
+* Gallery
+* Testimonials
+* FAQs
+* Blog
+* SEO
+* AEO
+* GEO/local SEO
+* Google Business Profile
+* Social media
+* Leads
+* Contact forms
+* Analytics
+* Subscription
+* Domain
+* Website settings
+
+### C. Super Admin / Platform Admin
+
+Admin should control the complete SaaS platform:
+
+* Customers
+* Businesses
+* Websites
+* Plans
+* Subscriptions
+* Templates
+* Pages
+* Sections
+* Leads
+* Payments
+* Domains
+* SEO
+* Analytics
+* Blog
+* Coupons
+* Add-ons
+* Support
+* Notifications
+* System settings
+
+---
+
+# 3. Important Multi-Tenant Requirement
+
+Every business must be completely isolated.
+
+Example:
+
+Business A:
+
+`business-a.OURDOMAIN.com`
+
+Business B:
+
+`business-b.OURDOMAIN.com`
+
+Business C:
+
+`business-c.OURDOMAIN.com`
+
+Each website must load only that business's data.
+
+Use tenant/business ID throughout:
+
+* Database
+* API
+* Authentication
+* Authorization
+* Storage
+* Website rendering
+* Analytics
+* Leads
+* SEO
+
+Never allow one tenant to access another tenant's data.
+
+Implement proper RBAC and tenant-level authorization.
+
+---
+
+# 4. Website Creation Flow
+
+Create a beautiful onboarding wizard.
+
+## Step 1 — Business Type
+
+Ask:
+
+"What type of business do you have?"
+
+Categories:
+
+* Manufacturer
+* Distributor
+* Wholesaler
+* Retailer
+* Restaurant
+* Hotel
+* Clinic
+* Hospital
+* Doctor
+* Dentist
+* Salon
+* Beauty Parlour
+* Gym
+* Fitness Center
+* Consultant
+* Lawyer
+* CA
+* Architect
+* Contractor
+* Real Estate
+* Construction
+* Automobile
+* Garage
+* Education
+* Coaching
+* School
+* College
+* Travel Agency
+* Logistics
+* Transport
+* IT Company
+* Software Company
+* Digital Marketing
+* Freelancer
+* Photographer
+* Event Management
+* Interior Designer
+* Electrical
+* Plumbing
+* Hardware
+* Agriculture
+* Trading
+* Service Provider
+* Local Shop
+* Other
+
+Allow custom business category.
+
+---
+
+# 5. Business Information
+
+Collect:
+
+* Business name
+* Business tagline
+* Business description
+* Owner/founder name
+* Phone
+* WhatsApp
+* Email
+* Address
+* City
+* State
+* Country
+* Pincode
+* Business hours
+* Working days
+* Business established year
+* GSTIN (optional)
+* Registration number (optional)
+* Website name
+* Logo
+* Favicon
+* Cover image
+
+---
+
+# 6. Google Business Profile / GMB Integration
+
+Allow customer to add:
+
+* Google Business Profile URL
+* Google Maps URL
+* Place ID if available
+* Google reviews link
+
+Display:
+
+* Google Maps
+* Get Directions
+* Google Reviews
+* Business location
+* Business rating where API data is legitimately available
+* Review CTA
+
+Do not scrape Google illegally.
+
+Where official APIs are required, build the integration architecture so API credentials can be configured from Admin.
+
+Also provide:
+
+**"View us on Google"**
+
+and
+
+**"Get Directions"**
+
+buttons.
+
+---
+
+# 7. Website Generation
+
+After onboarding, automatically generate a complete website based on:
+
+* Business category
+* Business information
+* Services
+* Products
+* Location
+* Selected template
+* Brand colors
+* Logo
+* Images
+
+The customer should NOT need coding knowledge.
+
+Website generation should be dynamic.
+
+Do NOT create separate hardcoded websites.
+
+Instead build a reusable:
+
+**Theme + Section + Content + Layout Engine**
+
+---
+
+# 8. Website Pages
+
+Every website should support dynamic pages.
+
+Default pages:
+
+### Home
+
+### About
+
+### Services
+
+### Products
+
+### Gallery
+
+### Testimonials
+
+### FAQs
+
+### Blog
+
+### Contact
+
+### Privacy Policy
+
+### Terms & Conditions
+
+Additional pages:
+
+* Team
+* Portfolio
+* Projects
+* Pricing
+* Careers
+* Locations
+* Offers
+* Reviews
+* Case Studies
+* Industries
+* Products Detail
+* Service Detail
+* Booking
+* Appointment
+* Enquiry
+* Download Brochure
+
+Admin should be able to create unlimited custom pages depending on plan.
+
+---
+
+# 9. Home Page Sections
+
+Create a large reusable section library.
+
+Examples:
+
+### Hero
+
+* Heading
+* Subheading
+* CTA
+* Secondary CTA
+* Background image/video
+* Business image
+* Badge
+
+### About
+
+### Why Choose Us
+
+### Services
+
+### Products
+
+### Featured Products
+
+### Industries Served
+
+### Our Process
+
+### How It Works
+
+### Statistics
+
+Example:
+
+* 10+ Years Experience
+* 500+ Customers
+* 1000+ Projects
+* 50+ Products
+
+### Testimonials
+
+### Google Reviews
+
+### Gallery
+
+### Portfolio
+
+### Team
+
+### FAQ
+
+### Blog
+
+### Location
+
+### Google Map
+
+### Business Hours
+
+### Contact
+
+### WhatsApp CTA
+
+### Call CTA
+
+### Newsletter
+
+### Social Media
+
+### Footer
+
+Every section should be configurable.
+
+---
+
+# 10. Drag & Drop Website Builder
+
+Create a visual website builder.
+
+Customer should be able to:
+
+* Add section
+* Remove section
+* Duplicate section
+* Reorder section
+* Hide section
+* Edit content
+* Change background
+* Change spacing
+* Change typography
+* Change colors
+* Change images
+* Change CTA
+* Preview mobile
+* Preview tablet
+* Preview desktop
+
+Use reusable components.
+
+Do not allow customers to break the layout.
+
+---
+
+# 11. Template System
+
+Create multiple professional templates.
+
+At minimum:
+
+* Corporate
+* Manufacturing
+* Industrial
+* Construction
+* Restaurant
+* Hotel
+* Medical
+* Professional Services
+* Retail
+* Education
+* IT
+* Real Estate
+* Personal Brand
+* Portfolio
+* Local Business
+
+Each template should have:
+
+* Desktop design
+* Tablet design
+* Mobile design
+* Multiple homepage layouts
+* Multiple color schemes
+
+Admin should be able to add new templates without modifying core application code.
+
+---
+
+# 12. Theme Customization
+
+Customer can customize:
+
+### Brand
+
+* Primary color
+* Secondary color
+* Accent color
+* Logo
+* Favicon
+
+### Typography
+
+* Heading font
+* Body font
+* Font size
+* Font weight
+
+### Layout
+
+* Container width
+* Border radius
+* Button style
+* Card style
+* Header style
+* Footer style
+
+Provide professionally designed defaults.
+
+---
+
+# 13. SEO System
+
+SEO must be a first-class feature.
+
+Every website should automatically generate:
+
+* SEO title
+* Meta description
+* Canonical URL
+* Open Graph tags
+* Twitter/X cards
+* Robots.txt
+* XML sitemap
+* Breadcrumb schema
+* Organization schema
+* LocalBusiness schema
+* Service schema
+* Product schema
+* FAQ schema
+* Article schema
+* Review schema where appropriate
+
+Each page must have editable:
+
+* SEO title
+* Meta description
+* Focus keyword
+* URL slug
+* Canonical URL
+* OG image
+
+Generate SEO-friendly URLs.
+
+Example:
+
+`/services/interior-design`
+
+instead of:
+
+`/page?id=123`
+
+---
+
+# 14. Local SEO / GEO
+
+Build strong local SEO functionality.
+
+Customer should be able to configure:
+
+* Primary location
+* Multiple locations
+* Service areas
+* City
+* State
+* Pincode
+* Nearby cities
+* Service radius
+* Local keywords
+
+Generate location pages such as:
+
+`/locations/pune`
+
+`/locations/mumbai`
+
+`/service-area/pimpri-chinchwad`
+
+Support:
+
+* LocalBusiness schema
+* Address schema
+* Geo coordinates
+* Google Maps
+* Directions
+* Business hours
+* Service areas
+
+Avoid generating spammy duplicate location pages.
+
+Content must be unique and useful.
+
+---
+
+# 15. AEO — Answer Engine Optimization
+
+Build an AEO module designed for AI search engines and answer systems.
+
+Generate structured content around questions customers actually ask.
+
+Examples:
+
+* What services does the business provide?
+* Where is the business located?
+* What are the business hours?
+* How can customers contact the business?
+* What makes this business different?
+* What products are available?
+* What areas do they serve?
+
+Create:
+
+* FAQ sections
+* Question-answer content
+* Structured data
+* Entity information
+* Author/business information
+* Clear factual content
+
+Make content easy for search engines and AI systems to understand.
+
+---
+
+# 16. AI Content Generator
+
+Add optional AI-powered content generation.
+
+Customer can click:
+
+**Generate Website Content**
+
+AI generates:
+
+* Homepage content
+* About Us
+* Services
+* Product descriptions
+* FAQs
+* Meta descriptions
+* SEO titles
+* Blog topics
+* Blog articles
+* Location content
+* CTA text
+
+Allow:
+
+* Regenerate
+* Shorter
+* Longer
+* Professional
+* Friendly
+* Local
+* SEO optimized
+
+Never overwrite existing content without confirmation.
+
+---
+
+# 17. Products Module
+
+For businesses selling products, provide:
+
+* Product name
+* SKU
+* Category
+* Description
+* Short description
+* Price
+* Sale price
+* Images
+* Specifications
+* PDF brochure
+* Features
+* Applications
+* Related products
+* Enquiry button
+
+Option:
+
+**Hide Price / Enquire Now**
+
+for businesses that don't publish prices.
+
+---
+
+# 18. Services Module
+
+Each service should support:
+
+* Name
+* Description
+* Image
+* Benefits
+* Features
+* Process
+* FAQs
+* SEO settings
+* Location availability
+* CTA
+
+Create dedicated SEO-friendly service pages automatically.
+
+---
+
+# 19. Lead Management
+
+Every website must have enquiry forms.
+
+Forms should capture:
+
+* Name
+* Phone
+* Email
+* Message
+* Service
+* Product
+* Location
+
+Store leads in customer dashboard.
+
+Lead statuses:
+
+* New
+* Contacted
+* Follow-up
+* Qualified
+* Converted
+* Closed
+* Spam
+
+Add:
+
+* Notes
+* Follow-up date
+* Assigned staff
+* Lead source
+
+---
+
+# 20. WhatsApp Integration
+
+Allow customer to configure WhatsApp number.
+
+Add floating WhatsApp button.
+
+CTA examples:
+
+* Chat on WhatsApp
+* Enquire on WhatsApp
+* Get Quote
+* Book Appointment
+
+Generate WhatsApp message automatically.
+
+---
+
+# 21. Contact & Conversion Features
+
+Include:
+
+* Call Now
+* WhatsApp
+* Email
+* Get Directions
+* Enquiry Form
+* Request Quote
+* Book Appointment
+* Download Brochure
+
+Track CTA clicks.
+
+---
+
+# 22. Analytics
+
+Dashboard should show:
+
+* Visitors
+* Unique visitors
+* Page views
+* Top pages
+* Traffic sources
+* Search traffic
+* Direct traffic
+* Social traffic
+* Device
+* Location
+* CTA clicks
+* Phone clicks
+* WhatsApp clicks
+* Form submissions
+
+Integrate:
+
+* Google Analytics
+* Google Search Console
+
+where customers provide their credentials/property configuration.
+
+---
+
+# 23. Blog CMS
+
+Customer can create blogs.
+
+Fields:
+
+* Title
+* Slug
+* Featured image
+* Content
+* Author
+* Category
+* Tags
+* Publish date
+* SEO title
+* Meta description
+* OG image
+
+Generate:
+
+* Article schema
+* Sitemap update
+* RSS feed if required
+
+---
+
+# 24. Domain System
+
+Support two modes.
+
+### Mode 1 — Platform Subdomain
+
+Example:
+
+`businessname.OURDOMAIN.com`
+
+### Mode 2 — Custom Domain
+
+Customer can connect:
+
+`www.businessname.com`
+
+Provide domain setup instructions.
+
+Admin should be able to manage:
+
+* Domain
+* DNS status
+* SSL status
+* Verification
+* Primary domain
+
+The platform should support automatic SSL where infrastructure permits.
+
+---
+
+# 25. Subscription Plans
+
+Create SaaS plans such as:
+
+## Starter
+
+* 1 website
+* Basic template
+* 5 pages
+* Basic SEO
+* Contact form
+* WhatsApp
+
+## Business
+
+* 1 website
+* Premium templates
+* Unlimited pages
+* Advanced SEO
+* Local SEO
+* Blog
+* Google Maps
+* Analytics
+* Leads
+
+## Professional
+
+* Everything in Business
+* AI content
+* AEO
+* Advanced GEO
+* Custom domain
+* Advanced analytics
+* Multiple locations
+* More storage
+
+## Enterprise
+
+Custom pricing.
+
+Admin must be able to create/edit plans dynamically.
+
+Do NOT hardcode pricing.
+
+---
+
+# 26. Add-On Revenue Model
+
+Build an Add-ons system.
+
+Examples:
+
+* Custom Domain
+* Premium Template
+* AI Content Credits
+* Additional Storage
+* Additional Location
+* Business Email
+* Advanced SEO
+* SEO Content Package
+* Blog Writing
+* Website Maintenance
+* Google Business Profile Optimization
+* Lead CRM
+* Appointment Booking
+* Product Catalogue
+* Custom Design
+* Priority Support
+
+Admin can configure:
+
+* Price
+* Billing cycle
+* Features
+* Limits
+
+---
+
+# 27. Free Trial
+
+Allow:
+
+**7-day / 14-day free trial**
+
+During trial:
+
+* Website can be created
+* Website preview available
+* Limited features
+* Trial badge if required
+
+After trial expires:
+
+* Website should automatically become inactive/pending
+* Customer should see upgrade screen
+* Data should NOT immediately be deleted
+* Provide grace period
+* Admin should control trial and grace-period duration
+
+---
+
+# 28. Payments
+
+Build payment architecture for India.
+
+Support a payment gateway such as Razorpay/other configurable provider.
+
+Support:
+
+* UPI
+* Cards
+* Net banking
+* Recurring subscription where supported
+* One-time payments
+
+Maintain:
+
+* Orders
+* Transactions
+* Invoices
+* Subscription status
+* Payment failures
+* Refunds
+* Coupons
+
+Never expose secret payment keys to frontend.
+
+---
+
+# 29. Coupon System
+
+Admin can create:
+
+* Percentage discount
+* Fixed discount
+* First-month discount
+* Annual discount
+* Trial extension
+
+Fields:
+
+* Coupon code
+* Discount
+* Start date
+* Expiry
+* Usage limit
+* Per-user limit
+* Applicable plans
+
+---
+
+# 30. Customer Dashboard
+
+Dashboard should show:
+
+### Website Health
+
+* Website status
+* SEO score
+* Mobile score
+* Content completeness
+* Profile completeness
+* Domain status
+
+### Quick Actions
+
+* Edit Website
+* Add Service
+* Add Product
+* Add Blog
+* View Leads
+* Edit SEO
+* Connect Google
+* Customize Theme
+
+### Analytics
+
+* Visitors
+* Leads
+* Calls
+* WhatsApp clicks
+
+### Subscription
+
+* Current plan
+* Renewal date
+* Usage
+* Upgrade button
+
+---
+
+# 31. Website Health / SEO Score
+
+Create a scoring system.
+
+Example:
+
+**Website Score: 86/100**
+
+Check:
+
+* Logo
+* Favicon
+* Business description
+* Phone
+* Email
+* Address
+* Business hours
+* Services
+* Images
+* Alt text
+* SEO title
+* Meta description
+* Sitemap
+* Schema
+* Google Business Profile
+* Social links
+* Contact form
+* Mobile responsiveness
+
+Show actionable recommendations.
+
+---
+
+# 32. Super Admin Dashboard
+
+Admin dashboard should provide:
+
+### Overview
+
+* Total customers
+* Active websites
+* Trial websites
+* Expired websites
+* Monthly revenue
+* Annual revenue
+* New registrations
+* New leads
+* Active subscriptions
+* Failed payments
+
+### Customer Management
+
+* View customer
+* Edit
+* Suspend
+* Activate
+* Delete
+* Impersonate with proper audit/security controls
+
+### Website Management
+
+* Preview
+* Edit
+* Publish
+* Unpublish
+* Suspend
+* Duplicate
+* Change template
+
+### Subscription Management
+
+* Plans
+* Subscriptions
+* Payments
+* Coupons
+* Add-ons
+
+### Template Management
+
+* Create
+* Edit
+* Duplicate
+* Publish
+* Unpublish
+
+### Content Management
+
+* Pages
+* Sections
+* Blogs
+* Categories
+
+---
+
+# 33. Admin Website Builder
+
+Admin should be able to create new reusable sections.
+
+Example:
+
+`HeroSection`
+
+`AboutSection`
+
+`ServicesGrid`
+
+`ProductGrid`
+
+`Testimonials`
+
+`FAQ`
+
+`Gallery`
+
+`Contact`
+
+Each section should have configurable properties.
+
+This should make the platform extensible.
+
+---
+
+# 34. Notifications
+
+Implement:
+
+* Email notifications
+* In-app notifications
+
+Events:
+
+* Registration
+* Trial started
+* Trial ending
+* Payment successful
+* Payment failed
+* Subscription renewed
+* Subscription expired
+* New lead
+* Website published
+* Domain connected
+
+---
+
+# 35. Security
+
+Implement production-grade security.
+
+Requirements:
+
+* JWT/session authentication
+* RBAC
+* Tenant isolation
+* Input validation
+* Rate limiting
+* CSRF protection where applicable
+* Secure headers
+* Password hashing
+* API authorization
+* File upload validation
+* XSS protection
+* SQL injection protection
+* Audit logs
+* Secure secrets
+* Payment security
+
+Never trust tenant ID coming directly from frontend.
+
+Derive tenant identity from authenticated user/session.
+
+---
+
+# 36. Performance
+
+Public business websites must be extremely fast.
+
+Target:
+
+* Lighthouse Performance: 90+
+* SEO: 95+
+* Accessibility: 90+
+* Best Practices: 90+
+
+Implement:
+
+* Image optimization
+* Lazy loading
+* WebP/AVIF
+* CDN-ready assets
+* Server-side rendering or pre-rendering where beneficial
+* Caching
+* Minification
+* Code splitting
+
+Avoid loading unnecessary JavaScript on public websites.
+
+---
+
+# 37. Mobile First
+
+Every generated website must be:
+
+* Mobile-first
+* Tablet responsive
+* Desktop responsive
+
+No horizontal scrolling.
+
+Buttons must be touch-friendly.
+
+Phone and WhatsApp CTAs should be highly accessible on mobile.
+
+---
+
+# 38. PWA Support
+
+Optionally support:
+
+* Manifest
+* App icon
+* Installable website
+* Offline fallback
+
+---
+
+# 39. Business Structured Data
+
+Automatically generate structured data based on business type.
+
+Examples:
+
+`LocalBusiness`
+
+`Organization`
+
+`MedicalBusiness`
+
+`Restaurant`
+
+`Hotel`
+
+`ProfessionalService`
+
+`Product`
+
+`Service`
+
+`FAQPage`
+
+`Article`
+
+Only output schema types that are actually applicable.
+
+Do not generate fake ratings, reviews, addresses, prices, or claims.
+
+---
+
+# 40. Social Media
+
+Allow:
+
+* Facebook
+* Instagram
+* YouTube
+* LinkedIn
+* X
+* Pinterest
+
+Display icons and links.
+
+Allow customer to add social profiles from dashboard.
+
+---
+
+# 41. Media Library
+
+Each customer should have a media library.
+
+Features:
+
+* Upload
+* Delete
+* Search
+* Categorize
+* Rename
+* Image optimization
+* Alt text
+* Caption
+
+Storage must be tenant-isolated.
+
+---
+
+# 42. Website Preview
+
+Before publishing:
+
+**Preview Website**
+
+Customer can preview:
+
+* Desktop
+* Tablet
+* Mobile
+
+Show:
+
+**Publish Website**
+
+button.
+
+Changes should support:
+
+* Draft
+* Published
+
+Never expose unpublished content publicly.
+
+---
+
+# 43. Versioning
+
+Implement basic website version history.
+
+Customer can:
+
+* Save draft
+* Publish
+* View previous version
+* Restore previous version
+
+---
+
+# 44. SEO-Friendly URL Architecture
+
+Example:
+
+`business.OURDOMAIN.com/`
+
+`business.OURDOMAIN.com/about`
+
+`business.OURDOMAIN.com/services`
+
+`business.OURDOMAIN.com/services/web-development`
+
+`business.OURDOMAIN.com/products`
+
+`business.OURDOMAIN.com/products/product-name`
+
+`business.OURDOMAIN.com/blog`
+
+`business.OURDOMAIN.com/blog/article-name`
+
+Use clean canonical URLs.
+
+---
+
+# 45. Main Platform Website
+
+Our own SaaS website should be a highly professional conversion-focused website.
+
+Pages:
+
+* Home
+* Features
+* How It Works
+* Templates
+* Pricing
+* Industries
+* Examples
+* SEO
+* Local SEO
+* AEO
+* AI Website Builder
+* FAQ
+* Blog
+* Contact
+* Login
+* Register
+
+Hero CTA:
+
+**Create Your Business Website**
+
+Secondary CTA:
+
+**View Demo Websites**
+
+---
+
+# 46. Industry Landing Pages
+
+Create SEO landing pages for:
+
+* Website for Manufacturers
+* Website for Restaurants
+* Website for Clinics
+* Website for Contractors
+* Website for Local Businesses
+* Website for Consultants
+* Website for Retailers
+* Website for Real Estate Businesses
+* Website for Schools
+* Website for Hotels
+* Website for Salons
+
+These pages should be dynamically manageable from Admin.
+
+---
+
+# 47. Demo Website System
+
+Create demo websites for different industries.
+
+Example:
+
+`demo.OURDOMAIN.com/manufacturer`
+
+`demo.OURDOMAIN.com/restaurant`
+
+`demo.OURDOMAIN.com/clinic`
+
+`demo.OURDOMAIN.com/consultant`
+
+Use realistic sample data.
+
+Add:
+
+**"Create a website like this"**
+
+CTA.
+
+---
+
+# 48. Lead Generation for Our SaaS
+
+Our platform itself should capture leads.
+
+Forms:
+
+### Get Started
+
+### Request Demo
+
+### Talk to Sales
+
+### WhatsApp
+
+### Free Trial
+
+Track:
+
+* Lead source
+* Campaign
+* UTM
+* Landing page
+* Device
+* Location
+
+---
+
+# 49. SEO for the SaaS Platform
+
+The main SaaS platform itself must be SEO optimized.
+
+Implement:
+
+* Dynamic metadata
+* Sitemap
+* Robots
+* Schema
+* OpenGraph
+* Canonical URLs
+* Blog
+* Industry pages
+* Location pages
+* Internal linking
+* Breadcrumbs
+
+---
+
+# 50. GEO Strategy
+
+Build content around location-based searches such as:
+
+* website maker in Pune
+* website for local business in Pune
+* business website builder India
+* website for manufacturers
+* affordable business website
+* website for small businesses
+
+But avoid keyword stuffing.
+
+Content must provide genuine value.
+
+---
+
+# 51. SEO Content Automation
+
+Admin should be able to schedule content.
+
+Example:
+
+* Blog publishing
+* SEO pages
+* Industry pages
+* Location pages
+
+Allow:
+
+* Draft
+* Review
+* Schedule
+* Publish
+
+---
+
+# 52. Pricing Strategy
+
+Make pricing configurable.
+
+Example:
+
+### Free Trial
+
+₹0 / 14 days
+
+### Starter
+
+₹499/month
+
+### Business
+
+₹999/month
+
+### Professional
+
+₹1,999/month
+
+### Annual
+
+Offer discounted annual pricing.
+
+Do not hardcode these values.
+
+Admin must be able to change them.
+
+---
+
+# 53. White Label / Agency Mode
+
+Prepare architecture for future agency mode.
+
+An agency could create multiple websites for clients.
+
+Agency dashboard:
+
+* Clients
+* Websites
+* Billing
+* Templates
+* Leads
+
+This can become another revenue stream.
+
+---
+
+# 54. Referral System
+
+Build optional referral system.
+
+Customers can receive:
+
+* Referral link
+* Referral code
+* Commission
+* Referral dashboard
+
+Track:
+
+* Clicks
+* Signups
+* Paid conversions
+* Commission
+
+---
+
+# 55. Affiliate System
+
+Prepare architecture for affiliate marketing.
+
+Admin can configure:
+
+* Affiliate commission
+* Cookie duration
+* Payout threshold
+* Affiliate status
+
+---
+
+# 56. Business Directory — Future Ready
+
+Keep architecture ready for a future public business directory.
+
+Potential:
+
+`OURDOMAIN.com/businesses/pune`
+
+`OURDOMAIN.com/businesses/manufacturers/pune`
+
+Only businesses that opt in should appear publicly.
+
+This can create additional SEO traffic and lead generation.
+
+---
+
+# 57. Customer Onboarding UX
+
+Make onboarding extremely simple.
+
+Progress indicator:
+
+**1. Business → 2. Branding → 3. Services → 4. Contact → 5. Template → 6. Preview → 7. Publish**
+
+Show percentage:
+
+**Website Setup 72% Complete**
+
+Use smart defaults.
+
+The customer should be able to launch a basic website in approximately 10–15 minutes.
+
+---
+
+# 58. Automatic Content Suggestions
+
+If the customer only provides:
+
+Business Name:
+
+`ABC Engineering`
+
+Business Type:
+
+`Manufacturer`
+
+Location:
+
+`Pune`
+
+Services:
+
+`Fabrication, CNC Machining`
+
+The system should automatically suggest:
+
+* Homepage headline
+* About content
+* Service descriptions
+* FAQ
+* SEO title
+* Meta description
+* CTA
+* Local keywords
+
+Customer can edit everything before publishing.
+
+---
+
+# 59. Website Publishing Logic
+
+Website status:
+
+* Draft
+* Preview
+* Published
+* Suspended
+* Expired
+* Archived
+
+Publishing must validate:
+
+* Business name
+* Contact information
+* At least one page
+* Required SEO fields
+* Terms/privacy where applicable
+
+If subscription expires:
+
+1. Website enters grace period
+2. Show renewal warning
+3. After grace period, website becomes inactive
+4. Preserve customer data
+5. Restore automatically after payment
+
+---
+
+# 60. Database Design
+
+Create proper normalized schema.
+
+Suggested entities:
+
+* users
+* businesses
+* business_users
+* roles
+* permissions
+* subscriptions
+* plans
+* plan_features
+* payments
+* invoices
+* websites
+* templates
+* themes
+* pages
+* sections
+* section_types
+* services
+* products
+* categories
+* galleries
+* testimonials
+* faqs
+* blogs
+* media
+* domains
+* leads
+* lead_notes
+* analytics
+* seo_settings
+* locations
+* social_links
+* business_hours
+* coupons
+* addons
+* notifications
+* audit_logs
+* ai_usage
+
+Use proper indexes and foreign keys.
+
+---
+
+# 61. API Architecture
+
+Create clean REST APIs or appropriate API architecture.
+
+Separate:
+
+### Public APIs
+
+Website content retrieval.
+
+### Customer APIs
+
+Business management.
+
+### Admin APIs
+
+Platform management.
+
+### Authentication APIs
+
+Login/register/password reset/session.
+
+Never expose admin endpoints to normal users.
+
+---
+
+# 62. Code Quality
+
+Requirements:
+
+* Modular architecture
+* Reusable components
+* Reusable hooks
+* Service layer
+* Validation layer
+* Error handling
+* Centralized API handling
+* Centralized permissions
+* Consistent response structure
+* Logging
+* Environment variables
+
+Avoid:
+
+* Hardcoded tenant IDs
+* Hardcoded plan limits
+* Hardcoded prices
+* Duplicate components
+* Massive monolithic files
+* Business logic inside UI components
+
+---
+
+# 63. Admin Configuration
+
+Admin should be able to configure without developer changes:
+
+* Plans
+* Pricing
+* Trial duration
+* Features
+* Templates
+* Sections
+* Categories
+* Industries
+* Locations
+* Add-ons
+* Coupons
+* Email templates
+* Notification templates
+* SEO defaults
+* Platform branding
+
+---
+
+# 64. SaaS Branding
+
+Keep our platform branding separate from customer website branding.
+
+Customer website:
+
+Customer's logo/name/colors.
+
+Platform dashboard:
+
+Our SaaS brand.
+
+Do not expose internal admin information on customer websites.
+
+---
+
+# 65. White-Label Ready
+
+Architect the system so future plans can support:
+
+* Custom branding
+* Agency branding
+* Custom favicon
+* Custom dashboard branding
+* Custom email sender
+
+---
+
+# 66. Production Requirements
+
+Do not build a prototype.
+
+Build production-ready architecture.
+
+Include:
+
+* Loading states
+* Empty states
+* Error states
+* Validation messages
+* Confirmation dialogs
+* Toast notifications
+* Pagination
+* Search
+* Filtering
+* Sorting
+* Bulk actions
+* Responsive tables
+* Responsive forms
+* Accessibility
+* Security
+* Logging
+* Error monitoring hooks
+
+---
+
+# 67. Important Business Rule
+
+The system should be designed to maximize recurring revenue without making the product feel exploitative.
+
+Use feature differentiation between plans.
+
+Do not artificially break basic website functionality.
+
+Every paid feature should provide genuine additional value.
+
+---
+
+# 68. Final User Experience
+
+The ideal customer journey should be:
+
+1. Customer discovers our SaaS through Google/social/advertising.
+2. Customer lands on our professional homepage.
+3. Clicks **Create Your Website**.
+4. Selects business category.
+5. Enters business information.
+6. Adds logo/images.
+7. Adds services/products.
+8. Adds Google Business Profile / Maps.
+9. Selects template.
+10. Platform generates website.
+11. Customer previews website.
+12. Customer customizes content.
+13. Customer selects plan.
+14. Customer completes payment.
+15. Website automatically publishes.
+16. Website becomes available on:
+
+`businessname.OURDOMAIN.com`
+
+17. Customer can later connect their own domain.
+18. Customer receives leads through dashboard.
+19. Customer sees analytics.
+20. Customer continues subscription for hosting, SEO, tools and business features.
+
+---
+
+# 69. Most Important Principle
+
+This should NOT feel like a generic website builder such as a simple drag-and-drop editor.
+
+It should feel like:
+
+**"Give us your business details, and we will create and operate your complete online presence."**
+
+The platform should automate as much as possible:
+
+**Business Information → Website → SEO → Local SEO → AEO → GEO → Google Maps → Contact → WhatsApp → Leads → Analytics → Growth**
+
+The customer should focus on their business, not website technology.
+
+---
+
+# 70. Development Approach
+
+Before coding:
+
+1. Analyze complete requirements.
+2. Define architecture.
+3. Define database schema.
+4. Define tenant isolation strategy.
+5. Define authentication/RBAC.
+6. Define public website rendering architecture.
+7. Define template/section engine.
+8. Define subscription architecture.
+9. Define domain architecture.
+10. Define SEO/AEO/GEO architecture.
+
+Then implement module-by-module.
+
+Do not create fake functionality.
+
+Every button must perform its actual intended action.
+
+Every CRUD operation must persist correctly to the database.
+
+Every API must have proper validation and authorization.
+
+Do not use placeholder UI where real functionality is required.
+
+---
+
+# 71. UI/UX Direction
+
+The entire platform should have a premium SaaS design.
+
+Use:
+
+* Clean modern interface
+* Excellent typography
+* Consistent spacing
+* Professional cards
+* Minimal visual clutter
+* Responsive layouts
+* Clear CTAs
+* Accessible forms
+* Professional dashboards
+* Beautiful onboarding
+* Skeleton loaders
+* Empty states
+* Helpful tooltips
+
+The generated customer websites should look like professionally designed websites, not automatically generated templates.
+
+---
+
+# 72. Deliverable
+
+Build the complete system including:
+
+### Public SaaS Website
+
+### Authentication
+
+### Business Onboarding
+
+### Website Generator
+
+### Template Engine
+
+### Section Builder
+
+### Customer Dashboard
+
+### Admin Dashboard
+
+### CMS
+
+### Products
+
+### Services
+
+### Blog
+
+### Leads
+
+### Google Business Profile/Maps
+
+### WhatsApp
+
+### Analytics
+
+### SEO
+
+### AEO
+
+### GEO / Local SEO
+
+### AI Content
+
+### Subscription
+
+### Payments
+
+### Coupons
+
+### Add-ons
+
+### Domains
+
+### SSL-ready architecture
+
+### Media Library
+
+### Notifications
+
+### Audit Logs
+
+### Multi-Tenant Security
+
+### API Layer
+
+### Database
+
+### Production Deployment Configuration
+
+---
+
+# 73. Do Not Compromise On
+
+1. Multi-tenant security
+2. Website speed
+3. SEO
+4. Mobile responsiveness
+5. Data isolation
+6. Real CRUD functionality
+7. Subscription logic
+8. Payment security
+9. Website publishing
+10. Professional UI/UX
+11. Scalability
+12. Maintainable code
+
+Build the system so that it can realistically support **hundreds to thousands of businesses** in the future without requiring a complete architectural rewrite.
+
+**Mera strong suggestion:** is project ko sirf “website builder” mat position karo. Iska USP rakho:
+
+> **“Aapke business ko online lane ka complete solution — Website + Google Presence + SEO + Leads + WhatsApp + Analytics.”**
+
+Isse ₹499–₹1,999/month subscription ke saath **custom domain, SEO, AI content, extra locations, lead CRM, maintenance, premium templates** jaise add-ons se recurring revenue banaya ja sakta hai.

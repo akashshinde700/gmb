@@ -1,0 +1,307 @@
+// WebSetu — Multi-Tenant Business Website SaaS Platform
+// SQLite (no native enums) → statuses stored as strings
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  role         String   @default("CUSTOMER") // CUSTOMER | ADMIN
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  business      Business?
+  notifications Notification[]
+}
+
+model Business {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name            String
+  slug            String   @unique
+  category        String
+  tagline         String   @default("")
+  description     String   @default("")
+  ownerName       String   @default("")
+  phone           String   @default("")
+  whatsapp        String   @default("")
+  email           String   @default("")
+  address         String   @default("")
+  city            String   @default("")
+  state           String   @default("")
+  country         String   @default("India")
+  pincode         String   @default("")
+  establishedYear String   @default("")
+  gstin           String   @default("")
+  logoUrl         String   @default("")
+  coverUrl        String   @default("")
+  brandPrimary    String   @default("#059669")
+  brandSecondary  String   @default("#0f766e")
+  brandAccent     String   @default("#f59e0b")
+  templateId      String   @default("")
+  gmbUrl          String   @default("")
+  mapsUrl         String   @default("")
+  placeId         String   @default("")
+  hoursJson       String   @default("{}") // {mon:"9:00-18:00",...} + {days:[...]}
+  socialsJson     String   @default("{}") // {facebook,instagram,youtube,linkedin,x,pinterest}
+  status          String   @default("DRAFT") // DRAFT | PUBLISHED | SUSPENDED | EXPIRED | ARCHIVED
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  website       Website?
+  services      Service[]
+  products      Product[]
+  gallery       GalleryItem[]
+  testimonials  Testimonial[]
+  faqs          Faq[]
+  blogPosts     BlogPost[]
+  leads         Lead[]
+  subscription  Subscription?
+  payments      Payment[]
+  analytics     AnalyticsEvent[]
+}
+
+model Website {
+  id             String   @id @default(cuid())
+  businessId     String   @unique
+  business       Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  seoTitle       String   @default("")
+  seoDescription String   @default("")
+  keywords       String   @default("")
+  ogImage        String   @default("")
+  themeJson      String   @default("{}")   // {font, radius, containerWidth, heroStyle, cardStyle}
+  sectionsJson   String   @default("[]")   // ordered [{id,type,visible,content}]
+  version        Int      @default(1)
+  publishedAt    DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model Service {
+  id          String   @id @default(cuid())
+  businessId  String
+  business    Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  name        String
+  description String   @default("")
+  image       String   @default("")
+  icon        String   @default("sparkles")
+  price       String   @default("")
+  featured    Boolean  @default(false)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+}
+
+model Product {
+  id          String   @id @default(cuid())
+  businessId  String
+  business    Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  name        String
+  sku         String   @default("")
+  category    String   @default("")
+  shortDesc   String   @default("")
+  description String   @default("")
+  price       Float?
+  salePrice   Float?
+  image       String   @default("")
+  hidePrice   Boolean  @default(false)
+  featured    Boolean  @default(false)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+}
+
+model GalleryItem {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  url        String
+  caption    String   @default("")
+  alt        String   @default("")
+  sortOrder  Int      @default(0)
+  createdAt  DateTime @default(now())
+}
+
+model Testimonial {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  name       String
+  role       String   @default("")
+  content    String
+  rating     Int      @default(5)
+  avatar     String   @default("")
+  sortOrder  Int      @default(0)
+  createdAt  DateTime @default(now())
+}
+
+model Faq {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  question   String
+  answer     String
+  sortOrder  Int      @default(0)
+  createdAt  DateTime @default(now())
+}
+
+model BlogPost {
+  id          String    @id @default(cuid())
+  businessId  String
+  business    Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  title       String
+  slug        String
+  excerpt     String    @default("")
+  content     String    @default("")
+  cover       String    @default("")
+  author      String    @default("")
+  category    String    @default("")
+  tags        String    @default("") // comma separated
+  published   Boolean   @default(false)
+  publishedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([businessId, slug])
+}
+
+model Lead {
+  id          String   @id @default(cuid())
+  businessId  String
+  business    Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  name        String
+  phone       String
+  email       String   @default("")
+  message     String   @default("")
+  source      String   @default("FORM") // FORM | WHATSAPP | CALL
+  serviceName String   @default("")
+  status      String   @default("NEW")  // NEW | CONTACTED | FOLLOW_UP | QUALIFIED | CONVERTED | CLOSED | SPAM
+  notes       String   @default("")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Plan {
+  id           String   @id @default(cuid())
+  name         String
+  slug         String   @unique
+  tagline      String   @default("")
+  priceMonthly Float
+  priceYearly  Float
+  featuresJson String   @default("[]")
+  maxPages     Int      @default(5) // -1 = unlimited
+  aiCredits    Int      @default(0)
+  popular      Boolean  @default(false)
+  active       Boolean  @default(true)
+  sortOrder    Int      @default(0)
+  createdAt    DateTime @default(now())
+
+  subscriptions Subscription[]
+}
+
+model Subscription {
+  id         String    @id @default(cuid())
+  businessId String    @unique
+  business   Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  planId     String
+  plan       Plan      @relation(fields: [planId], references: [id])
+  cycle      String    @default("MONTHLY") // MONTHLY | YEARLY
+  status     String    @default("TRIALING") // TRIALING | ACTIVE | PAST_DUE | EXPIRED | CANCELED
+  amount     Float     @default(0)
+  startedAt  DateTime  @default(now())
+  renewsAt   DateTime?
+  trialEndsAt DateTime?
+  createdAt  DateTime  @default(now())
+}
+
+model Payment {
+  id             String   @id @default(cuid())
+  businessId     String
+  business       Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  subscriptionId String?
+  amount         Float
+  method         String   @default("UPI") // UPI | CARD | NETBANKING
+  status         String   @default("SUCCESS") // SUCCESS | FAILED | REFUNDED
+  invoiceNo      String   @default("")
+  couponCode     String   @default("")
+  description    String   @default("")
+  createdAt      DateTime @default(now())
+}
+
+model Coupon {
+  id          String    @id @default(cuid())
+  code        String    @unique
+  type        String    @default("PERCENT") // PERCENT | FIXED
+  value       Float
+  description String    @default("")
+  active      Boolean   @default(true)
+  expiresAt   DateTime?
+  maxUses     Int       @default(100)
+  usedCount   Int       @default(0)
+  createdAt   DateTime  @default(now())
+}
+
+model Template {
+  id         String   @id @default(cuid())
+  name       String
+  slug       String   @unique
+  category   String   @default("local") // industry fit
+  description String  @default("")
+  premium    Boolean  @default(false)
+  themeJson  String   @default("{}") // default theme overrides
+  gradient   String   @default("from-emerald-500 to-teal-600")
+  coverImage String   @default("")
+  active     Boolean  @default(true)
+  sortOrder  Int      @default(0)
+  createdAt  DateTime @default(now())
+}
+
+model AnalyticsEvent {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  type       String // VISIT | CTA_CALL | CTA_WHATSAPP | CTA_EMAIL | CTA_DIRECTIONS | FORM_SUBMIT
+  path       String   @default("/")
+  meta       String   @default("{}")
+  createdAt  DateTime @default(now())
+}
+
+model PlatformLead {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @default("")
+  phone        String   @default("")
+  businessType String   @default("")
+  message      String   @default("")
+  source       String   @default("CONTACT") // CONTACT | DEMO | SALES
+  status       String   @default("NEW") // NEW | CONTACTED | CONVERTED | CLOSED
+  createdAt    DateTime @default(now())
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  body      String   @default("")
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  actor     String   @default("")
+  action    String
+  entity    String   @default("")
+  entityId  String   @default("")
+  meta      String   @default("{}")
+  createdAt DateTime @default(now())
+}
