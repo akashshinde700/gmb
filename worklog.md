@@ -153,3 +153,97 @@ Work Log:
 Stage Summary:
 - Plans now: Starter ₹999/mo · 5 pages · Business ₹1499/mo · 10 pages (popular) · Professional ₹2999/mo · 20 pages · Enterprise custom
 - Note: headless clicks on dashboard sidebar need native .click() dispatch (playwright click intercepted); verification used JS click — app itself fine in real browsers
+
+---
+Task ID: 9-a
+Agent: backend-uploads
+Task: File upload backend API
+
+Work Log:
+- Read worklog (Task 8), auth.ts (getSessionUser + ok/fail helpers), business/content routes for conventions, api-client.ts
+- Created src/app/api/upload/route.ts: POST only, requires session (any CUSTOMER/ADMIN via getSessionUser → 401 otherwise); parses multipart/form-data field "file"; validates image mime (image/jpeg|png|webp|gif|svg+xml → ext map) + max 4 MB + non-empty; filename 100% server-generated `${crypto.randomUUID()}.${ext}` (original name never touched); saves Buffer.from(await file.arrayBuffer()) via node:fs/promises writeFile into public/uploads (mkdir recursive); resolves dir+dest and asserts dest stays inside dir (path-traversal guard); returns { ok:true, data:{ url:"/api/uploads/<name>" } }
+- Created src/app/api/uploads/[file]/route.ts: GET only; Next 16 Promise params (`await params`); rejects names failing /^[A-Za-z0-9._-]+$/ or containing ".." (404), unknown extension (404), resolved path outside uploads dir (404), missing file (404); serves binary via new Response(new Uint8Array(buf)) with Content-Type by extension + Cache-Control "public, max-age=31536000, immutable"
+- Added public/uploads/.gitkeep
+- src/lib/api-client.ts: added api.upload<T>(path, file) — FormData("file"), Bearer token if present, no Content-Type header (browser sets multipart boundary), same ok/error unwrap + ApiError as request()
+- curl verification (dev :3000, demo@websetu.in token): POST /api/upload -F file=@/tmp/t.png → {"ok":true,"data":{"url":"/api/uploads/6e6bf5f4-….png"}}; GET that URL → HTTP 200 content-type image/png, bytes identical to original (cmp), cache-control immutable; svg upload → 200 image/svg+xml
+- Negative: no token → 401 Unauthorized; /tmp/t.txt → 400 "Unsupported file type — allowed: JPEG, PNG, WebP, GIF, SVG"; 5 MB fake png → 400 "File too large — maximum size is 4 MB"; GET /api/uploads/..%2fsecret → 404; /api/uploads/a..b.png and %2e%2e-encoded → 404; missing uuid.png → 404; bare /api/uploads/.. → Next normalizes to 308 redirect (never reaches fs)
+- dev.log tail 40 lines: clean, no errors. eslint exit 0 on all 3 files; tsc --noEmit: no errors in the 3 changed files (remaining full-repo errors are pre-existing in content/[type], serialize.ts, website/publish, examples/, skills/ — untouched)
+
+Stage Summary:
+- Endpoint contract: POST /api/upload (FormData field "file", Bearer auth) → data.url = "/api/uploads/<uuid>.<ext>"; GET /api/uploads/[file] serves with immutable 1y cache, sanitized names only; api.upload<T>(path, file) added to the frontend client
+- Uploads land in public/uploads/<uuid>.<ext> — views can now store real URLs (logoUrl/coverUrl/gallery image/product photo) instead of base64 dataURLs; existing dataURL values keep working since <img src> accepts both
+
+---
+Task ID: 9-d
+Agent: admin-upgrades
+Task: Admin template edit/delete + customers CSV export
+
+Work Log:
+- Created src/app/api/admin/templates/[id]/route.ts — copied requireAdmin helper + ok/fail response convention from plans/[id]; PUT accepts {name?, category?, description?, premium?, gradient?, active?, sortOrder?} with validation (name ≥ 2 chars → "Template name must be at least 2 characters"; gradient must be a non-empty string → "Gradient must be a non-empty string"), 404 "Template not found" when id unknown, returns serializeTemplate(updated); DELETE counts Businesses with templateId === id and returns 400 "{N} businesses are using this template — set another one first" without deleting, else deletes → ok({deleted:true}) (also 404 guard for missing ids)
+- admin-view.tsx Templates tab (mirrors Plans tab patterns): per-card footer Edit (Pencil, aria-label "Edit {name}") + Delete (Trash2, aria-label "Delete {name}") buttons; edit shadcn Dialog reuses TemplateFormBody via template prop + key={id} — pre-fills name/category/description, Premium Switch, Gradient Select (same 6 GRADIENTS + dynamic fallback if stored gradient isn't in the list), Active Switch (edit-only; inactive templates are hidden from onboarding since /api/plans filters active:true) → PUT → refresh + "Template updated" toast; Delete uses existing ConfirmDialog (AlertDialog) → DELETE → success toast + refresh, catch shows destructive toast with the backend 400 "businesses are using" message verbatim
+- admin-view.tsx Customers tab: "Export CSV" button (Download icon, aria-label "Export customers as CSV", variant outline rounded-xl) in TabHeader action next to search input, disabled when filtered list empty; module-level exportCustomersCsv mirrors dashboard exportLeadsCsv Blob/download pattern — columns Name, Email, Business, Website (slug), Website status, Plan, Status (subscription), Created (en-IN locale); Revenue column skipped — inspected GET /api/admin/customers: returns {name,email,createdAt,business{slug,status},subscription{status,plan{name}}}, no revenue aggregates; full-quote escaping ("→ ""), filename websetu-customers.csv
+- Verified: bunx eslint on both files → 0 problems (exit 0); bunx tsc --noEmit | grep admin → empty
+- Curl (admin token via /api/auth/login): PUT /api/admin/templates/cmtqa0o7s0007rpjirfslutsv {"description":"Updated by test"} → ok:true; PUT back to original "Clean, trust-building layout perfect for service businesses" → ok:true; PUT {"name":"A"} → 400 name validation; PUT {"gradient":""} → 400 gradient validation; PUT without token → 401. DELETE /api/admin/templates/cmtqa0o7s0007rpjirfslutsv (used by Iron Temple Gym) → HTTP 400 {"ok":false,"error":"1 businesses are using this template — set another one first"}, template NOT deleted. POST throwaway "Throwaway Test Tpl" → created, DELETE it → ok:true {deleted:true}; DELETE again → clean 404 after adding existence guard. GET confirms 6 seed templates intact, description restored
+- Headless browser smoke (agent-browser): admin login → #/admin Templates tab shows Edit/Delete per card; Edit Modern Pro dialog pre-filled (name/category/description/gradient/premium=false/active=true); UI save persisted description then restored via API; Delete confirm on in-use template → toast "Delete failed — 1 businesses are using this template — set another one first", list unchanged; Customers tab shows Export CSV button, click fires with no page/console errors
+- dev.log tail: only routine prisma:query logs + one intentional 500 from duplicate-DELETE test before the 404 guard was added; no unexpected errors
+
+Stage Summary:
+- Endpoints added: PUT + DELETE /api/admin/templates/[id] (admin-only, same auth guard/response convention as plans; DELETE blocked with 400 + count message while any Business references the template)
+- UI changes (src/components/views/admin-view.tsx only): Templates tab edit Dialog + Delete AlertDialog flow (mirrors Plans tab), Customers tab Export CSV (client-side Blob, websetu-customers.csv)
+- No leftover data changes: throwaway template deleted, Modern Pro description restored, 6 seed templates remain
+
+---
+Task ID: 9-c
+Agent: tenant-site-upgrades
+Task: Tenant site UX/SEO upgrades (client tenant site only)
+
+Work Log:
+- Read worklog (Task 8) + both target files; confirmed "use client" at top, payload shapes (business.hours parsed from hoursJson — full day-name keys in seed, business.socials from socialsJson, Product.category, GalleryItem caption/alt)
+- JSON-LD (site-renderer.tsx): buildLocalBusinessJsonLd() → minimal schema.org LocalBusiness (@context, @type, name, description, url https://websetu.in/<slug>) + conditional image (coverUrl/logoUrl), telephone, email, PostalAddress {streetAddress/city/state/pincode, addressCountry "IN"}, geo ONLY when mapsUrl actually embeds coordinates (@lat,lng / !3d…!4d / q=lat,lng regexes, range-checked — demo mapsUrls have no coords → geo omitted, never guessed), openingHoursSpecification from hours (AM/PM + en-dash/–/-/to parser → ISO opens/closes; "Closed", "Emergency Only", unparseable days skipped; accepts mon..sun AND full day names), sameAs from non-empty http(s) socials; whole builder try/catch → null; injected as <script type="application/ld+json" dangerouslySetInnerHTML> inside the renderer root, memoized on business
+- Gallery lightbox (sections.tsx): grid images now <button> wrappers (aria-label, focus-visible brand ring, cursor-zoom-in); overlay fixed inset-0 z-[100] bg-black/90 backdrop-blur-sm, role="dialog" aria-modal="true" aria-label="Gallery image viewer"; centered max-h-[85vh] max-w-[92vw] object-contain image, caption + "n / total" counter, X close top-right, ChevronLeft/ChevronRight prev/next with auto-wrap (modulo) and aria-labels; Escape/ArrowLeft/ArrowRight keydown, body scroll-lock with previous-value restore, backdrop-only click closes (e.target === e.currentTarget so image/buttons don't); state is per-Gallery-instance, all hooks before early return
+- Lazy images: loading="lazy" decoding="async" on about/services/products/gallery (grid + lightbox)/custom payment-QR <img>; hero <img> gets loading="eager" fetchPriority="high" (above the fold); header/footer logo marks intentionally untouched (brand marks, not content images; testimonials/blog render no <img> in these files)
+- Product category filter (Products): chips row above grid when >1 distinct non-empty trimmed category — "All" + one per category; active chip filled var(--brand-primary) + white text, inactive border-current outline with hover tint, aria-pressed, rounded-full text-xs, flex-wrap for mobile; client-side filter (products without category appear under "All" only)
+- Back-to-top (site-renderer.tsx): BackToTop component rendered only when mode === "live" (unlike the WhatsApp/call floats which render unconditionally, this is explicitly hidden in dashboard builder preview which uses mode="preview"); fixed left-5 z-40 h-10 w-10 rounded-full var(--brand-primary) + white ArrowUp; window scroll listener passive:true with cleanup + initial state check, appears after 600px, smooth scrollTo top, aria-label="Back to top", opacity/translate fade transition with pointer-events-none + tabIndex -1 + aria-hidden while hidden
+- Verified: bunx eslint on the 2 files → 0 problems; bunx tsc --noEmit → zero errors in either file; curl /api/site/sharma-electricals → 200; JSON-LD logic simulated against the live payload → valid JSON, 6 openingHoursSpecification entries (Sunday "Emergency Only" skipped, Mon 09:00→20:00), sameAs with 2 social URLs, complete PostalAddress, geo/image keys omitted when absent
+
+Stage Summary:
+- Added to the tenant site: LocalBusiness JSON-LD structured data, accessible gallery lightbox (keyboard + scroll-lock + wrap-around), lazy/eager image loading, product category filter chips, mode-aware back-to-top button
+- Only src/components/site/sections.tsx and src/components/site/site-renderer.tsx modified — no other file touched
+- Decision: back-to-top is bottom-left per spec but bottom-[5.75rem] on phones (the existing mobile-only call float already occupies bottom-5 left-5 while WhatsApp owns bottom-right); it drops to sm:bottom-5 from ≥sm up
+- Decision: geo only from coordinates literally present in mapsUrl (regex + range validation), never inferred from address; hours/socials parsing is defensive (payload arrives pre-parsed via serializeBusiness, builder re-validates types + try/catch) so malformed JSON columns can never break rendering
+- sharma-electricals demo exercises every feature: 5 product categories → chips visible, 2 gallery images → "1 / 2" lightbox, hours + socials → populated openingHours/sameAs
+---
+Task ID: 9-b
+Agent: dashboard-onboarding-upgrades
+Task: Upload wiring + duplicate buttons + onboarding UPI
+
+Work Log:
+- Read worklog (9-a backend contract), api-client.ts (api.upload), dashboard-view.tsx (ImageInput / BusinessTab / CRUD_CONFIG / ContentTab / CrudDialog), onboarding-view.tsx (Step 2 FileReader logic, Step 4 contact fields), api/onboarding/route.ts + Prisma schema (Business.upiId exists, String @default(""))
+- dashboard-view.tsx ImageInput refactor: kept type validation ("Please choose an image file") + paste-URL option + preview thumb + error state; replaced FileReader→dataURL with: file ≤400KB → api.upload<{url:string}>("/api/upload", file) directly (PNG/SVG stay untouched); larger → canvas downscale to maxWidth (per-call overrides kept: logo 480 / cover 1400 / QR 800 / default now 1600) at JPEG 0.85 via canvas.toBlob → File → upload; value is now the returned /api/uploads/<uuid>.<ext> URL, never a dataURL; old 8MB reject replaced with 4MB sanity guard matching the server limit ("Image is too large — keep it under 4 MB."); uploading state: dashed upload tile + URL input disabled, Loader2 animate-spin + "Uploading…" text, remove-button disabled while in flight; failure → setErr(errMsg(e)) which surfaces the ApiError message verbatim; module-level downscaleToJpegFile helper uses URL.createObjectURL + revoke (no base64 in memory)
+- All ImageInput call sites get this automatically: Business Profile logo/cover/payment QR, CRUD dialog renders ImageInput for every type:"image" field (service photo, product photo, gallery url, blog cover) — verified, no per-field changes needed; legacy dataURL / https values in DB keep previewing since it's just <img src>
+- dashboard-view.tsx Duplicate: ContentTab gains duplicateSource state + openAdd/openEdit/openDuplicate wrappers (every dialog-open path resets both editing and duplicateSource so no stale prefill); rows for services + products only (DUPLICABLE const) get a Copy icon button (aria-label + title "Duplicate {name}") before Edit; clicking opens the same CrudDialog pre-filled from the source item via new `duplicate` prop — name → "{name} (Copy)", featured switch forced false (other switches copied), editing stays null so save() POSTs a new item then normal refetch; dialog title "Duplicate service/product"; toast on duplicate click: "{name} duplicated — edit and save"
+- onboarding-view.tsx Step 2: onPickImage rewritten async — same ≤4MB guard, ≤400KB direct / canvas downscale (logo 480, cover 1400, JPEG 0.85) → api.upload → applyImage(kind, res.url) into logoUrl/coverUrl; deleted downscaleDataUrl/FileReader; previews, "Please choose an image file" validation and cover preset-gradient behavior unchanged; new uploading state ("logo"|"cover"|null) disables both Upload buttons (spinner + "Uploading…" on the active one), Remove/Clear buttons and preset swatches; hint text updated from "up to 500 KB" to "up to 4 MB"; draft persistence untouched (whole form object → upiId and URL values persist automatically; old drafts with dataURL values still render)
+- onboarding-view.tsx Step 4: "UPI ID (for payments)" optional field added below GSTIN (sm:col-span-2, mono font, placeholder name@okicici), bound to new form.upiId (OnboardingForm + DEFAULT_FORM); inline red border + error text via isValidUpiId from "@/lib/site-utils", helper text "Visitors get a Scan & Pay QR on your website automatically. Example: name@okicici"; validateStep(4) blocks Continue (and final submit) with toast/shake when non-empty and invalid; upiId: form.upiId.trim() added to the POST /api/onboarding payload; added cn import for the conditional class
+- src/app/api/onboarding/route.ts (the single permitted exception): the route dropped unknown keys — db.business.create data got ONE line `upiId: String(body.upiId || "").trim(),` after gstin; verified against Prisma schema upiId String @default("")
+- Verified: bunx eslint on all 3 files → exit 0; bunx tsc --noEmit | grep dashboard-view|onboarding-view|api/onboarding → empty; curl login demo@websetu.in → token, POST /api/upload -F file=@/tmp/t.png → {"ok":true,"data":{"url":"/api/uploads/732e495e-….png"}}, GET that URL → 200 image/png, bytes identical (cmp), Cache-Control immutable; onboarding route not curl-created (demo user already has a business → would 409) — passthrough confirmed by code read only as instructed; dev.log tail clean (routine prisma:query + the intentional 404 probe for a fake upload name)
+
+Stage Summary:
+- dashboard-view.tsx: every image slot (profile logo/cover/payment QR + all CRUD image fields) now uploads real files to POST /api/upload and stores /api/uploads/ URLs instead of bloating the DB with base64 dataURLs, with per-field canvas downscale kept, 4MB sanity guard, and visible Uploading… states; services + products rows gained a Duplicate action that reuses the CRUD dialog as a pre-filled create flow ("(Copy)" name, featured reset, POST on save)
+- onboarding-view.tsx: Step 2 logo/cover uploads go through the same real-upload pipeline (downscale → File → /api/upload → URL in form state + localStorage draft), Step 4 gained the optional UPI ID field with isValidUpiId validation gating Continue, sent in the onboarding payload
+- Onboarding route DID need the passthrough: added exactly one line (upiId) to db.business.create — no other API file touched; only dashboard-view.tsx, onboarding-view.tsx and route.ts modified
+---
+Task ID: 9-e
+Agent: main (Z.ai Code)
+Task: Full lint + Agent Browser E2E verification of tasks 9-a/9-b/9-c/9-d
+
+Work Log:
+- bun run lint → clean (0 errors/warnings repo-wide)
+- Tenant site (#/site/sharma-electricals): JSON-LD present — LocalBusiness, name/phone/6 openingHours/2 sameAs; product filter chips All/Solar/Fittings/Lighting/Materials/Industrial — "Fittings" correctly isolates Modular Switchboards; gallery lightbox opens (counter 1/2, aria-labeled Close/Previous/Next), ArrowRight → 2/2 caption change, Escape closes; back-to-top appears after 600px scroll and returns scrollY to 0; 390px viewport no horizontal scroll
+- Dashboard (demo login): Services rows show 4 Duplicate buttons — dialog titled "Duplicate service" prefilled "House Wiring & Rewiring (Copy)" → Add created item → deleted via row Delete + confirm (cleanup OK); Business Profile logo file input → agent-browser upload of real PNG → ImageInput uploaded via POST /api/upload, logo <img> now /api/uploads/b663cc80-….png, Save persisted to DB (verified via /api/site payload logoUrl)
+- Admin: Templates tab 6× Edit/Delete; "Edit Modern Pro" dialog prefilled, description edit persisted to DB then reverted; DELETE in-use template via API → 400 "businesses are using this template"; Customers "Export customers as CSV" button click → no console/page errors
+- Onboarding: fresh register → step 4 shows "UPI ID (for payments)" + helper "Visitors get a Scan & Pay QR…" — invalid "not-a-upi" blocks Continue with error, valid "improvecheck@okhdfcbank" proceeds to step 5; abandoned without submit; test user deleted from DB
+- dev.log: single PrismaClientKnownRequestError = 9-d agent's intentional duplicate-DELETE negative test before guard; recent tail all 200s
+- Note: Radix Tabs/DropdownMenu need playwright-native clicks (JS .click() ignored) — used refs for tab switching
+
+Stage Summary:
+- ALL IMPROVEMENTS BROWSER-VERIFIED END-TO-END. Real file uploads (4MB, /api/uploads/* immutable cache) replace dataURL storage across dashboard + onboarding; UPI/QR setup now part of onboarding; duplicate-item productivity; tenant sites get LocalBusiness JSON-LD + lightbox + lazy images + category filter + back-to-top; admin gets template CRUD + customers CSV

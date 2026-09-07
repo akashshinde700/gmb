@@ -47,6 +47,7 @@ export async function POST(req: Request) {
       pincode: String(body.pincode || "").trim(),
       establishedYear: String(body.establishedYear || "").trim(),
       gstin: String(body.gstin || "").trim(),
+      upiId: String(body.upiId || "").trim(),
       logoUrl: String(body.logoUrl || "").trim(),
       coverUrl,
       brandPrimary: String(templateTheme.primary || "#059669"),

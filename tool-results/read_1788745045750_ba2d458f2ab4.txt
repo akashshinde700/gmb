@@ -1,0 +1,215 @@
+     1→# Worklog — WebSetu: Multi-Tenant Business Website SaaS Platform
+     2→
+     3→Project: Build a production-style multi-tenant SaaS ("WebSetu") where local businesses create,
+     4→publish and operate a professional website (site + SEO + leads + WhatsApp + analytics).
+     5→
+     6→Constraints:
+     7→- Single Next.js 16 app, ONLY `/` page visible to user → hash-based SPA routing inside src/app/page.tsx
+     8→- API routes under src/app/api/* for all backend logic (no server actions)
+     9→- Prisma + SQLite (db/custom.db), z-ai-web-dev-sdk ONLY in backend
+    10→- shadcn/ui components in src/components/ui (do not rewrite), Tailwind 4, zustand, no indigo/blue theme (use emerald/teal + amber)
+    11→
+    12→---
+    13→Task ID: 1-5
+    14→Agent: main (Z.ai Code)
+    15→Task: Foundation — schema, core libs, API layer, site rendering engine, app shell
+    16→
+    17→Work Log:
+    18→- Read uploaded spec (2140 lines, 73 requirement sections) → planned "WebSetu" platform
+    19→- Prisma schema: User, Business, Website, Service, Product, GalleryItem, Testimonial, Faq, BlogPost, Lead, Plan, Subscription, Payment, Coupon, Template, AnalyticsEvent, PlatformLead, Notification, AuditLog — pushed to SQLite
+    20→- Seed: 4 plans (Starter ₹499 / Business ₹999 / Professional ₹1999 / Enterprise), 6 templates, 2 coupons (LAUNCH50, ANNUAL10), 2 published demo businesses (Sharma Electricals — electrical contractor Pune w/ leads+analytics+payments; Cafe Aroma), admin + demo users
+    21→- Auth: scrypt hashing + HMAC-signed 30d bearer tokens (src/lib/auth.ts); tenant derived from session only
+    22→- API routes: auth/register, auth/login, auth/me, onboarding (creates business + generated site + 14d trial), business, website, website/publish (validates), content/[type] CRUD (services|products|gallery|testimonials|faqs|blog), leads (public POST + tenant list), leads/[id], analytics/event (public), analytics/summary, site/[slug] (public renderer data), plans, subscription (mock Razorpay-ready w/ coupons), coupons/validate, ai/generate (z-ai LLM w/ fallback), notifications, platform-lead, admin/stats, admin/customers, admin/businesses/[id], admin/plans(+[id]), admin/templates, admin/coupons(+[id]), admin/platform-leads
+    23→- Sections engine: src/lib/sections.ts (generateSite builds ordered sections from business+AI content), src/components/site/sections.tsx (12 section components), site-renderer.tsx (theme CSS vars, header/footer, WhatsApp float, tracking, lead submit)
+    24→- Health scoring: src/lib/health.ts (16 weighted checks)
+    25→- Store: src/store/app-store.ts (zustand; hash routing #/ #/login #/onboarding #/dashboard #/admin #/site/<slug>)
+    26→- App shell: src/app/page.tsx with route guards; layout.tsx branded WebSetu
+    27→- Images generating: public/images/{hero-business,industry-electrical,industry-food,landing-owner}.jpg
+    28→
+    29→Stage Summary:
+    30→- Backend 100% done. Demo accounts: admin@websetu.in/admin1234, demo@websetu.in/demo1234, cafe@websetu.in/cafe1234
+    31→- Contracts for view builders: use store `useApp` from "@/store/app-store", api client from "@/lib/api-client" (api.get/post/put/patch/del), types in "@/lib/types"
+    32→- Views to be built by subagents in src/components/views/{landing,auth,onboarding,dashboard,admin,site}-view.tsx
+    33→
+    34→---
+    35→Task ID: 6-c
+    36→Agent: dashboard-builder (Z.ai Code)
+    37→Task: Customer Dashboard — single file src/components/views/dashboard-view.tsx (~3050 lines)
+    38→
+    39→Work Log:
+    40→- Read contracts: types.ts, api-client.ts, app-store.ts, site-renderer.tsx, health.ts, sections.ts (SECTION_LIBRARY), use-toast; verified API shapes (content/[type], leads[/id], website[/publish], business, notifications, subscription, coupons/validate, analytics/summary) + serialize.ts
+    41→- Layout: desktop sidebar w-60 (logo→#/, business card w/ status badge, grouped nav WEBSITE/CONTENT/GROW/ACCOUNT, NEW-leads count badge on Leads, View Website → openSite(slug,"dashboard"), notification bell Popover w/ unread + Mark-all-read, account dropdown w/ logout), mobile topbar + hamburger Sheet nav + horizontal scroll tab strip, footer strip w/ mt-auto; <style> .ws-scroll custom scrollbars
+    42→- Central data: content arrays (services/products/gallery/testimonials/faqs/blog) fetched once + refetchContent(type); leads fetched at shell for sidebar badge; notifications fetched in bell
+    43→- OVERVIEW: health via client-side computeHealth(business, website, counts) w/ SVG ScoreRing (emerald ≥80/amber ≥50/red), recommendations, quick actions grid (6), stats row from /api/analytics/summary, subscription mini-card (trial days-left / renewal date) → upgrade
+    44→- BUILDER: local sections/theme/SEO state synced to store website ref; section list (grip, SECTION_LIBRARY names+icons, visibility Switch, up/down reorder, edit, AlertDialog delete, hero protected); Add-section dropdown w/ default content per type; per-type SectionEditor (hero/about/stats items ≤6/whyUs/faq items/cta/contact/generic title+subtitle) via shared top-level ItemsListEditor; collapsible ThemePanel (font/radius/heroStyle/cardStyle/containerWidth + brand color presets + 3 pickers → patchBusiness + debounced api.put); SEO card w/ 60/160 counters; top bar device toggle + dirty indicator + Save Draft (api.put /api/website → patchBusiness) + Publish AlertDialog (auto-saves draft, api.post publish, toasts validation errors, refreshes me → setBusiness) + Live dropdown (view/unpublish); preview pane = SiteRenderer mode="preview" in device-framed scroll container, SitePayload built from local state + content
+    45→- BUSINESS PROFILE: full form (all fields + logo/cover URL w/ thumb preview, GMB/maps, 6 socials, 7-day hours) → api.put /api/business → patchBusiness
+    46→- CONTENT x6: generic ContentTab + CRUD_CONFIG (fields per type, gallery thumbs, badges for featured/rating/published/hidePrice) + CrudDialog (create/edit, blog slug auto-slugify until touched, number/switch/select coercion) → POST/PUT/DELETE /api/content/{type}[/id] → refetch; empty states
+    47→- LEADS: status Tabs (counts) + search (client-side), responsive table (desktop) / cards (mobile), inline status Select → api.patch, details+notes Dialog → api.patch, call/WhatsApp quick links, Delete, Export CSV blob
+    48→- SEO: SeoFields editors + save, SERP preview (emerald-700 URL, zinc title), Local SEO card, AEO checklist from health checks, sitemap/robots info cards
+    49→- ANALYTICS: 6 StatCards, recharts AreaChart (visits emerald / leads amber gradients) from summary.daily, BarChart CTA breakdown, GA note card
+    50→- SUBSCRIPTION: current plan + usage Progress (services vs plan.maxPages) + aiCredits, plan cards grid (store plans, Monthly/Yearly toggle, popular/current badges), coupon Validate → /api/coupons/validate, method select (UPI/CARD/NETBANKING), Pay → /api/subscription → invoice success Dialog → refresh me + refetch, payments history table
+    51→- SETTINGS: account info, notification preference switches, danger zone (support mailto + logout)
+    52→- Fixed lint (react-hooks/static-components: hoisted ItemsListEditor; unused eslint-disables; missing ShieldCheck import; BusinessWithMeta import from store; Rec[] casts) — eslint clean, tsc clean for file
+    53→- Smoke-tested in headless browser w/ demo login: overview health 82, builder (list/editor/preview), leads table, analytics, subscription checkout, services CRUD dialog all render + no console errors
+    54→
+    55→Stage Summary:
+    56→- Dashboard complete & real: every button wired to a live endpoint or store action; loading skeletons, toasts on saves/errors, empty states, responsive (sidebar→Sheet+tab strip), max-h-96 ws-scroll long lists
+    57→- Incomplete / notes: logo+cover are URL-based (no file-upload endpoint exists); GA integration is a placeholder card per spec; brand color save debounced w/ silent catch; hours editor uses full day-name keys (matches onboarding seed + hoursForBusiness)
+    58→
+    59→---
+    60→Task ID: 6-a
+    61→Agent: frontend-views (Z.ai Code)
+    62→Task: Landing view + Auth view (marketing site & split-screen auth)
+    63→
+    64→Work Log:
+    65→- Read contracts: types.ts, api-client.ts, app-store.ts, page.tsx, shadcn ui (badge/button/card/input/label/accordion/dialog/switch/tabs/alert/textarea), hooks/use-toast, layout.tsx (Toaster mounted → useToast works), api routes (auth/login|register, plans, platform-lead, notifications), seed (plan slugs/prices, template gradients, sharma-electricals slug)
+    66→- Created src/components/views/landing-view.tsx ("use client", fragment root): sticky backdrop-blur navbar (logo, anchor links, Login/Create CTA, user→Dashboard, mobile hamburger), hero with framer-motion fade-up + gradient headline + mock browser-window wireframe (hero-business.jpg via <img onError> fallback) + floating stat chips (500+ / ★4.9), trust bar (8 category chips + "+37 more"), Features 6-card grid (LayoutTemplate/Sparkles/Search/MapPin/Inbox/MessageCircle), How-it-works 4 steps with progress-bar fill visual, Templates grid from GET /api/plans {plans,templates} (6 cards, amber Premium badge, fallback seed-mirror list doubles as Tailwind gradient safelist since runtime gradient strings aren't scanned), Pricing from store.plans (fallback fetched) with Monthly/Yearly Switch, ₹ en-IN formatting, Enterprise (priceMonthly=0) → "Custom", Business card emerald ring + MOST POPULAR + lg:scale-105, zinc-900 stats band (500+/40+/95+/24/7), FAQ shadcn Accordion (5 Q&As), final CTA gradient band, footer mt-auto bg-zinc-950 with Product/Company/Legal columns, Contact → Dialog form POST /api/platform-lead {name,email,phone,businessType,message,source:"CONTACT"} + success/error toast, year in copyright
+    67→- Created src/components/views/auth-view.tsx: split-screen (left emerald gradient panel with dot pattern, headline "Bring your business online today.", 3 CheckCircle2 bullets, testimonial card — hidden on mobile; right card with Tabs Login/Register bound to store authMode), login → POST /api/auth/login → setToken → await hydrate() → route: ADMIN→#/admin, business→#/dashboard, else→#/onboarding; register with client validation (name≥2, email regex, password≥6) → same flow; inline Alert destructive errors, Loader2 spin on submit, demo credential hint card + "Fill demo" button, "Back to home" → #/, best-effort GET /api/notifications → store.setUnread after auth, a11y labels/autoComplete
+    68→- Design notes: anchor links use scrollIntoView + preventDefault (raw hash anchors would collide with shell hashchange→scrollTo top); brand CTAs use explicit bg-emerald-600 (globals --primary is zinc); all grids grid-cols-1 md:grid-cols-2 lg:grid-cols-3/4; no indigo/blue
+    69→- Verification: bunx tsc --noEmit scoped → 0 errors in both files; bunx eslint scoped → 0 errors/warnings (exit 0). Full-repo lint errors in site-view.tsx belong to another task — untouched
+    70→
+    71→Stage Summary:
+    72→- LandingView + AuthView complete and wired to the app shell's hash router. Demo/admin login flows route correctly (admin→admin panel, customer w/ business→dashboard, new→onboarding)
+    73→- Not done (by design): other views (onboarding/dashboard/admin/site) are other agents' tasks; hero-business.jpg not present in public/images yet (onError fallback handles it); no files outside my 2 were modified
+    74→
+    75→---
+    76→Task ID: 6-b
+    77→Agent: onboarding-wizard (Z.ai Code)
+    78→Task: Onboarding wizard view — src/components/views/onboarding-view.tsx (single new file, no other file touched)
+    79→
+    80→Work Log:
+    81→- Read contracts: worklog, types.ts, api-client.ts, app-store.ts, sections.ts, ui inventory, api routes (onboarding, ai/generate, plans), serialize.ts, seed gradients
+    82→- Built 7-step wizard: Business → Branding → Services → Contact → Template → Preview → Publish
+    83→- Header: WebSetu mini logo + "Website Setup {pct}% Complete" (Progress value=(step/7)*100, emerald override) + 7 step dots w/ labels (sm+) + "Step X of 7" (mobile)
+    84→- State: single OnboardingForm useState; localStorage "websetu_onboarding_draft" persists {step, form} on change, restores on mount, removed after success (try/catch quota-safe)
+    85→- Step 1: searchable category radiogroup (45 chips + Other→custom input) in max-h-56 scroll w/ custom webkit scrollbar; name/tagline/description/establishedYear; validates name+category, shake+toast+inline destructive Alert on fail
+    86→- Step 2: logo upload (FileReader→dataURL, >500KB rejected w/ hint, >300KB canvas-downscaled to 480px, circle preview w/ initial fallback); cover upload (16:9 aspect-video preview) + 3 preset gradients (coverPreset, coverUrl cleared); 3 color pickers (#059669/#0f766e/#f59e0b) + live preview strip
+    87→- Step 3: add/remove services (name+desc, Enter-to-add), category-aware quick-add chips (Electrical→House Wiring…, Restaurant→Dine-in…, generic fallback), ≥1 required
+    88→- Step 4: phone+city required, WhatsApp "same as phone" checkbox (default on → hides input), email/address/state/pincode/gstin, GMB+Maps URL w/ helper text
+    89→- Step 5: fetches /api/plans (templates+plans) lazily on step entry; template cards w/ gradient header (API gradient classes rendered via inline linear-gradient color-mix fallback since Tailwind can't see runtime classes), Premium amber badge, selected = emerald ring, mini live brand-color preview on selected card; default = first template; Retry on fetch failure
+    90→- Step 6: tone select + "✨ Generate" → POST /api/ai/generate; spinner+"Writing your content…"+skeleton; editable heroHeading/heroSubheading/about bound to ai state; stats grid; FAQs in collapsed Accordion; SEO line; AI failure non-blocking (inline alert + fallback note); full mock homepage in browser-chrome card (brand-gradient hero, stats, services from step 3, about, contact strip, footer) + SECTION_LIBRARY badges; slug preview websetu.in/<guess>
+    91→- Step 7: 4 plan cards (₹/mo, Check features, popular=amber badge+ring), "Choose {name} — ₹X/mo" per card stores selectedPlanId (default popular), prominent "Start 14-day free trial" + note; POST /api/onboarding with all fields+ai+templateId+cover (coverPreset sent alongside coverUrl); success → setBusiness(business), toast, draft cleared, success screen (ws-pop animated check, "Your website is ready!", Open Dashboard → #/dashboard, Preview Website → openSite(slug,"dashboard"))
+    92→- Common: sticky bottom Back/Continue bar inside card (sticky bottom-0, safe-area padding); "Create My Website 🚀" on step 7; ApiError shown in red Alert + destructive toast; all inputs labeled (htmlFor/id), radiogroup/aria-checked/aria-pressed roles, sr-only file inputs; footer "© WebSetu — Setup wizard" mt-auto w/ safe-area inset
+    93→- Design: emerald-600 primary CTAs, amber-500 accents, zinc neutrals, rounded-2xl cards, bg-[#fafaf9], custom scrollbars, ws-shake/ws-pop keyframes via inline <style>
+    94→
+    95→Stage Summary:
+    96→- Files created: src/components/views/onboarding-view.tsx (~1250 lines) — nothing else modified
+    97→- Lint: 0 errors / 0 warnings in onboarding-view.tsx (repo-wide residual issues are other agents' files: site-view.tsx effect warning/error, missing dashboard/admin views)
+    98→- tsc: no errors originating from onboarding-view.tsx
+    99→- Wire format honored: api.get/post, useApp(setBusiness/openSite/plans fallback), AiSiteContent from sections.ts, Plan/TemplateDef/BusinessWithMeta types
+   100→
+   101→---
+   102→Task ID: 6-d
+   103→Agent: views-admin-site (Z.ai Code)
+   104→Task: SiteView (tenant website full-screen) + AdminView (super admin console)
+   105→
+   106→Work Log:
+   107→- site-view.tsx: props {slug}; fetches /api/site/[slug] on mount+slug change; result keyed by slug so route changes re-enter loading without sync setState (passes react-hooks/set-state-in-effect). Loading = branded W-logo spinner page. Error screens by status: 404 Globe "Website not found" / 402 Clock "Website expired" / 403 ShieldAlert "Website suspended" / fallback AlertTriangle; message from ApiError; 404-only "Create your own website →" link to #/; "Back" (history.back) when siteOrigin==="dashboard". Success renders SiteRenderer mode="live". Dashboard-origin slim fixed topbar (h-10 zinc-900): "Previewing {name}" + status pill + desktop/tablet/mobile device toggles + "Back to Dashboard" → #/dashboard; content wrapper pt-10 with [&>div>header]:top-10 so SiteRenderer sticky header sticks below the bar; zinc-100 backdrop for device frames. Public origin = pure site, no chrome, no footer (SiteRenderer has own).
+   108→- admin-view.tsx: zinc-900 sidebar (desktop fixed w-60 + mobile Sheet via hamburger) with emerald active pill, admin identity card, Back-to-site; topbar "WebSetu Admin" + tab label + admin email + Back to site; sticky footer via mt-auto. Tabs via useApp adminTab/setAdminTab: Overview, Customers, Plans, Templates, Coupons, Platform Leads.
+   109→  - Overview: /api/admin/stats; revenue highlight card (month label, Month ₹ + All-time ₹, recharts LineChart sparkline over recentPayments, quick stats Plans/Templates/Websites/Leads en-IN formatted), 6 KPI cards grid, recent payments table (invoiceNo mono, ₹, method badge, description, date), recent leads list (name, business.name, phone, status badge), loading skeletons + empty states.
+   110→  - Customers: /api/admin/customers + client-side search (name/email/business/slug); overflow-x-auto table; row DropdownMenu → View site (openSite(slug,"dashboard")), Suspend/Activate (AlertDialog → PATCH /api/admin/businesses/[id] SUSPENDED|PUBLISHED), Delete website (AlertDialog → DELETE); refresh + toast after each.
+   111→  - Plans: cards grid; edit Dialog (name, tagline, ₹monthly/₹yearly, features one-per-line textarea, maxPages(-1=unlimited), aiCredits, popular Switch, active Switch) → PUT /api/admin/plans/[id]; New Plan → POST; Delete → DELETE with {disabled:true,message} handled in toast; form lives in keyed inner body component (no setState-in-effect).
+   112→  - Templates: gradient-preview cards (premium Crown badge, category, inactive badge); New Template Dialog (name, category, description, premium, gradient Select from the 6 seed gradient strings) → POST; edit/delete skipped (no endpoints — future work).
+   113→  - Coupons: table code(mono)/type badge/value/usedCount-maxUses/active Switch (optimistic PATCH /api/admin/coupons/[id], revert on error)/expiry/delete (AlertDialog → DELETE); Create Dialog (code uppercase, PERCENT/FIXED select, value, description, maxUses, expiresAt date→EOD ISO) → POST.
+   114→  - Platform Leads: table lead/contact/businessType/message(source badge)/status Select (NEW|CONTACTED|CONVERTED|CLOSED → PATCH /api/admin/platform-leads {id,status}, optimistic)/date.
+   115→- Design: emerald-600 primary + amber accents + zinc neutrals, no indigo/blue; responsive (overflow-x-auto tables, mobile Sheet nav, grid collapse); aria labels on icon buttons/switches/selects; toasts via @/hooks/use-toast.
+   116→- Verified: lint clean for both files (only pre-existing seed.ts require() error + 6 unused-disable warnings remain in foundation files); tsc clean for both files; curl smoke tests green (stats/customers/coupons/platform-leads with admin token; site payloads for sharma-electricals + cafe-aroma; 404 path).
+   117→
+   118→Stage Summary:
+   119→- Files created: src/components/views/site-view.tsx (~250 lines), src/components/views/admin-view.tsx (~1830 lines). No other files modified.
+   120→- Demo: login admin@websetu.in/admin1234 → #/admin for console; #/site/sharma-electricals for tenant site; View Site from admin Customers opens preview chrome.
+   121→
+   122→---
+   123→Task ID: 7-9
+   124→Agent: main (Z.ai Code)
+   125→Task: Images, integration fixes, end-to-end Agent Browser verification
+   126→
+   127→Work Log:
+   128→- Generated 4 AI images (hero-business, industry-electrical, industry-food, landing-owner) in public/images
+   129→- Fixed prisma/seed.ts require() lint error; auto-fixed unused eslint-disable directives → lint 0 errors 0 warnings
+   130→- Fixed SiteRenderer hero: heroStyle now falls back from website.theme when section content lacks it (image hero now renders)
+   131→- Fixed leads table message overflow (truncate on block button w-[220px])
+   132→- Owner draft preview: /api/site/[slug] now returns DRAFT site to its owning session (+ published flag on payload); site-view shows preview chrome + mode="preview" for unpublished owner views
+   133→- Fixed /api/content/[type] GET: BlogPost has no sortOrder → type-specific orderBy (blog: publishedAt desc)
+   134→- Browser-verified golden paths: landing render, demo tenant site (Sharma Electricals), public enquiry form → lead in dashboard, demo login → dashboard (health 82), Website Builder (sections/theme/SEO/live preview), Leads tab (status change persisted NEW→CONTACTED), full registration → 7-step onboarding (Gym category, services quick-add, Amber Glow branding, template, REAL AI content generation for "Iron Temple Gym", trial creation) → draft preview → publish → public access, admin login → overview KPIs (₹5,490 revenue) → customers table, coupon LAUNCH50 (₹499→₹249) + Business yearly w/ ANNUAL10 (₹8,991, invoice WS-2026-505044)
+   135→- Mobile (390px) verified: landing, pricing, footer, tenant site — no horizontal scroll anywhere
+   136→- Verified all 6 content-type endpoints return OK after blog fix; dev.log clean (0 recent errors)
+   137→
+   138→Stage Summary:
+   139→- ALL VERIFIED END-TO-END. Platform is fully functional: marketing site → signup → onboarding wizard → AI content → website generation → builder → publish → leads → analytics → subscriptions/payments/coupons → admin console
+   140→- Accounts: admin@websetu.in/admin1234 · demo@websetu.in/demo1234 (Sharma Electricals) · cafe@websetu.in/cafe1234 · anita@test.in/test1234 (Iron Temple Gym, published)
+   141→---
+   142→Task ID: 8
+   143→Agent: main (Z.ai Code)
+   144→Task: Plan page limits — Starter 5 / Business 10 / Professional 20 (user: "starter main 5 pages Buisness main 10 professional 20")
+   145→
+   146→Work Log:
+   147→- Verified previous session's batch fully shipped: BRAND_PALETTES (12 palettes) wired into onboarding step-2 + dashboard ThemePanel; Payment QR section (react-qr-code, UPI deep-link, custom QR image, copy-VPA, pay-link CTA); Product "Product photo" upload + "YouTube video link" field with play-badge + youtube-nocookie embed; prices ₹999/₹1499/₹2999
+   148→- Updated prisma/seed.ts plan block: maxPages 8→5 ("5 pages"), 25→10 ("Up to 10 pages"), 60→20 ("Up to 20 pages") for fresh installs
+   149→- Rewrote prisma/update-plans.ts as explicit idempotent migration (sets priceMonthly/priceYearly/maxPages/aiCredits/popular + full featuresJson per slug); ran against live DB → starter 5, business 10, professional 20
+   150→- Confirmed all views render plans from API (no hardcoded page strings)
+   151→- Agent Browser verification: landing pricing shows ₹999/₹1,499/₹2,999 + "5/10/20 pages"; /api/plans returns maxPages 5/10/20; tenant site renders Scan & Pay QR (SVG) + rajesh@okicici + Pay Now nav; product "Solar Panel 200W" image + video play button opens youtube-nocookie iframe; dashboard builder palette "Apply Royal Purple" changed --brand-primary to #7c3aed with auto-save, then reverted to Emerald Fresh; products dialog labels confirmed (Product photo, YouTube video link); subscription usage meter "4 / 10"; 390px viewport no horizontal scroll; 0 console/page/dev.log errors
+   152→
+   153→Stage Summary:
+   154→- Plans now: Starter ₹999/mo · 5 pages · Business ₹1499/mo · 10 pages (popular) · Professional ₹2999/mo · 20 pages · Enterprise custom
+   155→- Note: headless clicks on dashboard sidebar need native .click() dispatch (playwright click intercepted); verification used JS click — app itself fine in real browsers
+   156→
+   157→---
+   158→Task ID: 9-a
+   159→Agent: backend-uploads
+   160→Task: File upload backend API
+   161→
+   162→Work Log:
+   163→- Read worklog (Task 8), auth.ts (getSessionUser + ok/fail helpers), business/content routes for conventions, api-client.ts
+   164→- Created src/app/api/upload/route.ts: POST only, requires session (any CUSTOMER/ADMIN via getSessionUser → 401 otherwise); parses multipart/form-data field "file"; validates image mime (image/jpeg|png|webp|gif|svg+xml → ext map) + max 4 MB + non-empty; filename 100% server-generated `${crypto.randomUUID()}.${ext}` (original name never touched); saves Buffer.from(await file.arrayBuffer()) via node:fs/promises writeFile into public/uploads (mkdir recursive); resolves dir+dest and asserts dest stays inside dir (path-traversal guard); returns { ok:true, data:{ url:"/api/uploads/<name>" } }
+   165→- Created src/app/api/uploads/[file]/route.ts: GET only; Next 16 Promise params (`await params`); rejects names failing /^[A-Za-z0-9._-]+$/ or containing ".." (404), unknown extension (404), resolved path outside uploads dir (404), missing file (404); serves binary via new Response(new Uint8Array(buf)) with Content-Type by extension + Cache-Control "public, max-age=31536000, immutable"
+   166→- Added public/uploads/.gitkeep
+   167→- src/lib/api-client.ts: added api.upload<T>(path, file) — FormData("file"), Bearer token if present, no Content-Type header (browser sets multipart boundary), same ok/error unwrap + ApiError as request()
+   168→- curl verification (dev :3000, demo@websetu.in token): POST /api/upload -F file=@/tmp/t.png → {"ok":true,"data":{"url":"/api/uploads/6e6bf5f4-….png"}}; GET that URL → HTTP 200 content-type image/png, bytes identical to original (cmp), cache-control immutable; svg upload → 200 image/svg+xml
+   169→- Negative: no token → 401 Unauthorized; /tmp/t.txt → 400 "Unsupported file type — allowed: JPEG, PNG, WebP, GIF, SVG"; 5 MB fake png → 400 "File too large — maximum size is 4 MB"; GET /api/uploads/..%2fsecret → 404; /api/uploads/a..b.png and %2e%2e-encoded → 404; missing uuid.png → 404; bare /api/uploads/.. → Next normalizes to 308 redirect (never reaches fs)
+   170→- dev.log tail 40 lines: clean, no errors. eslint exit 0 on all 3 files; tsc --noEmit: no errors in the 3 changed files (remaining full-repo errors are pre-existing in content/[type], serialize.ts, website/publish, examples/, skills/ — untouched)
+   171→
+   172→Stage Summary:
+   173→- Endpoint contract: POST /api/upload (FormData field "file", Bearer auth) → data.url = "/api/uploads/<uuid>.<ext>"; GET /api/uploads/[file] serves with immutable 1y cache, sanitized names only; api.upload<T>(path, file) added to the frontend client
+   174→- Uploads land in public/uploads/<uuid>.<ext> — views can now store real URLs (logoUrl/coverUrl/gallery image/product photo) instead of base64 dataURLs; existing dataURL values keep working since <img src> accepts both
+   175→
+   176→---
+   177→Task ID: 9-d
+   178→Agent: admin-upgrades
+   179→Task: Admin template edit/delete + customers CSV export
+   180→
+   181→Work Log:
+   182→- Created src/app/api/admin/templates/[id]/route.ts — copied requireAdmin helper + ok/fail response convention from plans/[id]; PUT accepts {name?, category?, description?, premium?, gradient?, active?, sortOrder?} with validation (name ≥ 2 chars → "Template name must be at least 2 characters"; gradient must be a non-empty string → "Gradient must be a non-empty string"), 404 "Template not found" when id unknown, returns serializeTemplate(updated); DELETE counts Businesses with templateId === id and returns 400 "{N} businesses are using this template — set another one first" without deleting, else deletes → ok({deleted:true}) (also 404 guard for missing ids)
+   183→- admin-view.tsx Templates tab (mirrors Plans tab patterns): per-card footer Edit (Pencil, aria-label "Edit {name}") + Delete (Trash2, aria-label "Delete {name}") buttons; edit shadcn Dialog reuses TemplateFormBody via template prop + key={id} — pre-fills name/category/description, Premium Switch, Gradient Select (same 6 GRADIENTS + dynamic fallback if stored gradient isn't in the list), Active Switch (edit-only; inactive templates are hidden from onboarding since /api/plans filters active:true) → PUT → refresh + "Template updated" toast; Delete uses existing ConfirmDialog (AlertDialog) → DELETE → success toast + refresh, catch shows destructive toast with the backend 400 "businesses are using" message verbatim
+   184→- admin-view.tsx Customers tab: "Export CSV" button (Download icon, aria-label "Export customers as CSV", variant outline rounded-xl) in TabHeader action next to search input, disabled when filtered list empty; module-level exportCustomersCsv mirrors dashboard exportLeadsCsv Blob/download pattern — columns Name, Email, Business, Website (slug), Website status, Plan, Status (subscription), Created (en-IN locale); Revenue column skipped — inspected GET /api/admin/customers: returns {name,email,createdAt,business{slug,status},subscription{status,plan{name}}}, no revenue aggregates; full-quote escaping ("→ ""), filename websetu-customers.csv
+   185→- Verified: bunx eslint on both files → 0 problems (exit 0); bunx tsc --noEmit | grep admin → empty
+   186→- Curl (admin token via /api/auth/login): PUT /api/admin/templates/cmtqa0o7s0007rpjirfslutsv {"description":"Updated by test"} → ok:true; PUT back to original "Clean, trust-building layout perfect for service businesses" → ok:true; PUT {"name":"A"} → 400 name validation; PUT {"gradient":""} → 400 gradient validation; PUT without token → 401. DELETE /api/admin/templates/cmtqa0o7s0007rpjirfslutsv (used by Iron Temple Gym) → HTTP 400 {"ok":false,"error":"1 businesses are using this template — set another one first"}, template NOT deleted. POST throwaway "Throwaway Test Tpl" → created, DELETE it → ok:true {deleted:true}; DELETE again → clean 404 after adding existence guard. GET confirms 6 seed templates intact, description restored
+   187→- Headless browser smoke (agent-browser): admin login → #/admin Templates tab shows Edit/Delete per card; Edit Modern Pro dialog pre-filled (name/category/description/gradient/premium=false/active=true); UI save persisted description then restored via API; Delete confirm on in-use template → toast "Delete failed — 1 businesses are using this template — set another one first", list unchanged; Customers tab shows Export CSV button, click fires with no page/console errors
+   188→- dev.log tail: only routine prisma:query logs + one intentional 500 from duplicate-DELETE test before the 404 guard was added; no unexpected errors
+   189→
+   190→Stage Summary:
+   191→- Endpoints added: PUT + DELETE /api/admin/templates/[id] (admin-only, same auth guard/response convention as plans; DELETE blocked with 400 + count message while any Business references the template)
+   192→- UI changes (src/components/views/admin-view.tsx only): Templates tab edit Dialog + Delete AlertDialog flow (mirrors Plans tab), Customers tab Export CSV (client-side Blob, websetu-customers.csv)
+   193→- No leftover data changes: throwaway template deleted, Modern Pro description restored, 6 seed templates remain
+   194→
+   195→---
+   196→Task ID: 9-c
+   197→Agent: tenant-site-upgrades
+   198→Task: Tenant site UX/SEO upgrades (client tenant site only)
+   199→
+   200→Work Log:
+   201→- Read worklog (Task 8) + both target files; confirmed "use client" at top, payload shapes (business.hours parsed from hoursJson — full day-name keys in seed, business.socials from socialsJson, Product.category, GalleryItem caption/alt)
+   202→- JSON-LD (site-renderer.tsx): buildLocalBusinessJsonLd() → minimal schema.org LocalBusiness (@context, @type, name, description, url https://websetu.in/<slug>) + conditional image (coverUrl/logoUrl), telephone, email, PostalAddress {streetAddress/city/state/pincode, addressCountry "IN"}, geo ONLY when mapsUrl actually embeds coordinates (@lat,lng / !3d…!4d / q=lat,lng regexes, range-checked — demo mapsUrls have no coords → geo omitted, never guessed), openingHoursSpecification from hours (AM/PM + en-dash/–/-/to parser → ISO opens/closes; "Closed", "Emergency Only", unparseable days skipped; accepts mon..sun AND full day names), sameAs from non-empty http(s) socials; whole builder try/catch → null; injected as <script type="application/ld+json" dangerouslySetInnerHTML> inside the renderer root, memoized on business
+   203→- Gallery lightbox (sections.tsx): grid images now <button> wrappers (aria-label, focus-visible brand ring, cursor-zoom-in); overlay fixed inset-0 z-[100] bg-black/90 backdrop-blur-sm, role="dialog" aria-modal="true" aria-label="Gallery image viewer"; centered max-h-[85vh] max-w-[92vw] object-contain image, caption + "n / total" counter, X close top-right, ChevronLeft/ChevronRight prev/next with auto-wrap (modulo) and aria-labels; Escape/ArrowLeft/ArrowRight keydown, body scroll-lock with previous-value restore, backdrop-only click closes (e.target === e.currentTarget so image/buttons don't); state is per-Gallery-instance, all hooks before early return
+   204→- Lazy images: loading="lazy" decoding="async" on about/services/products/gallery (grid + lightbox)/custom payment-QR <img>; hero <img> gets loading="eager" fetchPriority="high" (above the fold); header/footer logo marks intentionally untouched (brand marks, not content images; testimonials/blog render no <img> in these files)
+   205→- Product category filter (Products): chips row above grid when >1 distinct non-empty trimmed category — "All" + one per category; active chip filled var(--brand-primary) + white text, inactive border-current outline with hover tint, aria-pressed, rounded-full text-xs, flex-wrap for mobile; client-side filter (products without category appear under "All" only)
+   206→- Back-to-top (site-renderer.tsx): BackToTop component rendered only when mode === "live" (unlike the WhatsApp/call floats which render unconditionally, this is explicitly hidden in dashboard builder preview which uses mode="preview"); fixed left-5 z-40 h-10 w-10 rounded-full var(--brand-primary) + white ArrowUp; window scroll listener passive:true with cleanup + initial state check, appears after 600px, smooth scrollTo top, aria-label="Back to top", opacity/translate fade transition with pointer-events-none + tabIndex -1 + aria-hidden while hidden
+   207→- Verified: bunx eslint on the 2 files → 0 problems; bunx tsc --noEmit → zero errors in either file; curl /api/site/sharma-electricals → 200; JSON-LD logic simulated against the live payload → valid JSON, 6 openingHoursSpecification entries (Sunday "Emergency Only" skipped, Mon 09:00→20:00), sameAs with 2 social URLs, complete PostalAddress, geo/image keys omitted when absent
+   208→
+   209→Stage Summary:
+   210→- Added to the tenant site: LocalBusiness JSON-LD structured data, accessible gallery lightbox (keyboard + scroll-lock + wrap-around), lazy/eager image loading, product category filter chips, mode-aware back-to-top button
+   211→- Only src/components/site/sections.tsx and src/components/site/site-renderer.tsx modified — no other file touched
+   212→- Decision: back-to-top is bottom-left per spec but bottom-[5.75rem] on phones (the existing mobile-only call float already occupies bottom-5 left-5 while WhatsApp owns bottom-right); it drops to sm:bottom-5 from ≥sm up
+   213→- Decision: geo only from coordinates literally present in mapsUrl (regex + range validation), never inferred from address; hours/socials parsing is defensive (payload arrives pre-parsed via serializeBusiness, builder re-validates types + try/catch) so malformed JSON columns can never break rendering
+   214→- sharma-electricals demo exercises every feature: 5 product categories → chips visible, 2 gallery images → "1 / 2" lightbox, hours + socials → populated openingHours/sameAs
+   215→

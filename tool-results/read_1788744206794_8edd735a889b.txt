@@ -1,0 +1,621 @@
+     1→"use client";
+     2→// WebSetu — Section library: renders each website section from its JSON content
+     3→import { useState } from "react";
+     4→import {
+     5→  Zap, Factory, Wrench, Sun, Coffee, Pizza, EggFried, PartyPopper, Sparkles,
+     6→  Briefcase, Package, Heart, Star, Quote, Phone, Mail, MapPin, Clock, ChevronDown,
+     7→  MessageCircle, Send, Loader2, CheckCircle2, Shield, Award, Users,
+     8→  Play, X, Copy, Check, QrCode as QrIcon, Youtube,
+     9→} from "lucide-react";
+    10→import QRCode from "react-qr-code";
+    11→import type { Business, Service, Product, SiteSection, Testimonial, GalleryItem } from "@/lib/types";
+    12→import { upiDeepLink, youtubeId } from "@/lib/site-utils";
+    13→
+    14→const ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
+    15→  zap: Zap, factory: Factory, wrench: Wrench, sun: Sun, coffee: Coffee, pizza: Pizza,
+    16→  "egg-fried": EggFried, "party-popper": PartyPopper, sparkles: Sparkles, briefcase: Briefcase,
+    17→  package: Package, heart: Heart, star: Star, shield: Shield, award: Award, users: Users,
+    18→};
+    19→
+    20→function SectionTitle({ title, subtitle, center = true }: { title?: string; subtitle?: string; center?: boolean }) {
+    21→  if (!title && !subtitle) return null;
+    22→  return (
+    23→    <div className={`mb-10 ${center ? "text-center mx-auto max-w-2xl" : ""}`}>
+    24→      {title && <h2 className="text-3xl md:text-4xl font-bold tracking-tight text-[var(--brand-secondary)]">{title}</h2>}
+    25→      {subtitle && <p className="mt-3 text-base md:text-lg text-[var(--brand-muted)]">{subtitle}</p>}
+    26→      <div className={`mt-4 h-1 w-16 rounded-full bg-[var(--brand-primary)] ${center ? "mx-auto" : ""}`} />
+    27→    </div>
+    28→  );
+    29→}
+    30→
+    31→// ---------- HERO ----------
+    32→function Hero({ section, business, onCta }: { section: SiteSection; business: Business; onCta: (type: string) => void }) {
+    33→  const c = section.content as {
+    34→    badge?: string; heading?: string; subheading?: string;
+    35→    ctaPrimary?: string; ctaSecondary?: string; image?: string;
+    36→  };
+    37→  const style = (section.content?.heroStyle as string) || "gradient";
+    38→  return (
+    39→    <section className="relative overflow-hidden">
+    40→      <div
+    41→        className="absolute inset-0"
+    42→        style={{ background: `linear-gradient(135deg, var(--brand-secondary) 0%, var(--brand-primary) 100%)` }}
+    43→      />
+    44→      {c.image && style === "image" && (
+    45→        <div className="absolute inset-0">
+    46→          { }
+    47→          <img src={c.image} alt={business.name} className="h-full w-full object-cover" />
+    48→          <div className="absolute inset-0" style={{ background: `linear-gradient(100deg, rgba(0,0,0,0.82) 25%, rgba(0,0,0,0.45) 100%)` }} />
+    49→        </div>
+    50→      )}
+    51→      <div className="relative mx-auto max-w-6xl px-4 sm:px-6 py-20 md:py-28">
+    52→        <div className="max-w-2xl">
+    53→          {c.badge && (
+    54→            <span className="inline-flex items-center gap-2 rounded-full bg-white/15 backdrop-blur px-4 py-1.5 text-sm font-medium text-white border border-white/25">
+    55→              {c.badge}
+    56→            </span>
+    57→          )}
+    58→          <h1 className="mt-5 text-4xl md:text-6xl font-bold text-white leading-tight tracking-tight">
+    59→            {c.heading || business.name}
+    60→          </h1>
+    61→          {c.subheading && (
+    62→            <p className="mt-5 text-lg md:text-xl text-white/85 leading-relaxed">{c.subheading}</p>
+    63→          )}
+    64→          <div className="mt-8 flex flex-wrap gap-3">
+    65→            <a
+    66→              href={`#contact`}
+    67→              onClick={() => onCta("CTA_CALL")}
+    68→              className="rounded-[var(--brand-radius)] bg-[var(--brand-accent)] px-7 py-3.5 text-base font-semibold text-[#1c1917] shadow-lg transition hover:brightness-110 active:scale-95"
+    69→            >
+    70→              {c.ctaPrimary || "Get a Free Quote"}
+    71→            </a>
+    72→            <a
+    73→              href={`tel:${business.phone}`}
+    74→              onClick={() => onCta("CTA_CALL")}
+    75→              className="rounded-[var(--brand-radius)] border-2 border-white/60 bg-white/10 backdrop-blur px-7 py-3.5 text-base font-semibold text-white transition hover:bg-white/20 active:scale-95"
+    76→            >
+    77→              {c.ctaSecondary || "Call Now"}
+    78→            </a>
+    79→          </div>
+    80→          {(business.establishedYear || business.city) && (
+    81→            <p className="mt-6 text-sm text-white/60">
+    82→              {business.establishedYear && `Serving since ${business.establishedYear}`}{business.establishedYear && business.city && " • "}{business.city && `${business.city}, ${business.state || ""}`}
+    83→            </p>
+    84→          )}
+    85→        </div>
+    86→      </div>
+    87→    </section>
+    88→  );
+    89→}
+    90→
+    91→// ---------- STATS ----------
+    92→function Stats({ section }: { section: SiteSection }) {
+    93→  const items = (section.content?.items as { value: string; label: string }[]) || [];
+    94→  if (!items.length) return null;
+    95→  return (
+    96→    <section className="border-y border-[var(--brand-border)] bg-[var(--brand-surface)]">
+    97→      <div className="mx-auto grid max-w-6xl grid-cols-2 gap-6 px-4 py-12 sm:px-6 md:grid-cols-4">
+    98→        {items.map((s, i) => (
+    99→          <div key={i} className="text-center">
+   100→            <div className="text-3xl md:text-4xl font-extrabold text-[var(--brand-primary)]">{s.value}</div>
+   101→            <div className="mt-1 text-sm text-[var(--brand-muted)]">{s.label}</div>
+   102→          </div>
+   103→        ))}
+   104→      </div>
+   105→    </section>
+   106→  );
+   107→}
+   108→
+   109→// ---------- ABOUT ----------
+   110→function About({ section }: { section: SiteSection }) {
+   111→  const c = section.content as { title?: string; body?: string; image?: string };
+   112→  return (
+   113→    <section className="py-16 md:py-20">
+   114→      <div className="mx-auto grid max-w-6xl items-center gap-10 px-4 sm:px-6 md:grid-cols-2">
+   115→        <div>
+   116→          <SectionTitle title={c.title} center={false} />
+   117→          <p className="whitespace-pre-line text-base md:text-lg leading-relaxed text-[var(--brand-body)]">
+   118→            {c.body}
+   119→          </p>
+   120→        </div>
+   121→        {c.image ? (
+   122→          <div className="overflow-hidden rounded-[var(--brand-radius-lg)] shadow-xl">
+   123→            { }
+   124→            <img src={c.image} alt="About our business" className="aspect-[4/3] w-full object-cover" />
+   125→          </div>
+   126→        ) : (
+   127→          <div className="hidden rounded-[var(--brand-radius-lg)] bg-[var(--brand-primary)]/10 aspect-[4/3] md:block" />
+   128→        )}
+   129→      </div>
+   130→    </section>
+   131→  );
+   132→}
+   133→
+   134→// ---------- SERVICES ----------
+   135→function Services({ section, services, onCta }: { section: SiteSection; services: Service[]; onCta: (t: string) => void }) {
+   136→  const c = section.content as { title?: string; subtitle?: string };
+   137→  if (!services.length) return null;
+   138→  return (
+   139→    <section id="services" className="bg-[var(--brand-surface)] py-16 md:py-20">
+   140→      <div className="mx-auto max-w-6xl px-4 sm:px-6">
+   141→        <SectionTitle title={c.title} subtitle={c.subtitle} />
+   142→        <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+   143→          {services.map((s) => {
+   144→            const Icon = ICONS[s.icon] || Sparkles;
+   145→            return (
+   146→              <div key={s.id} className="group overflow-hidden rounded-[var(--brand-radius-lg)] bg-white shadow-sm ring-1 ring-[var(--brand-border)] transition hover:shadow-lg hover:-translate-y-0.5">
+   147→                {s.image ? (
+   148→                  <div className="aspect-[16/9] overflow-hidden bg-[var(--brand-primary)]/10">
+   149→                    { }
+   150→                    <img src={s.image} alt={s.name} className="h-full w-full object-cover transition duration-300 group-hover:scale-105" />
+   151→                  </div>
+   152→                ) : (
+   153→                  <div className="px-6 pt-6">
+   154→                    <div className="flex h-12 w-12 items-center justify-center rounded-[var(--brand-radius)] bg-[var(--brand-primary)]/10 text-[var(--brand-primary)]">
+   155→                      <Icon className="h-6 w-6" />
+   156→                    </div>
+   157→                  </div>
+   158→                )}
+   159→                <div className="p-6">
+   160→                  <h3 className="text-lg font-semibold text-[var(--brand-secondary)]">{s.name}</h3>
+   161→                  <p className="mt-2 text-sm leading-relaxed text-[var(--brand-muted)]">{s.description}</p>
+   162→                  {s.price && <p className="mt-3 text-sm font-semibold text-[var(--brand-primary)]">{s.price}</p>}
+   163→                  <a href="#contact" onClick={() => onCta("CTA_CALL")} className="mt-4 inline-flex items-center gap-1 text-sm font-semibold text-[var(--brand-primary)] group-hover:gap-2 transition-all">
+   164→                    Enquire Now <Send className="h-3.5 w-3.5" />
+   165→                  </a>
+   166→                </div>
+   167→              </div>
+   168→            );
+   169→          })}
+   170→        </div>
+   171→      </div>
+   172→    </section>
+   173→  );
+   174→}
+   175→
+   176→// ---------- PRODUCTS ----------
+   177→function Products({ section, products, onCta }: { section: SiteSection; products: Product[]; onCta: (t: string) => void }) {
+   178→  const c = section.content as { title?: string; subtitle?: string };
+   179→  const [videoProduct, setVideoProduct] = useState<Product | null>(null);
+   180→  if (!products.length) return null;
+   181→  const fmt = (p: Product) =>
+   182→    p.hidePrice ? null : p.salePrice != null ? (
+   183→      <span><span className="text-[var(--brand-muted)] line-through mr-2">₹{p.price}</span><span className="text-[var(--brand-primary)] font-bold">₹{p.salePrice}</span></span>
+   184→    ) : p.price != null ? <span className="text-[var(--brand-primary)] font-bold">₹{p.price}</span> : null;
+   185→  return (
+   186→    <section id="products" className="py-16 md:py-20">
+   187→      <div className="mx-auto max-w-6xl px-4 sm:px-6">
+   188→        <SectionTitle title={c.title || "Our Products"} subtitle={c.subtitle} />
+   189→        <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+   190→          {products.map((p) => {
+   191→            const vid = p.videoUrl ? youtubeId(p.videoUrl) : null;
+   192→            return (
+   193→              <div key={p.id} className="flex flex-col overflow-hidden rounded-[var(--brand-radius-lg)] bg-white shadow-sm ring-1 ring-[var(--brand-border)] transition hover:shadow-lg">
+   194→                <div className="relative aspect-[4/3] bg-[var(--brand-primary)]/10 flex items-center justify-center overflow-hidden">
+   195→                  {p.image ? (
+   196→                     
+   197→                    <img src={p.image} alt={p.name} className="h-full w-full object-cover" />
+   198→                  ) : (
+   199→                    <Package className="h-10 w-10 text-[var(--brand-primary)]/50" />
+   200→                  )}
+   201→                  {vid && (
+   202→                    <button
+   203→                      type="button"
+   204→                      onClick={() => setVideoProduct(p)}
+   205→                      aria-label={`Watch video of ${p.name}`}
+   206→                      className="group/btn absolute inset-0 flex items-center justify-center bg-black/0 transition hover:bg-black/25"
+   207→                    >
+   208→                      <span className="flex h-11 w-11 items-center justify-center rounded-full bg-black/60 text-white shadow-lg backdrop-blur transition group-hover/btn:scale-110">
+   209→                        <Play className="h-5 w-5 fill-white" />
+   210→                      </span>
+   211→                    </button>
+   212→                  )}
+   213→                </div>
+   214→                <div className="flex flex-1 flex-col p-4">
+   215→                  {p.category && <span className="text-xs font-medium uppercase tracking-wide text-[var(--brand-primary)]">{p.category}</span>}
+   216→                  <h3 className="mt-1 font-semibold text-[var(--brand-secondary)]">{p.name}</h3>
+   217→                  {p.shortDesc && <p className="mt-1 line-clamp-2 text-sm text-[var(--brand-muted)]">{p.shortDesc}</p>}
+   218→                  {vid && (
+   219→                    <button
+   220→                      type="button"
+   221→                      onClick={() => setVideoProduct(p)}
+   222→                      className="mt-2 inline-flex w-fit items-center gap-1.5 text-xs font-semibold text-red-600 hover:text-red-700"
+   223→                    >
+   224→                      <Youtube className="h-4 w-4" /> Watch video
+   225→                    </button>
+   226→                  )}
+   227→                  <div className="mt-3 flex items-center justify-between">
+   228→                    <span className="text-base">{fmt(p) ?? <span className="text-sm font-semibold text-[var(--brand-primary)]">Enquire for price</span>}</span>
+   229→                    <a href="#contact" onClick={() => onCta("CTA_CALL")} className="rounded-[var(--brand-radius)] bg-[var(--brand-primary)] px-3 py-1.5 text-xs font-semibold text-white hover:brightness-110 transition">Enquire</a>
+   230→                  </div>
+   231→                </div>
+   232→              </div>
+   233→            );
+   234→          })}
+   235→        </div>
+   236→      </div>
+   237→      {videoProduct && youtubeId(videoProduct.videoUrl) && (
+   238→        <div
+   239→          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
+   240→          role="dialog"
+   241→          aria-modal="true"
+   242→          aria-label={`Video of ${videoProduct.name}`}
+   243→          onClick={() => setVideoProduct(null)}
+   244→        >
+   245→          <div className="relative w-full max-w-3xl" onClick={(e) => e.stopPropagation()}>
+   246→            <button
+   247→              type="button"
+   248→              onClick={() => setVideoProduct(null)}
+   249→              aria-label="Close video"
+   250→              className="absolute -top-10 right-0 flex h-8 w-8 items-center justify-center rounded-full bg-white/15 text-white transition hover:bg-white/30"
+   251→            >
+   252→              <X className="h-5 w-5" />
+   253→            </button>
+   254→            <div className="overflow-hidden rounded-xl shadow-2xl" style={{ aspectRatio: "16/9" }}>
+   255→              <iframe
+   256→                src={`https://www.youtube-nocookie.com/embed/${youtubeId(videoProduct.videoUrl)}?autoplay=1&rel=0`}
+   257→                title={`Video of ${videoProduct.name}`}
+   258→                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+   259→                allowFullScreen
+   260→                className="h-full w-full border-0"
+   261→              />
+   262→            </div>
+   263→          </div>
+   264→        </div>
+   265→      )}
+   266→    </section>
+   267→  );
+   268→}
+   269→
+   270→// ---------- WHY US ----------
+   271→function WhyUs({ section }: { section: SiteSection }) {
+   272→  const c = section.content as { title?: string; items?: { title: string; description: string }[] };
+   273→  const items = c.items || [];
+   274→  if (!items.length) return null;
+   275→  return (
+   276→    <section className="bg-[var(--brand-surface)] py-16 md:py-20">
+   277→      <div className="mx-auto max-w-6xl px-4 sm:px-6">
+   278→        <SectionTitle title={c.title} />
+   279→        <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+   280→          {items.map((it, i) => (
+   281→            <div key={i} className="rounded-[var(--brand-radius-lg)] bg-white p-6 ring-1 ring-[var(--brand-border)]">
+   282→              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[var(--brand-accent)]/20 text-[var(--brand-secondary)] font-bold">{i + 1}</div>
+   283→              <h3 className="mt-4 font-semibold text-[var(--brand-secondary)]">{it.title}</h3>
+   284→              <p className="mt-2 text-sm leading-relaxed text-[var(--brand-muted)]">{it.description}</p>
+   285→            </div>
+   286→          ))}
+   287→        </div>
+   288→      </div>
+   289→    </section>
+   290→  );
+   291→}
+   292→
+   293→// ---------- GALLERY ----------
+   294→function Gallery({ section, gallery }: { section: SiteSection; gallery: GalleryItem[] }) {
+   295→  const c = section.content as { title?: string; subtitle?: string };
+   296→  if (!gallery.length) return null;
+   297→  return (
+   298→    <section id="gallery" className="py-16 md:py-20">
+   299→      <div className="mx-auto max-w-6xl px-4 sm:px-6">
+   300→        <SectionTitle title={c.title} subtitle={c.subtitle} />
+   301→        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 md:gap-4">
+   302→          {gallery.map((g) => (
+   303→            <figure key={g.id} className="group overflow-hidden rounded-[var(--brand-radius-lg)]">
+   304→              { }
+   305→              <img src={g.url} alt={g.alt || g.caption || "Gallery image"} className="aspect-[4/3] w-full object-cover transition duration-300 group-hover:scale-105" />
+   306→              {g.caption && <figcaption className="mt-2 text-sm text-[var(--brand-muted)]">{g.caption}</figcaption>}
+   307→            </figure>
+   308→          ))}
+   309→        </div>
+   310→      </div>
+   311→    </section>
+   312→  );
+   313→}
+   314→
+   315→// ---------- TESTIMONIALS ----------
+   316→function Testimonials({ section, testimonials }: { section: SiteSection; testimonials: Testimonial[] }) {
+   317→  const c = section.content as { title?: string; subtitle?: string };
+   318→  if (!testimonials.length) return null;
+   319→  return (
+   320→    <section id="testimonials" className="bg-[var(--brand-surface)] py-16 md:py-20">
+   321→      <div className="mx-auto max-w-6xl px-4 sm:px-6">
+   322→        <SectionTitle title={c.title} subtitle={c.subtitle} />
+   323→        <div className="grid gap-6 md:grid-cols-3">
+   324→          {testimonials.map((t) => (
+   325→            <div key={t.id} className="rounded-[var(--brand-radius-lg)] bg-white p-6 shadow-sm ring-1 ring-[var(--brand-border)]">
+   326→              <Quote className="h-6 w-6 text-[var(--brand-accent)]" />
+   327→              <p className="mt-3 text-sm leading-relaxed text-[var(--brand-body)]">“{t.content}”</p>
+   328→              <div className="mt-4 flex items-center gap-1">
+   329→                {Array.from({ length: 5 }).map((_, i) => (
+   330→                  <Star key={i} className={`h-4 w-4 ${i < t.rating ? "fill-[var(--brand-accent)] text-[var(--brand-accent)]" : "text-[var(--brand-border)]"}`} />
+   331→                ))}
+   332→              </div>
+   333→              <div className="mt-3 border-t border-[var(--brand-border)] pt-3">
+   334→                <p className="font-semibold text-sm text-[var(--brand-secondary)]">{t.name}</p>
+   335→                {t.role && <p className="text-xs text-[var(--brand-muted)]">{t.role}</p>}
+   336→              </div>
+   337→            </div>
+   338→          ))}
+   339→        </div>
+   340→      </div>
+   341→    </section>
+   342→  );
+   343→}
+   344→
+   345→// ---------- FAQ (AEO-optimized) ----------
+   346→function FaqSection({ section }: { section: SiteSection }) {
+   347→  const c = section.content as { title?: string; items?: { question: string; answer: string }[] };
+   348→  const [open, setOpen] = useState<number | null>(0);
+   349→  const items = c.items || [];
+   350→  if (!items.length) return null;
+   351→  return (
+   352→    <section id="faq" className="py-16 md:py-20">
+   353→      <div className="mx-auto max-w-3xl px-4 sm:px-6">
+   354→        <SectionTitle title={c.title || "Frequently Asked Questions"} />
+   355→        <div className="space-y-3">
+   356→          {items.map((f, i) => (
+   357→            <div key={i} className="rounded-[var(--brand-radius-lg)] bg-[var(--brand-surface)] ring-1 ring-[var(--brand-border)] overflow-hidden">
+   358→              <button
+   359→                onClick={() => setOpen(open === i ? null : i)}
+   360→                className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left font-medium text-[var(--brand-secondary)]"
+   361→                aria-expanded={open === i}
+   362→              >
+   363→                {f.question}
+   364→                <ChevronDown className={`h-5 w-5 shrink-0 text-[var(--brand-primary)] transition-transform ${open === i ? "rotate-180" : ""}`} />
+   365→              </button>
+   366→              {open === i && <p className="px-5 pb-5 text-sm leading-relaxed text-[var(--brand-muted)]">{f.answer}</p>}
+   367→            </div>
+   368→          ))}
+   369→        </div>
+   370→      </div>
+   371→    </section>
+   372→  );
+   373→}
+   374→
+   375→// ---------- CTA BANNER ----------
+   376→function CtaBanner({ section, business, onCta }: { section: SiteSection; business: Business; onCta: (t: string) => void }) {
+   377→  const c = section.content as { title?: string; subtitle?: string; primary?: string; secondary?: string };
+   378→  const waNumber = (business.whatsapp || business.phone || "").replace(/[^\d]/g, "");
+   379→  return (
+   380→    <section className="py-16 md:py-20">
+   381→      <div className="mx-auto max-w-6xl px-4 sm:px-6">
+   382→        <div className="rounded-[var(--brand-radius-lg)] px-6 py-12 md:px-12 text-center shadow-xl" style={{ background: `linear-gradient(120deg, var(--brand-primary), var(--brand-secondary))` }}>
+   383→          <h2 className="text-2xl md:text-3xl font-bold text-white">{c.title}</h2>
+   384→          {c.subtitle && <p className="mx-auto mt-3 max-w-xl text-white/85">{c.subtitle}</p>}
+   385→          <div className="mt-7 flex flex-wrap justify-center gap-3">
+   386→            <a href={`tel:${business.phone}`} onClick={() => onCta("CTA_CALL")} className="rounded-[var(--brand-radius)] bg-[var(--brand-accent)] px-7 py-3 font-semibold text-[#1c1917] shadow transition hover:brightness-110 active:scale-95">
+   387→              <span className="inline-flex items-center gap-2"><Phone className="h-4 w-4" />{c.primary || "Call Now"}</span>
+   388→            </a>
+   389→            {waNumber && (
+   390→              <a href={`https://wa.me/${waNumber}?text=${encodeURIComponent(`Hello ${business.name}, I have an enquiry.`)}`} target="_blank" rel="noreferrer" onClick={() => onCta("CTA_WHATSAPP")} className="rounded-[var(--brand-radius)] bg-white/10 border-2 border-white/50 px-7 py-3 font-semibold text-white backdrop-blur transition hover:bg-white/20 active:scale-95">
+   391→                <span className="inline-flex items-center gap-2"><MessageCircle className="h-4 w-4" />{c.secondary || "WhatsApp Us"}</span>
+   392→              </a>
+   393→            )}
+   394→          </div>
+   395→        </div>
+   396→      </div>
+   397→    </section>
+   398→  );
+   399→}
+   400→
+   401→// ---------- PAYMENT QR (Scan & Pay) ----------
+   402→function Payment({ section, business, onCta }: { section: SiteSection; business: Business; onCta: (t: string) => void }) {
+   403→  const c = section.content as { title?: string; subtitle?: string; note?: string };
+   404→  const [copied, setCopied] = useState(false);
+   405→  const upi = (business.upiId || "").trim();
+   406→  const customQr = (business.paymentQrUrl || "").trim();
+   407→  if (!upi && !customQr) return null; // nothing configured yet
+   408→
+   409→  const payLink = upi ? upiDeepLink(upi, business.name, "Website payment") : "";
+   410→
+   411→  async function copyUpi() {
+   412→    if (!upi) return;
+   413→    try {
+   414→      await navigator.clipboard.writeText(upi);
+   415→      setCopied(true);
+   416→      setTimeout(() => setCopied(false), 1800);
+   417→    } catch { /* clipboard unavailable */ }
+   418→  }
+   419→
+   420→  return (
+   421→    <section id="payment" className="bg-[var(--brand-surface)] py-16 md:py-20">
+   422→      <div className="mx-auto max-w-4xl px-4 sm:px-6">
+   423→        <SectionTitle title={c.title || "Scan & Pay"} subtitle={c.subtitle} />
+   424→        <div className="mx-auto flex max-w-xl flex-col items-center gap-8 rounded-[var(--brand-radius-lg)] bg-white p-8 shadow-sm ring-1 ring-[var(--brand-border)] sm:flex-row sm:items-center">
+   425→          {/* QR */}
+   426→          <div className="shrink-0 rounded-[var(--brand-radius-lg)] border-2 border-[var(--brand-primary)]/20 bg-white p-3 shadow-sm">
+   427→            {customQr ? (
+   428→               
+   429→              <img src={customQr} alt={`${business.name} payment QR code`} className="h-44 w-44 object-contain" />
+   430→            ) : (
+   431→              <QRCode value={payLink} size={176} bgColor="#ffffff" fgColor="var(--brand-secondary)" />
+   432→            )}
+   433→            <p className="mt-2 text-center text-[10px] font-semibold uppercase tracking-widest text-[var(--brand-muted)]">
+   434→              UPI · QR Code
+   435→            </p>
+   436→          </div>
+   437→          {/* Details */}
+   438→          <div className="flex-1 text-center sm:text-left">
+   439→            <p className="text-sm text-[var(--brand-muted)]">Pay to</p>
+   440→            <p className="text-lg font-bold text-[var(--brand-secondary)]">{business.name}</p>
+   441→            {upi && (
+   442→              <button
+   443→                type="button"
+   444→                onClick={() => void copyUpi()}
+   445→                className="mt-3 inline-flex items-center gap-2 rounded-[var(--brand-radius)] border border-[var(--brand-border)] bg-[var(--brand-surface)] px-3 py-2 text-sm font-semibold text-[var(--brand-body)] transition hover:border-[var(--brand-primary)]"
+   446→                aria-label="Copy UPI ID"
+   447→              >
+   448→                <QrIcon className="h-4 w-4 text-[var(--brand-primary)]" />
+   449→                <span className="font-mono">{upi}</span>
+   450→                {copied ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4 text-[var(--brand-muted)]" />}
+   451→              </button>
+   452→            )}
+   453→            {payLink && (
+   454→              <div className="mt-4">
+   455→                <a
+   456→                  href={payLink}
+   457→                  onClick={() => onCta("CTA_CALL")}
+   458→                  className="inline-flex items-center justify-center gap-2 rounded-[var(--brand-radius)] bg-[var(--brand-primary)] px-6 py-3 text-sm font-semibold text-white shadow transition hover:brightness-110 active:scale-95"
+   459→                >
+   460→                  <QrIcon className="h-4 w-4" /> Pay via UPI app
+   461→                </a>
+   462→                <p className="mt-2 text-[11px] text-[var(--brand-muted)]">GPay · PhonePe · Paytm · BHIM — opens your UPI app</p>
+   463→              </div>
+   464→            )}
+   465→            {c.note && <p className="mt-4 text-xs leading-relaxed text-[var(--brand-muted)]">{c.note}</p>}
+   466→          </div>
+   467→        </div>
+   468→      </div>
+   469→    </section>
+   470→  );
+   471→}
+   472→
+   473→// ---------- BUSINESS HOURS ----------
+   474→function Hours({ section, business }: { section: SiteSection; business: Business }) {
+   475→  const c = section.content as { title?: string };
+   476→  const days = business.hours && Object.keys(business.hours).length
+   477→    ? business.hours
+   478→    : { Monday: "9:00 AM – 7:00 PM", Tuesday: "9:00 AM – 7:00 PM", Wednesday: "9:00 AM – 7:00 PM", Thursday: "9:00 AM – 7:00 PM", Friday: "9:00 AM – 7:00 PM", Saturday: "9:00 AM – 7:00 PM", Sunday: "Closed" };
+   479→  const today = new Date().toLocaleDateString("en-IN", { weekday: "long" });
+   480→  return (
+   481→    <section className="bg-[var(--brand-surface)] py-16 md:py-20">
+   482→      <div className="mx-auto max-w-2xl px-4 sm:px-6">
+   483→        <SectionTitle title={c.title || "Business Hours"} />
+   484→        <div className="rounded-[var(--brand-radius-lg)] bg-white p-6 ring-1 ring-[var(--brand-border)] shadow-sm">
+   485→          {Object.entries(days).map(([day, time]) => (
+   486→            <div key={day} className={`flex items-center justify-between border-b border-[var(--brand-border)] py-2.5 last:border-0 text-sm ${day === today ? "font-bold text-[var(--brand-primary)]" : "text-[var(--brand-body)]"}`}>
+   487→              <span className="inline-flex items-center gap-2"><Clock className="h-4 w-4 text-[var(--brand-primary)]" />{day}{day === today && " (Today)"}</span>
+   488→              <span>{time as string}</span>
+   489→            </div>
+   490→          ))}
+   491→        </div>
+   492→      </div>
+   493→    </section>
+   494→  );
+   495→}
+   496→
+   497→// ---------- CONTACT + MAP + ENQUIRY FORM ----------
+   498→function Contact({ section, business, onCta, submitLead }: {
+   499→  section: SiteSection; business: Business; onCta: (t: string) => void; submitLead: (data: { name: string; phone: string; email: string; message: string }) => Promise<string | null>;
+   500→}) {
+   501→  const c = section.content as { title?: string; subtitle?: string; mapUrl?: string };
+   502→  const [form, setForm] = useState({ name: "", phone: "", email: "", message: "" });
+   503→  const [sending, setSending] = useState(false);
+   504→  const [done, setDone] = useState(false);
+   505→  const [error, setError] = useState<string | null>(null);
+   506→
+   507→  async function handleSubmit(e: React.FormEvent) {
+   508→    e.preventDefault();
+   509→    setError(null);
+   510→    if (!form.name.trim() || !form.phone.trim()) {
+   511→      setError("Name and phone number are required.");
+   512→      return;
+   513→    }
+   514→    setSending(true);
+   515→    const err = await submitLead(form);
+   516→    setSending(false);
+   517→    if (err) { setError(err); return; }
+   518→    setDone(true);
+   519→  }
+   520→
+   521→  const waNumber = (business.whatsapp || business.phone || "").replace(/[^\d]/g, "");
+   522→  const mapsHref = business.mapsUrl || c.mapUrl || `https://maps.google.com/?q=${encodeURIComponent(`${business.address} ${business.city} ${business.pincode}`)}`;
+   523→
+   524→  return (
+   525→    <section id="contact" className="py-16 md:py-20">
+   526→      <div className="mx-auto max-w-6xl px-4 sm:px-6">
+   527→        <SectionTitle title={c.title || "Contact Us"} subtitle={c.subtitle} />
+   528→        <div className="grid gap-8 md:grid-cols-2">
+   529→          {/* Info + map */}
+   530→          <div className="space-y-5">
+   531→            <div className="space-y-4 rounded-[var(--brand-radius-lg)] bg-[var(--brand-surface)] p-6 ring-1 ring-[var(--brand-border)]">
+   532→              {business.phone && (
+   533→                <a href={`tel:${business.phone}`} onClick={() => onCta("CTA_CALL")} className="flex items-center gap-3 group">
+   534→                  <span className="flex h-10 w-10 items-center justify-center rounded-full bg-[var(--brand-primary)]/10 text-[var(--brand-primary)]"><Phone className="h-5 w-5" /></span>
+   535→                  <span><span className="block text-xs text-[var(--brand-muted)]">Call us</span><span className="font-medium text-[var(--brand-secondary)] group-hover:text-[var(--brand-primary)]">{business.phone}</span></span>
+   536→                </a>
+   537→              )}
+   538→              {business.email && (
+   539→                <a href={`mailto:${business.email}`} onClick={() => onCta("CTA_EMAIL")} className="flex items-center gap-3 group">
+   540→                  <span className="flex h-10 w-10 items-center justify-center rounded-full bg-[var(--brand-primary)]/10 text-[var(--brand-primary)]"><Mail className="h-5 w-5" /></span>
+   541→                  <span><span className="block text-xs text-[var(--brand-muted)]">Email</span><span className="font-medium text-[var(--brand-secondary)] group-hover:text-[var(--brand-primary)]">{business.email}</span></span>
+   542→                </a>
+   543→              )}
+   544→              {business.address && (
+   545→                <a href={mapsHref} target="_blank" rel="noreferrer" onClick={() => onCta("CTA_DIRECTIONS")} className="flex items-center gap-3 group">
+   546→                  <span className="flex h-10 w-10 items-center justify-center rounded-full bg-[var(--brand-primary)]/10 text-[var(--brand-primary)]"><MapPin className="h-5 w-5" /></span>
+   547→                  <span><span className="block text-xs text-[var(--brand-muted)]">Visit us</span><span className="font-medium text-[var(--brand-secondary)] group-hover:text-[var(--brand-primary)]">{business.address}, {business.city} {business.pincode}</span></span>
+   548→                </a>
+   549→              )}
+   550→              {business.gmbUrl && (
+   551→                <a href={business.gmbUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 text-sm font-semibold text-[var(--brand-primary)] hover:underline">
+   552→                  <Star className="h-4 w-4" /> View us on Google
+   553→                </a>
+   554→              )}
+   555→            </div>
+   556→            <a href={mapsHref} target="_blank" rel="noreferrer" onClick={() => onCta("CTA_DIRECTIONS")}
+   557→              className="flex h-52 items-center justify-center rounded-[var(--brand-radius-lg)] overflow-hidden ring-1 ring-[var(--brand-border)] bg-[var(--brand-primary)]/5 hover:bg-[var(--brand-primary)]/10 transition">
+   558→              <div className="text-center">
+   559→                <MapPin className="mx-auto h-10 w-10 text-[var(--brand-primary)]" />
+   560→                <p className="mt-2 text-sm font-semibold text-[var(--brand-secondary)]">Open in Google Maps</p>
+   561→                <p className="text-xs text-[var(--brand-muted)]">Get Directions →</p>
+   562→              </div>
+   563→            </a>
+   564→          </div>
+   565→
+   566→          {/* Enquiry form */}
+   567→          <div className="rounded-[var(--brand-radius-lg)] bg-white p-6 shadow-lg ring-1 ring-[var(--brand-border)]">
+   568→            {done ? (
+   569→              <div className="flex h-full flex-col items-center justify-center py-10 text-center">
+   570→                <CheckCircle2 className="h-14 w-14 text-[var(--brand-primary)]" />
+   571→                <h3 className="mt-4 text-xl font-bold text-[var(--brand-secondary)]">Enquiry Received!</h3>
+   572→                <p className="mt-2 max-w-xs text-sm text-[var(--brand-muted)]">Thank you for reaching out. We will contact you within 24 hours.</p>
+   573→              </div>
+   574→            ) : (
+   575→              <form onSubmit={handleSubmit} className="space-y-4">
+   576→                <h3 className="font-bold text-lg text-[var(--brand-secondary)]">Send an Enquiry</h3>
+   577→                {error && <p className="rounded-[var(--brand-radius)] bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-red-200">{error}</p>}
+   578→                <div className="grid gap-4 sm:grid-cols-2">
+   579→                  <label className="block">
+   580→                    <span className="mb-1 block text-sm font-medium text-[var(--brand-secondary)]">Name *</span>
+   581→                    <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required
+   582→                      className="w-full rounded-[var(--brand-radius)] border border-[var(--brand-border)] bg-white px-3.5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[var(--brand-primary)]" placeholder="Your name" />
+   583→                  </label>
+   584→                  <label className="block">
+   585→                    <span className="mb-1 block text-sm font-medium text-[var(--brand-secondary)]">Phone *</span>
+   586→                    <input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} required type="tel"
+   587→                      className="w-full rounded-[var(--brand-radius)] border border-[var(--brand-border)] bg-white px-3.5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[var(--brand-primary)]" placeholder="+91 …" />
+   588→                  </label>
+   589→                </div>
+   590→                <label className="block">
+   591→                  <span className="mb-1 block text-sm font-medium text-[var(--brand-secondary)]">Email</span>
+   592→                  <input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} type="email"
+   593→                    className="w-full rounded-[var(--brand-radius)] border border-[var(--brand-border)] bg-white px-3.5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[var(--brand-primary)]" placeholder="you@example.com" />
+   594→                </label>
+   595→                <label className="block">
+   596→                  <span className="mb-1 block text-sm font-medium text-[var(--brand-secondary)]">Message</span>
+   597→                  <textarea value={form.message} onChange={(e) => setForm({ ...form, message: e.target.value })} rows={4}
+   598→                    className="w-full rounded-[var(--brand-radius)] border border-[var(--brand-border)] bg-white px-3.5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[var(--brand-primary)]" placeholder="Tell us what you need…" />
+   599→                </label>
+   600→                <button type="submit" disabled={sending}
+   601→                  className="flex w-full items-center justify-center gap-2 rounded-[var(--brand-radius)] bg-[var(--brand-primary)] px-6 py-3 font-semibold text-white shadow transition hover:brightness-110 disabled:opacity-60 active:scale-[0.98]">
+   602→                  {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+   603→                  {sending ? "Sending…" : "Submit Enquiry"}
+   604→                </button>
+   605→                {waNumber && (
+   606→                  <a href={`https://wa.me/${waNumber}?text=${encodeURIComponent(`Hello ${business.name}!`)}`} target="_blank" rel="noreferrer" onClick={() => onCta("CTA_WHATSAPP")}
+   607→                    className="flex w-full items-center justify-center gap-2 rounded-[var(--brand-radius)] bg-[#25D366] px-6 py-3 font-semibold text-white shadow transition hover:brightness-105 active:scale-[0.98]">
+   608→                    <MessageCircle className="h-4 w-4" /> Chat on WhatsApp
+   609→                  </a>
+   610→                )}
+   611→              </form>
+   612→            )}
+   613→          </div>
+   614→        </div>
+   615→      </div>
+   616→    </section>
+   617→  );
+   618→}
+   619→
+   620→export { Hero, Stats, About, Services, Products, WhyUs, Gallery, Testimonials, FaqSection, CtaBanner, Payment, Hours, Contact, SectionTitle, ICONS };
+   621→

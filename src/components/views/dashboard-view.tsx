@@ -1911,8 +1911,41 @@ function BusinessTab({ business }: { business: BusinessWithMeta }) {
 
 /* ------------------------------ image input --------------------------------- */
 
-/** File upload (canvas-downscaled dataURL) or pasted URL, with live preview. */
-function ImageInput({ label, value, onChange, hint, maxWidth = 1000, square = false }: {
+/** Max bytes accepted by POST /api/upload (server enforces the same limit). */
+const UPLOAD_MAX_BYTES = 4 * 1024 * 1024;
+/** Files at or under this size are uploaded as-is; bigger ones are downscaled first. */
+const UPLOAD_DIRECT_LIMIT = 400 * 1024;
+
+/** Downscale an image file via canvas and return a JPEG File (never dataURLs). */
+async function downscaleToJpegFile(file: File, maxWidth: number): Promise<File> {
+  const objUrl = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const im = new Image();
+      im.onload = () => resolve(im);
+      im.onerror = () => reject(new Error("Could not read this image."));
+      im.src = objUrl;
+    });
+    const scale = Math.min(1, maxWidth / Math.max(img.width, img.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(img.width * scale);
+    canvas.height = Math.round(img.height * scale);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Could not process this image — try a different one.");
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.85));
+    if (!blob) throw new Error("Could not process this image — try a different one.");
+    return new File([blob], `${file.name.replace(/\.[^.]+$/, "") || "image"}.jpg`, { type: "image/jpeg" });
+  } finally {
+    URL.revokeObjectURL(objUrl);
+  }
+}
+
+/**
+ * File upload (small file as-is, big file canvas-downscaled) via POST /api/upload,
+ * or pasted URL — value is always a URL (/api/uploads/…, https or legacy dataURL), with live preview.
+ */
+function ImageInput({ label, value, onChange, hint, maxWidth = 1600, square = false }: {
   label: string; value: string; onChange: (v: string) => void;
   hint?: string; maxWidth?: number; square?: boolean;
 }) {
@@ -1926,35 +1959,23 @@ function ImageInput({ label, value, onChange, hint, maxWidth = 1000, square = fa
       setErr("Please choose an image file (JPG, PNG, WebP).");
       return;
     }
-    if (file.size > 8 * 1024 * 1024) {
-      setErr("Image is too large — keep it under 8 MB.");
+    if (file.size > UPLOAD_MAX_BYTES) {
+      setErr("Image is too large — keep it under 4 MB.");
       return;
     }
     setBusy(true);
-    const reader = new FileReader();
-    reader.onload = () => {
-      const img = new Image();
-      img.onload = () => {
-        try {
-          const scale = Math.min(1, maxWidth / Math.max(img.width, img.height));
-          const canvas = document.createElement("canvas");
-          canvas.width = Math.round(img.width * scale);
-          canvas.height = Math.round(img.height * scale);
-          const ctx = canvas.getContext("2d");
-          if (!ctx) throw new Error("canvas");
-          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-          onChange(canvas.toDataURL("image/jpeg", 0.82));
-        } catch {
-          setErr("Could not process this image — try a different one.");
-        } finally {
-          setBusy(false);
-        }
-      };
-      img.onerror = () => { setErr("Could not read this image."); setBusy(false); };
-      img.src = String(reader.result);
-    };
-    reader.onerror = () => { setErr("Could not read the file."); setBusy(false); };
-    reader.readAsDataURL(file);
+    void (async () => {
+      try {
+        // Small files upload untouched (SVG/PNG stay crisp); big photos are downscaled first.
+        const toUpload = file.size > UPLOAD_DIRECT_LIMIT ? await downscaleToJpegFile(file, maxWidth) : file;
+        const res = await api.upload<{ url: string }>("/api/upload", toUpload);
+        onChange(res.url);
+      } catch (e) {
+        setErr(errMsg(e));
+      } finally {
+        setBusy(false);
+      }
+    })();
   }
 
   return (
@@ -1971,8 +1992,9 @@ function ImageInput({ label, value, onChange, hint, maxWidth = 1000, square = fa
             <button
               type="button"
               aria-label="Remove image"
+              disabled={busy}
               onClick={() => onChange("")}
-              className="absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full bg-zinc-900 text-white shadow transition hover:bg-red-600"
+              className="absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full bg-zinc-900 text-white shadow transition hover:bg-red-600 disabled:opacity-50"
             >
               <XCircle className="h-4 w-4" />
             </button>
@@ -1982,13 +2004,14 @@ function ImageInput({ label, value, onChange, hint, maxWidth = 1000, square = fa
             type="button"
             onClick={() => fileRef.current?.click()}
             aria-label={`Upload ${label}`}
+            disabled={busy}
             className={cn(
-              "flex shrink-0 flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed border-zinc-300 bg-zinc-50 text-zinc-400 transition hover:border-emerald-400 hover:text-emerald-600",
+              "flex shrink-0 flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed border-zinc-300 bg-zinc-50 text-zinc-400 transition hover:border-emerald-400 hover:text-emerald-600 disabled:cursor-not-allowed disabled:opacity-70",
               square ? "h-20 w-20" : "h-20 w-32",
             )}
           >
             {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : <ImagePlus className="h-5 w-5" />}
-            <span className="text-[10px] font-medium">Upload</span>
+            <span className="text-[10px] font-medium">{busy ? "Uploading…" : "Upload"}</span>
           </button>
         )}
         <div className="min-w-0 flex-1 space-y-1.5">
@@ -1997,7 +2020,8 @@ function ImageInput({ label, value, onChange, hint, maxWidth = 1000, square = fa
             <Input
               className="rounded-xl pl-8"
               value={value.startsWith("data:") ? "" : value}
-              placeholder="or paste image URL (https://…)"
+              placeholder={busy ? "Uploading…" : "or paste image URL (https://…)"}
+              disabled={busy}
               onChange={(e) => onChange(e.target.value)}
             />
           </div>
@@ -2011,6 +2035,7 @@ function ImageInput({ label, value, onChange, hint, maxWidth = 1000, square = fa
         type="file"
         accept="image/*"
         className="sr-only"
+        disabled={busy}
         onChange={(e) => {
           const f = e.target.files?.[0];
           if (f) pick(f);
@@ -2172,12 +2197,34 @@ const CRUD_CONFIG: Record<CrudType, CrudCfg> = {
   },
 };
 
+const DUPLICABLE: CrudType[] = ["services", "products"];
+
 function ContentTab({ type, rows, loading, refetch }: {
   type: CrudType; rows: Rec[]; loading: boolean; refetch: () => void;
 }) {
   const cfg = CRUD_CONFIG[type];
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Rec | null>(null);
+  const [duplicateSource, setDuplicateSource] = useState<Rec | null>(null);
+
+  function openAdd() {
+    setEditing(null);
+    setDuplicateSource(null);
+    setDialogOpen(true);
+  }
+
+  function openEdit(row: Rec) {
+    setEditing(row);
+    setDuplicateSource(null);
+    setDialogOpen(true);
+  }
+
+  function openDuplicate(row: Rec) {
+    setEditing(null);
+    setDuplicateSource(row);
+    setDialogOpen(true);
+    toast({ title: `${String(row.name ?? "Item")} duplicated — edit and save` });
+  }
 
   async function del(id: string) {
     try {
@@ -2197,7 +2244,7 @@ function ContentTab({ type, rows, loading, refetch }: {
         action={
           <Button
             className="rounded-xl bg-emerald-600 hover:bg-emerald-700"
-            onClick={() => { setEditing(null); setDialogOpen(true); }}
+            onClick={openAdd}
           >
             <Plus className="h-4 w-4" /> {cfg.addLabel}
           </Button>
@@ -2212,7 +2259,7 @@ function ContentTab({ type, rows, loading, refetch }: {
           title={cfg.empty}
           hint={cfg.emptyHint}
           action={
-            <Button className="rounded-xl bg-emerald-600 hover:bg-emerald-700" onClick={() => { setEditing(null); setDialogOpen(true); }}>
+            <Button className="rounded-xl bg-emerald-600 hover:bg-emerald-700" onClick={openAdd}>
               <Plus className="h-4 w-4" /> {cfg.addLabel}
             </Button>
           }
@@ -2240,10 +2287,20 @@ function ContentTab({ type, rows, loading, refetch }: {
                   {cfg.rowSub(row) ? <p className="mt-0.5 line-clamp-2 text-xs text-zinc-500">{cfg.rowSub(row)}</p> : null}
                 </div>
                 <div className="flex shrink-0 gap-1">
+                  {DUPLICABLE.includes(type) && (
+                    <Button
+                      variant="ghost" size="icon" className="h-8 w-8 text-zinc-500 hover:text-emerald-700"
+                      aria-label={`Duplicate ${cfg.rowTitle(row)}`}
+                      title={`Duplicate ${cfg.rowTitle(row)}`}
+                      onClick={() => openDuplicate(row)}
+                    >
+                      <Copy className="h-4 w-4" />
+                    </Button>
+                  )}
                   <Button
                     variant="ghost" size="icon" className="h-8 w-8 text-zinc-500 hover:text-emerald-700"
                     aria-label="Edit"
-                    onClick={() => { setEditing(row); setDialogOpen(true); }}
+                    onClick={() => openEdit(row)}
                   >
                     <Pencil className="h-4 w-4" />
                   </Button>
@@ -2260,14 +2317,16 @@ function ContentTab({ type, rows, loading, refetch }: {
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         editing={editing}
+        duplicate={duplicateSource}
         onSaved={() => { setDialogOpen(false); refetch(); }}
       />
     </div>
   );
 }
 
-function CrudDialog({ type, open, onOpenChange, editing, onSaved }: {
-  type: CrudType; open: boolean; onOpenChange: (o: boolean) => void; editing: Rec | null; onSaved: () => void;
+function CrudDialog({ type, open, onOpenChange, editing, duplicate, onSaved }: {
+  type: CrudType; open: boolean; onOpenChange: (o: boolean) => void;
+  editing: Rec | null; duplicate: Rec | null; onSaved: () => void;
 }) {
   const cfg = CRUD_CONFIG[type];
   const [form, setForm] = useState<Rec>(cfg.defaults);
@@ -2284,10 +2343,21 @@ function CrudDialog({ type, open, onOpenChange, editing, onSaved }: {
         next[f.key] = f.type === "switch" ? Boolean(v) : v === null || v === undefined ? "" : String(v);
       }
       setForm(next);
+    } else if (duplicate) {
+      // Duplicate flow: prefill from the source item, but it saves as a NEW item
+      // (editing stays null → POST) with the copy name and featured reset.
+      const next: Rec = {};
+      for (const f of cfg.fields) {
+        const v = duplicate[f.key];
+        if (f.type === "switch") next[f.key] = f.key === "featured" ? false : Boolean(v);
+        else next[f.key] = v === null || v === undefined ? "" : String(v);
+      }
+      next.name = `${String(duplicate.name ?? "").trim()} (Copy)`;
+      setForm(next);
     } else {
       setForm({ ...cfg.defaults });
     }
-  }, [open, editing, cfg]);
+  }, [open, editing, duplicate, cfg]);
 
   function setF(key: string, v: unknown) {
     setForm((p) => ({ ...p, [key]: v }));
@@ -2323,7 +2393,13 @@ function CrudDialog({ type, open, onOpenChange, editing, onSaved }: {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90vh] overflow-y-auto rounded-2xl ws-scroll sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>{editing ? `Edit ${cfg.singular === "FAQ" ? "FAQ" : cfg.singular}` : cfg.addLabel}</DialogTitle>
+          <DialogTitle>
+            {editing
+              ? `Edit ${cfg.singular === "FAQ" ? "FAQ" : cfg.singular}`
+              : duplicate
+                ? `Duplicate ${cfg.singular === "FAQ" ? "FAQ" : cfg.singular}`
+                : cfg.addLabel}
+          </DialogTitle>
           <DialogDescription>Changes appear on your website after you publish.</DialogDescription>
         </DialogHeader>
         <div className="grid gap-4 sm:grid-cols-2">

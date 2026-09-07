@@ -48,4 +48,20 @@ export const api = {
   patch: <T,>(path: string, body?: unknown) =>
     request<T>(path, { method: "PATCH", body: body === undefined ? undefined : JSON.stringify(body) }),
   del: <T,>(path: string) => request<T>(path, { method: "DELETE" }),
+  // FormData upload — must bypass request() which forces Content-Type: application/json
+  upload: async <T,>(path: string, file: File): Promise<T> => {
+    const fd = new FormData();
+    fd.append("file", file);
+    const token = getToken();
+    const res = await fetch(path, {
+      method: "POST",
+      body: fd,
+      ...(token ? { headers: { Authorization: `Bearer ${token}` } } : {}),
+    });
+    const parsed = await res.json().catch(() => null);
+    if (!res.ok || !parsed || parsed.ok === false) {
+      throw new ApiError(parsed?.error || `Upload failed (${res.status})`, res.status);
+    }
+    return parsed.data as T;
+  },
 };

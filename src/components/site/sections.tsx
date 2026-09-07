@@ -1,11 +1,11 @@
 "use client";
 // WebSetu — Section library: renders each website section from its JSON content
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Zap, Factory, Wrench, Sun, Coffee, Pizza, EggFried, PartyPopper, Sparkles,
   Briefcase, Package, Heart, Star, Quote, Phone, Mail, MapPin, Clock, ChevronDown,
   MessageCircle, Send, Loader2, CheckCircle2, Shield, Award, Users,
-  Play, X, Copy, Check, QrCode as QrIcon, Youtube,
+  Play, X, Copy, Check, QrCode as QrIcon, Youtube, ChevronLeft, ChevronRight,
 } from "lucide-react";
 import QRCode from "react-qr-code";
 import type { Business, Service, Product, SiteSection, Testimonial, GalleryItem } from "@/lib/types";
@@ -44,7 +44,7 @@ function Hero({ section, business, onCta }: { section: SiteSection; business: Bu
       {c.image && style === "image" && (
         <div className="absolute inset-0">
           { }
-          <img src={c.image} alt={business.name} className="h-full w-full object-cover" />
+          <img src={c.image} alt={business.name} className="h-full w-full object-cover" loading="eager" fetchPriority="high" />
           <div className="absolute inset-0" style={{ background: `linear-gradient(100deg, rgba(0,0,0,0.82) 25%, rgba(0,0,0,0.45) 100%)` }} />
         </div>
       )}
@@ -121,7 +121,7 @@ function About({ section }: { section: SiteSection }) {
         {c.image ? (
           <div className="overflow-hidden rounded-[var(--brand-radius-lg)] shadow-xl">
             { }
-            <img src={c.image} alt="About our business" className="aspect-[4/3] w-full object-cover" />
+            <img src={c.image} alt="About our business" className="aspect-[4/3] w-full object-cover" loading="lazy" decoding="async" />
           </div>
         ) : (
           <div className="hidden rounded-[var(--brand-radius-lg)] bg-[var(--brand-primary)]/10 aspect-[4/3] md:block" />
@@ -147,7 +147,7 @@ function Services({ section, services, onCta }: { section: SiteSection; services
                 {s.image ? (
                   <div className="aspect-[16/9] overflow-hidden bg-[var(--brand-primary)]/10">
                     { }
-                    <img src={s.image} alt={s.name} className="h-full w-full object-cover transition duration-300 group-hover:scale-105" />
+                    <img src={s.image} alt={s.name} className="h-full w-full object-cover transition duration-300 group-hover:scale-105" loading="lazy" decoding="async" />
                   </div>
                 ) : (
                   <div className="px-6 pt-6">
@@ -177,7 +177,13 @@ function Services({ section, services, onCta }: { section: SiteSection; services
 function Products({ section, products, onCta }: { section: SiteSection; products: Product[]; onCta: (t: string) => void }) {
   const c = section.content as { title?: string; subtitle?: string };
   const [videoProduct, setVideoProduct] = useState<Product | null>(null);
+  const [activeCategory, setActiveCategory] = useState("All");
   if (!products.length) return null;
+  const categories = Array.from(new Set(products.map((p) => (p.category || "").trim()).filter(Boolean)));
+  const showFilter = categories.length > 1;
+  const filteredProducts = !showFilter || activeCategory === "All"
+    ? products
+    : products.filter((p) => (p.category || "").trim() === activeCategory);
   const fmt = (p: Product) =>
     p.hidePrice ? null : p.salePrice != null ? (
       <span><span className="text-[var(--brand-muted)] line-through mr-2">₹{p.price}</span><span className="text-[var(--brand-primary)] font-bold">₹{p.salePrice}</span></span>
@@ -186,15 +192,38 @@ function Products({ section, products, onCta }: { section: SiteSection; products
     <section id="products" className="py-16 md:py-20">
       <div className="mx-auto max-w-6xl px-4 sm:px-6">
         <SectionTitle title={c.title || "Our Products"} subtitle={c.subtitle} />
+        {showFilter && (
+          <div className="mb-8 flex flex-wrap items-center justify-center gap-2" role="group" aria-label="Filter products by category">
+            {["All", ...categories].map((cat) => {
+              const active = activeCategory === cat;
+              return (
+                <button
+                  key={cat}
+                  type="button"
+                  onClick={() => setActiveCategory(cat)}
+                  aria-pressed={active}
+                  className={`rounded-full px-4 py-1.5 text-xs font-semibold transition active:scale-95 ${
+                    active
+                      ? "text-white shadow-sm"
+                      : "border border-current text-[var(--brand-body)] hover:text-[var(--brand-primary)]"
+                  }`}
+                  style={active ? { background: "var(--brand-primary)" } : undefined}
+                >
+                  {cat}
+                </button>
+              );
+            })}
+          </div>
+        )}
         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-          {products.map((p) => {
+          {filteredProducts.map((p) => {
             const vid = p.videoUrl ? youtubeId(p.videoUrl) : null;
             return (
               <div key={p.id} className="flex flex-col overflow-hidden rounded-[var(--brand-radius-lg)] bg-white shadow-sm ring-1 ring-[var(--brand-border)] transition hover:shadow-lg">
                 <div className="relative aspect-[4/3] bg-[var(--brand-primary)]/10 flex items-center justify-center overflow-hidden">
                   {p.image ? (
                      
-                    <img src={p.image} alt={p.name} className="h-full w-full object-cover" />
+                    <img src={p.image} alt={p.name} className="h-full w-full object-cover" loading="lazy" decoding="async" />
                   ) : (
                     <Package className="h-10 w-10 text-[var(--brand-primary)]/50" />
                   )}
@@ -293,21 +322,107 @@ function WhyUs({ section }: { section: SiteSection }) {
 // ---------- GALLERY ----------
 function Gallery({ section, gallery }: { section: SiteSection; gallery: GalleryItem[] }) {
   const c = section.content as { title?: string; subtitle?: string };
+  const [lightbox, setLightbox] = useState<number | null>(null);
+  const closeLightbox = useCallback(() => setLightbox(null), []);
+  const stepLightbox = useCallback(
+    (dir: 1 | -1) => setLightbox((i) => (i === null ? i : (i + dir + gallery.length) % gallery.length)),
+    [gallery.length],
+  );
+
+  // Keyboard navigation + body scroll lock while the lightbox is open
+  useEffect(() => {
+    if (lightbox === null) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeLightbox();
+      else if (e.key === "ArrowRight") stepLightbox(1);
+      else if (e.key === "ArrowLeft") stepLightbox(-1);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [lightbox, closeLightbox, stepLightbox]);
+
   if (!gallery.length) return null;
+  const current = lightbox !== null ? gallery[lightbox] : null;
   return (
     <section id="gallery" className="py-16 md:py-20">
       <div className="mx-auto max-w-6xl px-4 sm:px-6">
         <SectionTitle title={c.title} subtitle={c.subtitle} />
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3 md:gap-4">
-          {gallery.map((g) => (
+          {gallery.map((g, i) => (
             <figure key={g.id} className="group overflow-hidden rounded-[var(--brand-radius-lg)]">
-              { }
-              <img src={g.url} alt={g.alt || g.caption || "Gallery image"} className="aspect-[4/3] w-full object-cover transition duration-300 group-hover:scale-105" />
+              <button
+                type="button"
+                onClick={() => setLightbox(i)}
+                aria-label={g.caption ? `View image: ${g.caption}` : `View image ${i + 1} of ${gallery.length}`}
+                className="block w-full cursor-zoom-in focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-primary)]"
+              >
+                <img
+                  src={g.url}
+                  alt={g.alt || g.caption || "Gallery image"}
+                  className="aspect-[4/3] w-full object-cover transition duration-300 group-hover:scale-105"
+                  loading="lazy"
+                  decoding="async"
+                />
+              </button>
               {g.caption && <figcaption className="mt-2 text-sm text-[var(--brand-muted)]">{g.caption}</figcaption>}
             </figure>
           ))}
         </div>
       </div>
+
+      {/* Fullscreen lightbox */}
+      {current && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Gallery image viewer"
+          onClick={(e) => { if (e.target === e.currentTarget) closeLightbox(); }}
+        >
+          <button
+            type="button"
+            onClick={closeLightbox}
+            aria-label="Close image viewer"
+            className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-white/25 active:scale-95"
+          >
+            <X className="h-5 w-5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => stepLightbox(-1)}
+            aria-label="Previous image"
+            className="absolute left-2 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-white/25 active:scale-95 md:left-6"
+          >
+            <ChevronLeft className="h-6 w-6" />
+          </button>
+          <figure className="flex max-h-full flex-col items-center">
+            <img
+              src={current.url}
+              alt={current.alt || current.caption || "Gallery image"}
+              className="max-h-[85vh] max-w-[92vw] rounded-[var(--brand-radius-lg)] object-contain shadow-2xl"
+              loading="lazy"
+              decoding="async"
+            />
+            <figcaption className="mt-3 flex items-center gap-3 text-sm text-white/80">
+              {current.caption && <span className="max-w-[70vw] truncate">{current.caption}</span>}
+              <span className="text-white/50">{(lightbox ?? 0) + 1} / {gallery.length}</span>
+            </figcaption>
+          </figure>
+          <button
+            type="button"
+            onClick={() => stepLightbox(1)}
+            aria-label="Next image"
+            className="absolute right-2 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-white/25 active:scale-95 md:right-6"
+          >
+            <ChevronRight className="h-6 w-6" />
+          </button>
+        </div>
+      )}
     </section>
   );
 }
@@ -426,7 +541,7 @@ function Payment({ section, business, onCta }: { section: SiteSection; business:
           <div className="shrink-0 rounded-[var(--brand-radius-lg)] border-2 border-[var(--brand-primary)]/20 bg-white p-3 shadow-sm">
             {customQr ? (
                
-              <img src={customQr} alt={`${business.name} payment QR code`} className="h-44 w-44 object-contain" />
+              <img src={customQr} alt={`${business.name} payment QR code`} className="h-44 w-44 object-contain" loading="lazy" decoding="async" />
             ) : (
               <QRCode value={payLink} size={176} bgColor="#ffffff" fgColor="var(--brand-secondary)" />
             )}

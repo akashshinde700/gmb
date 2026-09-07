@@ -1,10 +1,10 @@
 "use client";
 // WebSetu — SiteRenderer: renders a complete tenant website from SitePayload.
 // Used in live view + dashboard preview (mode="preview" disables tracking/lead POSTs).
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Phone, Menu, X, Star, Facebook, Instagram, Youtube, Linkedin, Twitter, Globe,
-  MessageCircle, ExternalLink, Moon,
+  MessageCircle, ExternalLink, Moon, ArrowUp,
 } from "lucide-react";
 import { api } from "@/lib/api-client";
 import type { SitePayload, SiteSection, SiteTheme } from "@/lib/types";
@@ -26,6 +26,117 @@ const FONT_MAP: Record<SiteTheme["font"], { heading: string; body: string }> = {
   elegant: { heading: "Georgia, serif", body: "Georgia, serif" },
 };
 
+// ---------- SEO: schema.org LocalBusiness JSON-LD helpers ----------
+type OpeningHoursSpec = {
+  "@type": "OpeningHoursSpecification";
+  dayOfWeek: string;
+  opens: string;
+  closes: string;
+};
+
+const SCHEMA_DAY_BY_KEY: Record<string, string> = {
+  mon: "Monday", monday: "Monday",
+  tue: "Tuesday", tuesday: "Tuesday",
+  wed: "Wednesday", wednesday: "Wednesday",
+  thu: "Thursday", thursday: "Thursday",
+  fri: "Friday", friday: "Friday",
+  sat: "Saturday", saturday: "Saturday",
+  sun: "Sunday", sunday: "Sunday",
+};
+
+/** Extracts coordinates actually embedded in a Google Maps URL — never guesses. */
+function parseMapsUrlCoords(mapsUrl: string): { latitude: number; longitude: number } | null {
+  if (!mapsUrl) return null;
+  try {
+    const lat = String.raw`-?\d{1,2}(?:\.\d+)?`;
+    const lng = String.raw`-?\d{1,3}(?:\.\d+)?`;
+    const patterns = [
+      new RegExp(`@(${lat}),(${lng})`),
+      new RegExp(`!3d(${lat})!4d(${lng})`),
+      new RegExp(`[?&]q=(${lat}),(${lng})`),
+    ];
+    for (const re of patterns) {
+      const m = re.exec(mapsUrl);
+      if (!m) continue;
+      const latitude = Number(m[1]);
+      const longitude = Number(m[2]);
+      if (Math.abs(latitude) <= 90 && Math.abs(longitude) <= 180) return { latitude, longitude };
+    }
+  } catch {
+    /* malformed URL — skip geo */
+  }
+  return null;
+}
+
+function toIsoTime(rawHour: string, rawMinute: string, ampm: string): string | null {
+  let hour = Number(rawHour);
+  const minute = rawMinute ? Number(rawMinute) : 0;
+  if (!Number.isFinite(hour) || !Number.isFinite(minute) || hour > 23 || minute > 59) return null;
+  const ap = ampm.trim().toLowerCase();
+  if (ap === "am" && hour === 12) hour = 0;
+  else if (ap === "pm" && hour < 12) hour += 12;
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function buildOpeningHours(hours: unknown): OpeningHoursSpec[] {
+  if (!hours || typeof hours !== "object") return [];
+  const specs: OpeningHoursSpec[] = [];
+  for (const [rawKey, rawValue] of Object.entries(hours as Record<string, unknown>)) {
+    const day = SCHEMA_DAY_BY_KEY[rawKey.trim().toLowerCase()];
+    if (!day || typeof rawValue !== "string") continue;
+    const value = rawValue.trim();
+    if (!value || /closed/i.test(value)) continue;
+    const m = value.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*(?:–|—|-|to)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
+    if (!m) continue;
+    const opens = toIsoTime(m[1], m[2] ?? "", m[3] ?? "");
+    const closes = toIsoTime(m[4], m[5] ?? "", m[6] ?? "");
+    if (!opens || !closes) continue;
+    specs.push({ "@type": "OpeningHoursSpecification", dayOfWeek: `https://schema.org/${day}`, opens, closes });
+  }
+  return specs;
+}
+
+/** Builds a minimal, valid LocalBusiness JSON-LD object from the business payload. */
+function buildLocalBusinessJsonLd(business: SitePayload["business"]): string | null {
+  try {
+    const images = [business.coverUrl, business.logoUrl].map((u) => (u || "").trim()).filter(Boolean);
+    const streetAddress = (business.address || "").trim();
+    const addressLocality = (business.city || "").trim();
+
+    const ld: Record<string, unknown> = {
+      "@context": "https://schema.org",
+      "@type": "LocalBusiness",
+      name: business.name,
+      description: business.description || business.tagline || undefined,
+      url: `https://websetu.in/${business.slug}`,
+    };
+    if (images.length) ld.image = images.length === 1 ? images[0] : images;
+    if ((business.phone || "").trim()) ld.telephone = business.phone.trim();
+    if ((business.email || "").trim()) ld.email = business.email.trim();
+    if (streetAddress || addressLocality) {
+      ld.address = {
+        "@type": "PostalAddress",
+        streetAddress: streetAddress || undefined,
+        addressLocality: addressLocality || undefined,
+        addressRegion: (business.state || "").trim() || undefined,
+        postalCode: (business.pincode || "").trim() || undefined,
+        addressCountry: "IN",
+      };
+    }
+    const geo = parseMapsUrlCoords((business.mapsUrl || "").trim());
+    if (geo) ld.geo = { "@type": "GeoCoordinates", ...geo };
+    const openingHours = buildOpeningHours(business.hours);
+    if (openingHours.length) ld.openingHoursSpecification = openingHours;
+    const sameAs = Object.values(business.socials || {})
+      .filter((u): u is string => typeof u === "string" && /^https?:\/\//i.test(u.trim()))
+      .map((u) => u.trim());
+    if (sameAs.length) ld.sameAs = sameAs;
+    return JSON.stringify(ld); // undefined values are dropped → valid JSON
+  } catch {
+    return null;
+  }
+}
+
 interface SiteRendererProps {
   payload: SitePayload;
   mode?: "live" | "preview";
@@ -46,6 +157,7 @@ export default function SiteRenderer({ payload, mode = "live", device = "desktop
     [website.sections, website.theme],
   );
   const trackedVisit = useRef(false);
+  const jsonLd = useMemo(() => buildLocalBusinessJsonLd(business), [business]);
 
   // theme → CSS variables
   const themeVars = useMemo(() => {
@@ -109,6 +221,9 @@ export default function SiteRenderer({ payload, mode = "live", device = "desktop
       style={themeVars}
       className={`site-renderer mx-auto w-full ${deviceWidth} bg-white font-[family-name:var(--brand-font-body)] transition-all duration-300`}
     >
+      {/* SEO: schema.org LocalBusiness structured data */}
+      {jsonLd && <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLd }} />}
+
       {/* HEADER */}
       <header className="sticky top-0 z-40 border-b border-[var(--brand-border)] bg-white/90 backdrop-blur">
         <div className={`mx-auto flex ${containerWidth} items-center justify-between gap-4 px-4 py-3 sm:px-6`}>
@@ -239,7 +354,39 @@ export default function SiteRenderer({ payload, mode = "live", device = "desktop
       >
         <Phone className="h-6 w-6" />
       </a>
+
+      {/* Back to top — live site only (hidden in dashboard builder preview).
+          Bottom-left on desktop (WhatsApp owns bottom-right); sits above the
+          mobile-only call float, which already occupies bottom-left on phones. */}
+      {mode === "live" && <BackToTop />}
     </div>
+  );
+}
+
+function BackToTop() {
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    const onScroll = () => setVisible(window.scrollY > 600);
+    window.addEventListener("scroll", onScroll, { passive: true });
+    onScroll();
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
+  return (
+    <button
+      type="button"
+      onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+      aria-label="Back to top"
+      aria-hidden={!visible}
+      tabIndex={visible ? 0 : -1}
+      className={`fixed bottom-[5.75rem] left-5 z-40 flex h-10 w-10 items-center justify-center rounded-full text-white shadow-lg transition-all duration-300 hover:brightness-110 active:scale-90 sm:bottom-5 ${
+        visible ? "translate-y-0 opacity-100" : "pointer-events-none translate-y-3 opacity-0"
+      }`}
+      style={{ background: "var(--brand-primary)" }}
+    >
+      <ArrowUp className="h-5 w-5" />
+    </button>
   );
 }
 

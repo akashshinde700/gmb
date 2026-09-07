@@ -27,8 +27,10 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { api, ApiError } from "@/lib/api-client";
+import { cn } from "@/lib/utils";
 import { SECTION_LIBRARY } from "@/lib/sections";
 import type { AiSiteContent } from "@/lib/sections";
+import { isValidUpiId } from "@/lib/site-utils";
 import { BRAND_PALETTES } from "@/lib/palettes";
 import type { Plan, TemplateDef } from "@/lib/types";
 import { useApp } from "@/store/app-store";
@@ -124,6 +126,36 @@ function gradientCss(gradient: string): string {
   return `linear-gradient(135deg, ${pick(from)}, ${pick(to)})`;
 }
 
+/** Max bytes accepted by POST /api/upload (server enforces the same limit). */
+const UPLOAD_MAX_BYTES = 4 * 1024 * 1024;
+/** Files at or under this size are uploaded as-is; bigger ones are downscaled first. */
+const UPLOAD_DIRECT_LIMIT = 400 * 1024;
+
+/** Downscale an image file via canvas and return a JPEG File (never dataURLs). */
+async function downscaleToJpegFile(file: File, maxWidth: number): Promise<File> {
+  const objUrl = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const im = new Image();
+      im.onload = () => resolve(im);
+      im.onerror = () => reject(new Error("Could not read that image. Please try another one."));
+      im.src = objUrl;
+    });
+    const scale = Math.min(1, maxWidth / (img.width || maxWidth));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round((img.width || maxWidth) * scale));
+    canvas.height = Math.max(1, Math.round((img.height || maxWidth) * scale));
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Could not process this image — try a different one.");
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.85));
+    if (!blob) throw new Error("Could not process this image — try a different one.");
+    return new File([blob], `${file.name.replace(/\.[^.]+$/, "") || "image"}.jpg`, { type: "image/jpeg" });
+  } finally {
+    URL.revokeObjectURL(objUrl);
+  }
+}
+
 // ---------------------------------------------------------------- state
 
 interface ServiceDraft { id: string; name: string; description: string; }
@@ -155,6 +187,7 @@ interface OnboardingForm {
   state: string;
   pincode: string;
   gstin: string;
+  upiId: string;
   gmbUrl: string;
   mapsUrl: string;
   // Step 5
@@ -189,6 +222,7 @@ const DEFAULT_FORM: OnboardingForm = {
   state: "",
   pincode: "",
   gstin: "",
+  upiId: "",
   gmbUrl: "",
   mapsUrl: "",
   templateId: "",
@@ -223,6 +257,7 @@ export default function OnboardingView() {
   const [svcDesc, setSvcDesc] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [uploading, setUploading] = useState<"logo" | "cover" | null>(null);
   const [success, setSuccess] = useState<BusinessWithMeta | null>(null);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [templates, setTemplates] = useState<TemplateDef[]>([]);
@@ -304,6 +339,8 @@ export default function OnboardingView() {
     if (n === 4) {
       if (!form.phone.trim()) return "Phone number is required.";
       if (!form.city.trim()) return "City is required.";
+      if (form.upiId.trim() && !isValidUpiId(form.upiId.trim()))
+        return "Please enter a valid UPI ID (like name@okicici) — or leave it empty.";
     }
     if (n === 5 && !form.templateId) return "Please pick a website template to continue.";
     return "";
@@ -338,36 +375,15 @@ export default function OnboardingView() {
 
   // ---- image upload (logo / cover) --------------------------------------
 
-  function applyImage(kind: "logo" | "cover", dataUrl: string) {
+  function applyImage(kind: "logo" | "cover", url: string) {
     setForm((f) =>
       kind === "logo"
-        ? { ...f, logoUrl: dataUrl }
-        : { ...f, coverUrl: dataUrl, coverPreset: "" },
+        ? { ...f, logoUrl: url }
+        : { ...f, coverUrl: url, coverPreset: "" },
     );
   }
 
-  function downscaleDataUrl(dataUrl: string, maxWidth: number): Promise<string> {
-    return new Promise((resolve) => {
-      const img = new Image();
-      img.onload = () => {
-        const scale = Math.min(1, maxWidth / (img.width || maxWidth));
-        const canvas = document.createElement("canvas");
-        canvas.width = Math.max(1, Math.round((img.width || maxWidth) * scale));
-        canvas.height = Math.max(1, Math.round((img.height || maxWidth) * scale));
-        const ctx = canvas.getContext("2d");
-        if (!ctx) {
-          resolve(dataUrl);
-          return;
-        }
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        resolve(canvas.toDataURL("image/jpeg", 0.85));
-      };
-      img.onerror = () => resolve(dataUrl);
-      img.src = dataUrl;
-    });
-  }
-
-  function onPickImage(e: ChangeEvent<HTMLInputElement>, kind: "logo" | "cover") {
+  async function onPickImage(e: ChangeEvent<HTMLInputElement>, kind: "logo" | "cover") {
     const file = e.target.files?.[0];
     e.target.value = ""; // allow re-picking the same file
     if (!file) return;
@@ -375,27 +391,29 @@ export default function OnboardingView() {
       toast({ title: "Please choose an image file", variant: "destructive" });
       return;
     }
-    if (file.size > 500 * 1024) {
+    if (file.size > UPLOAD_MAX_BYTES) {
       toast({
         title: "Image too large",
-        description: "Please choose an image under 500 KB — or compress it and try again.",
+        description: "Keep it under 4 MB — larger photos are optimised automatically.",
         variant: "destructive",
       });
       return;
     }
-    const reader = new FileReader();
-    reader.onload = () => {
-      const raw = String(reader.result || "");
-      if (file.size > 300 * 1024) {
-        // lightly oversized → downscale via canvas
-        downscaleDataUrl(raw, kind === "logo" ? 480 : 1280).then((small) => applyImage(kind, small));
-      } else {
-        applyImage(kind, raw);
-      }
-    };
-    reader.onerror = () =>
-      toast({ title: "Could not read that file", description: "Please try another image.", variant: "destructive" });
-    reader.readAsDataURL(file);
+    setUploading(kind);
+    try {
+      // Small files upload untouched; bigger ones are downscaled via canvas first.
+      const toUpload =
+        file.size > UPLOAD_DIRECT_LIMIT
+          ? await downscaleToJpegFile(file, kind === "logo" ? 480 : 1400)
+          : file;
+      const res = await api.upload<{ url: string }>("/api/upload", toUpload);
+      applyImage(kind, res.url);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Upload failed — please try again.";
+      toast({ title: "Upload failed", description: msg, variant: "destructive" });
+    } finally {
+      setUploading(null);
+    }
   }
 
   // ---- services ----------------------------------------------------------
@@ -491,6 +509,7 @@ export default function OnboardingView() {
         state: form.state.trim(),
         pincode: form.pincode.trim(),
         gstin: form.gstin.trim(),
+        upiId: form.upiId.trim(),
         logoUrl: form.logoUrl,
         coverUrl: form.coverUrl,
         coverPreset: form.coverPreset,
@@ -874,9 +893,15 @@ export default function OnboardingView() {
                           variant="outline"
                           size="sm"
                           className="rounded-lg"
+                          disabled={uploading !== null}
                           onClick={() => logoInputRef.current?.click()}
                         >
-                          <Upload className="h-4 w-4" aria-hidden="true" /> Upload logo
+                          {uploading === "logo" ? (
+                            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                          ) : (
+                            <Upload className="h-4 w-4" aria-hidden="true" />
+                          )}
+                          {uploading === "logo" ? "Uploading…" : "Upload logo"}
                         </Button>
                         {form.logoUrl && (
                           <Button
@@ -884,6 +909,7 @@ export default function OnboardingView() {
                             variant="ghost"
                             size="sm"
                             className="rounded-lg text-red-600 hover:bg-red-50 hover:text-red-700"
+                            disabled={uploading !== null}
                             onClick={() => setField("logoUrl", "")}
                           >
                             <X className="h-4 w-4" aria-hidden="true" /> Remove
@@ -891,7 +917,8 @@ export default function OnboardingView() {
                         )}
                       </div>
                       <p className="text-xs text-zinc-500">
-                        PNG/JPG up to 500 KB. No logo? We&apos;ll use your initial automatically.
+                        PNG/JPG up to 4 MB — big images are optimised automatically. No logo?
+                        We&apos;ll use your initial automatically.
                       </p>
                     </div>
                   </div>
@@ -937,9 +964,15 @@ export default function OnboardingView() {
                       variant="outline"
                       size="sm"
                       className="rounded-lg"
+                      disabled={uploading !== null}
                       onClick={() => coverInputRef.current?.click()}
                     >
-                      <Upload className="h-4 w-4" aria-hidden="true" /> Upload cover
+                      {uploading === "cover" ? (
+                        <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                      ) : (
+                        <Upload className="h-4 w-4" aria-hidden="true" />
+                      )}
+                      {uploading === "cover" ? "Uploading…" : "Upload cover"}
                     </Button>
                     {(form.coverUrl || form.coverPreset) && (
                       <Button
@@ -947,6 +980,7 @@ export default function OnboardingView() {
                         variant="ghost"
                         size="sm"
                         className="rounded-lg text-red-600 hover:bg-red-50 hover:text-red-700"
+                        disabled={uploading !== null}
                         onClick={() => setForm((f) => ({ ...f, coverUrl: "", coverPreset: "" }))}
                       >
                         <X className="h-4 w-4" aria-hidden="true" /> Clear
@@ -965,10 +999,11 @@ export default function OnboardingView() {
                             key={p.id}
                             type="button"
                             aria-pressed={active}
+                            disabled={uploading !== null}
                             onClick={() =>
                               setForm((f) => ({ ...f, coverUrl: "", coverPreset: p.id }))
                             }
-                            className={`relative h-14 overflow-hidden rounded-xl text-white transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 ${
+                            className={`relative h-14 overflow-hidden rounded-xl text-white transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 ${
                               active ? "ring-2 ring-emerald-600 ring-offset-2" : "hover:opacity-90"
                             }`}
                             style={{ backgroundImage: p.css }}
@@ -1309,6 +1344,33 @@ export default function OnboardingView() {
                       onChange={(e) => setField("gstin", e.target.value.toUpperCase())}
                       className="rounded-xl font-mono text-sm"
                     />
+                  </div>
+                  <div className="space-y-2 sm:col-span-2">
+                    <Label htmlFor="ct-upi">
+                      UPI ID (for payments) <span className="text-zinc-400">(optional)</span>
+                    </Label>
+                    <Input
+                      id="ct-upi"
+                      placeholder="name@okicici"
+                      value={form.upiId}
+                      onChange={(e) => setField("upiId", e.target.value.trim())}
+                      className={cn(
+                        "rounded-xl font-mono text-sm",
+                        form.upiId.trim() && !isValidUpiId(form.upiId.trim()) &&
+                          "border-red-300 focus-visible:ring-red-200",
+                      )}
+                    />
+                    {form.upiId.trim() && !isValidUpiId(form.upiId.trim()) ? (
+                      <p className="text-xs font-medium text-red-600">
+                        That doesn&apos;t look like a valid UPI ID — format should be like
+                        name@okicici or shop@paytm.
+                      </p>
+                    ) : (
+                      <p className="text-xs text-zinc-500">
+                        Visitors get a Scan &amp; Pay QR on your website automatically. Example:
+                        name@okicici
+                      </p>
+                    )}
                   </div>
                 </div>
 

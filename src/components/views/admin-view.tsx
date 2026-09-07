@@ -3,7 +3,7 @@
 // Tabs: Overview | Customers | Plans | Templates | Coupons | Platform Leads.
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  AlertTriangle, ArrowLeft, BadgeCheck, Ban, CalendarX2, Check, Crown, ExternalLink,
+  AlertTriangle, ArrowLeft, BadgeCheck, Ban, CalendarX2, Check, Crown, Download, ExternalLink,
   Globe, Inbox, Layers, LayoutDashboard, LayoutTemplate, Loader2, Menu, MoreVertical,
   Pencil, Plus, Power, RotateCcw, Search, TicketPercent, Timer, Trash2, TrendingUp,
   UserPlus, Users, Wallet, type LucideIcon,
@@ -647,6 +647,30 @@ interface CustomerRow {
   business: Business | null; subscription: Subscription | null;
 }
 
+/** /api/admin/customers has no revenue aggregates — those columns are skipped. */
+function exportCustomersCsv(rows: CustomerRow[]) {
+  const head = ["Name", "Email", "Business", "Website (slug)", "Website status", "Plan", "Status", "Created"];
+  const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const csvRows = rows.map((r) => [
+    r.name,
+    r.email,
+    r.business?.name || "",
+    r.business?.slug || "",
+    r.business?.status || "",
+    r.subscription?.plan?.name || "",
+    r.subscription?.status || "",
+    new Date(r.createdAt).toLocaleString("en-IN"),
+  ].map(esc).join(","));
+  const csv = [head.map(esc).join(","), ...csvRows].join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "websetu-customers.csv";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 function CustomersTab() {
   const openSite = useApp((s) => s.openSite);
   const [rows, setRows] = useState<CustomerRow[] | null>(null);
@@ -739,15 +763,26 @@ function CustomersTab() {
         title="Customers"
         desc="All customer accounts, their websites and subscriptions."
         action={
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" aria-hidden="true" />
-            <Input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Search name, email or business…"
-              className="w-full pl-9 sm:w-72"
-              aria-label="Search customers"
-            />
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              className="rounded-xl"
+              onClick={() => exportCustomersCsv(filtered)}
+              disabled={filtered.length === 0}
+              aria-label="Export customers as CSV"
+            >
+              <Download className="h-4 w-4" aria-hidden="true" /> Export CSV
+            </Button>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" aria-hidden="true" />
+              <Input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Search name, email or business…"
+                className="w-full pl-9 sm:w-72"
+                aria-label="Search customers"
+              />
+            </div>
           </div>
         }
       />
@@ -1255,6 +1290,8 @@ function TemplatesTab() {
   const [templates, setTemplates] = useState<TemplateRow[] | null>(null);
   const [err, setErr] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [editing, setEditing] = useState<TemplateRow | null>(null); // null = create
+  const [confirm, setConfirm] = useState<ConfirmReq | null>(null);
 
   const load = useCallback(() => {
     return api
@@ -1272,6 +1309,26 @@ function TemplatesTab() {
     void load();
   }, [load]);
 
+  function askDelete(t: TemplateRow) {
+    setConfirm({
+      title: "Delete template?",
+      description: `“${t.name}” will be removed permanently. If any business still uses it, the delete is blocked until those businesses move to another template.`,
+      confirmLabel: "Delete template",
+      destructive: true,
+      run: () => {
+        void api
+          .del(`/api/admin/templates/${t.id}`)
+          .then(() => {
+            toast({ title: "Template deleted", description: `${t.name} was removed.` });
+            return load();
+          })
+          .catch((e: unknown) =>
+            toast({ title: "Delete failed", description: errMsg(e), variant: "destructive" }),
+          );
+      },
+    });
+  }
+
   return (
     <div>
       <TabHeader
@@ -1280,7 +1337,10 @@ function TemplatesTab() {
         action={
           <Button
             className="bg-emerald-600 text-white hover:bg-emerald-700"
-            onClick={() => setDialogOpen(true)}
+            onClick={() => {
+              setEditing(null);
+              setDialogOpen(true);
+            }}
           >
             <Plus className="h-4 w-4" aria-hidden="true" /> New Template
           </Button>
@@ -1329,6 +1389,28 @@ function TemplatesTab() {
                   {t.description || "No description"}
                 </p>
               </CardContent>
+              <div className="flex justify-end gap-2 border-t border-zinc-100 px-4 py-3">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  aria-label={`Edit ${t.name}`}
+                  onClick={() => {
+                    setEditing(t);
+                    setDialogOpen(true);
+                  }}
+                >
+                  <Pencil className="h-3.5 w-3.5" aria-hidden="true" /> Edit
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-red-600 hover:bg-red-50 hover:text-red-700"
+                  aria-label={`Delete ${t.name}`}
+                  onClick={() => askDelete(t)}
+                >
+                  <Trash2 className="h-3.5 w-3.5" aria-hidden="true" /> Delete
+                </Button>
+              </div>
             </Card>
           ))}
         </div>
@@ -1336,56 +1418,100 @@ function TemplatesTab() {
 
       <TemplateDialog
         open={dialogOpen}
+        template={editing}
         onClose={() => setDialogOpen(false)}
         onSaved={() => {
           setDialogOpen(false);
           void load();
         }}
       />
+      <ConfirmDialog req={confirm} onOpenChange={(o) => !o && setConfirm(null)} />
     </div>
   );
 }
 
 function TemplateDialog({
   open,
+  template,
   onClose,
   onSaved,
 }: {
   open: boolean;
+  template: TemplateRow | null;
   onClose: () => void;
   onSaved: () => void;
 }) {
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
-        {open && <TemplateFormBody onClose={onClose} onSaved={onSaved} />}
+        {open && (
+          <TemplateFormBody key={template?.id || "new"} template={template} onClose={onClose} onSaved={onSaved} />
+        )}
       </DialogContent>
     </Dialog>
   );
 }
 
-function TemplateFormBody({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
-  const [form, setForm] = useState({ name: "", category: "", description: "", premium: false, gradient: GRADIENTS[0] });
+interface TemplateForm {
+  name: string; category: string; description: string;
+  premium: boolean; gradient: string; active: boolean;
+}
+
+function TemplateFormBody({
+  template,
+  onClose,
+  onSaved,
+}: {
+  template: TemplateRow | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const isEdit = !!template;
+  const [form, setForm] = useState<TemplateForm>(() =>
+    template
+      ? {
+          name: template.name,
+          category: template.category,
+          description: template.description,
+          premium: template.premium,
+          gradient: template.gradient,
+          active: template.active,
+        }
+      : { name: "", category: "", description: "", premium: false, gradient: GRADIENTS[0], active: true },
+  );
   const [saving, setSaving] = useState(false);
 
+  function set<K extends keyof TemplateForm>(key: K, value: TemplateForm[K]) {
+    setForm((f) => ({ ...f, [key]: value }));
+  }
+
+  // Keep the Select valid if the stored gradient isn't one of the seed options.
+  const gradientOptions = GRADIENTS.includes(form.gradient) ? GRADIENTS : [form.gradient, ...GRADIENTS];
+
   async function save() {
-    if (!form.name.trim()) {
-      toast({ title: "Template name is required", variant: "destructive" });
+    if (form.name.trim().length < 2) {
+      toast({ title: "Template name must be at least 2 characters", variant: "destructive" });
       return;
     }
+    const shared = {
+      name: form.name.trim(),
+      category: form.category.trim() || "local",
+      description: form.description.trim(),
+      premium: form.premium,
+      gradient: form.gradient,
+    };
     setSaving(true);
     try {
-      await api.post("/api/admin/templates", {
-        name: form.name.trim(),
-        category: form.category.trim() || "local",
-        description: form.description.trim(),
-        premium: form.premium,
-        gradient: form.gradient,
-      });
-      toast({ title: "Template created", description: form.name.trim() });
+      if (isEdit) {
+        await api.put(`/api/admin/templates/${template!.id}`, { ...shared, active: form.active });
+        toast({ title: "Template updated", description: shared.name });
+      } else {
+        await api.post("/api/admin/templates", shared);
+        toast({ title: "Template created", description: shared.name });
+      }
       onSaved();
     } catch (e) {
-      toast({ title: "Could not create template", description: errMsg(e), variant: "destructive" });
+      toast({ title: "Could not save template", description: errMsg(e), variant: "destructive" });
     } finally {
       setSaving(false);
     }
@@ -1394,9 +1520,11 @@ function TemplateFormBody({ onClose, onSaved }: { onClose: () => void; onSaved: 
   return (
     <>
       <DialogHeader>
-        <DialogTitle>New Template</DialogTitle>
+        <DialogTitle>{isEdit ? `Edit ${template?.name}` : "New Template"}</DialogTitle>
         <DialogDescription>
-          Templates set the look and feel customers start from during onboarding.
+          {isEdit
+            ? "Changes apply to new websites created from this template."
+            : "Templates set the look and feel customers start from during onboarding."}
         </DialogDescription>
       </DialogHeader>
 
@@ -1406,7 +1534,7 @@ function TemplateFormBody({ onClose, onSaved }: { onClose: () => void; onSaved: 
             <Input
               id="tpl-name"
               value={form.name}
-              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+              onChange={(e) => set("name", e.target.value)}
               placeholder="e.g. Saloni Salon"
             />
           </div>
@@ -1415,7 +1543,7 @@ function TemplateFormBody({ onClose, onSaved }: { onClose: () => void; onSaved: 
             <Input
               id="tpl-category"
               value={form.category}
-              onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
+              onChange={(e) => set("category", e.target.value)}
               placeholder="e.g. food, services, retail, health"
             />
           </div>
@@ -1425,18 +1553,18 @@ function TemplateFormBody({ onClose, onSaved }: { onClose: () => void; onSaved: 
               id="tpl-desc"
               rows={3}
               value={form.description}
-              onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+              onChange={(e) => set("description", e.target.value)}
               placeholder="What kind of business is this template best for?"
             />
           </div>
           <div className="grid gap-2">
             <Label htmlFor="tpl-gradient">Gradient</Label>
-            <Select value={form.gradient} onValueChange={(v) => setForm((f) => ({ ...f, gradient: v }))}>
+            <Select value={form.gradient} onValueChange={(v) => set("gradient", v)}>
               <SelectTrigger id="tpl-gradient">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {GRADIENTS.map((g) => (
+                {gradientOptions.map((g) => (
                   <SelectItem key={g} value={g}>
                     <span className="flex items-center gap-2">
                       <span className={`inline-block h-4 w-8 rounded bg-gradient-to-br ${g}`} aria-hidden="true" />
@@ -1452,12 +1580,17 @@ function TemplateFormBody({ onClose, onSaved }: { onClose: () => void; onSaved: 
               <Label htmlFor="tpl-premium">Premium</Label>
               <p className="text-xs text-zinc-400">Premium templates can be restricted to paid plans</p>
             </div>
-            <Switch
-              id="tpl-premium"
-              checked={form.premium}
-              onCheckedChange={(v) => setForm((f) => ({ ...f, premium: v }))}
-            />
+            <Switch id="tpl-premium" checked={form.premium} onCheckedChange={(v) => set("premium", v)} />
           </div>
+          {isEdit && (
+            <div className="flex items-center justify-between rounded-lg border border-zinc-200 px-3 py-2.5">
+              <div>
+                <Label htmlFor="tpl-active">Active</Label>
+                <p className="text-xs text-zinc-400">Inactive templates are hidden from onboarding</p>
+              </div>
+              <Switch id="tpl-active" checked={form.active} onCheckedChange={(v) => set("active", v)} />
+            </div>
+          )}
         </div>
 
         <DialogFooter>
@@ -1466,7 +1599,7 @@ function TemplateFormBody({ onClose, onSaved }: { onClose: () => void; onSaved: 
           </Button>
           <Button className="bg-emerald-600 text-white hover:bg-emerald-700" onClick={() => void save()} disabled={saving}>
             {saving && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" aria-hidden="true" />}
-            Create template
+            {isEdit ? "Save changes" : "Create template"}
           </Button>
         </DialogFooter>
     </>
