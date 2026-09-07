@@ -49,9 +49,9 @@ async function main() {
   const starter = await db.plan.create({
     data: {
       name: "Starter", slug: "starter", tagline: "Get your business online quickly",
-      priceMonthly: 999, priceYearly: 9990, maxPages: 8, aiCredits: 10, sortOrder: 1,
+      priceMonthly: 999, priceYearly: 9990, maxPages: 5, aiCredits: 10, sortOrder: 1,
       featuresJson: JSON.stringify([
-        "1 website on yourname.websetu.in", "8 pages", "Professional template",
+        "1 website on yourname.websetu.in", "5 pages", "Professional template",
         "Basic SEO setup", "Contact form + lead inbox", "WhatsApp button", "Mobile responsive",
       ]),
     },
@@ -59,9 +59,9 @@ async function main() {
   const businessPlan = await db.plan.create({
     data: {
       name: "Business", slug: "business", tagline: "Everything a growing business needs",
-      priceMonthly: 1499, priceYearly: 14990, maxPages: 25, aiCredits: 50, popular: true, sortOrder: 2,
+      priceMonthly: 1499, priceYearly: 14990, maxPages: 10, aiCredits: 50, popular: true, sortOrder: 2,
       featuresJson: JSON.stringify([
-        "Everything in Starter", "Up to 25 pages", "Premium templates",
+        "Everything in Starter", "Up to 10 pages", "Premium templates",
         "Advanced SEO + Local SEO", "Blog / CMS", "Google Maps integration",
         "Analytics dashboard", "Lead management (CRM)", "Priority support",
       ]),
@@ -70,9 +70,9 @@ async function main() {
   const professional = await db.plan.create({
     data: {
       name: "Professional", slug: "professional", tagline: "AI-powered growth & custom domain",
-      priceMonthly: 2999, priceYearly: 29990, maxPages: 60, aiCredits: 500, sortOrder: 3,
+      priceMonthly: 2999, priceYearly: 29990, maxPages: 20, aiCredits: 500, sortOrder: 3,
       featuresJson: JSON.stringify([
-        "Everything in Business", "Up to 60 pages", "AI content generation", "AEO (Answer Engine Optimization)",
+        "Everything in Business", "Up to 20 pages", "AI content generation", "AEO (Answer Engine Optimization)",
         "Advanced GEO / multi-location pages", "Custom domain connection",
         "Advanced analytics", "Product catalogue", "Dedicated manager",
       ]),

@@ -138,3 +138,18 @@ Work Log:
 Stage Summary:
 - ALL VERIFIED END-TO-END. Platform is fully functional: marketing site → signup → onboarding wizard → AI content → website generation → builder → publish → leads → analytics → subscriptions/payments/coupons → admin console
 - Accounts: admin@websetu.in/admin1234 · demo@websetu.in/demo1234 (Sharma Electricals) · cafe@websetu.in/cafe1234 · anita@test.in/test1234 (Iron Temple Gym, published)
+---
+Task ID: 8
+Agent: main (Z.ai Code)
+Task: Plan page limits — Starter 5 / Business 10 / Professional 20 (user: "starter main 5 pages Buisness main 10 professional 20")
+
+Work Log:
+- Verified previous session's batch fully shipped: BRAND_PALETTES (12 palettes) wired into onboarding step-2 + dashboard ThemePanel; Payment QR section (react-qr-code, UPI deep-link, custom QR image, copy-VPA, pay-link CTA); Product "Product photo" upload + "YouTube video link" field with play-badge + youtube-nocookie embed; prices ₹999/₹1499/₹2999
+- Updated prisma/seed.ts plan block: maxPages 8→5 ("5 pages"), 25→10 ("Up to 10 pages"), 60→20 ("Up to 20 pages") for fresh installs
+- Rewrote prisma/update-plans.ts as explicit idempotent migration (sets priceMonthly/priceYearly/maxPages/aiCredits/popular + full featuresJson per slug); ran against live DB → starter 5, business 10, professional 20
+- Confirmed all views render plans from API (no hardcoded page strings)
+- Agent Browser verification: landing pricing shows ₹999/₹1,499/₹2,999 + "5/10/20 pages"; /api/plans returns maxPages 5/10/20; tenant site renders Scan & Pay QR (SVG) + rajesh@okicici + Pay Now nav; product "Solar Panel 200W" image + video play button opens youtube-nocookie iframe; dashboard builder palette "Apply Royal Purple" changed --brand-primary to #7c3aed with auto-save, then reverted to Emerald Fresh; products dialog labels confirmed (Product photo, YouTube video link); subscription usage meter "4 / 10"; 390px viewport no horizontal scroll; 0 console/page/dev.log errors
+
+Stage Summary:
+- Plans now: Starter ₹999/mo · 5 pages · Business ₹1499/mo · 10 pages (popular) · Professional ₹2999/mo · 20 pages · Enterprise custom
+- Note: headless clicks on dashboard sidebar need native .click() dispatch (playwright click intercepted); verification used JS click — app itself fine in real browsers

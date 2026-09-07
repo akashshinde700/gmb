@@ -1,21 +1,33 @@
-// One-off migration: update plan pricing (Starter ₹999 / Business ₹1499 / Professional ₹2999)
-// and replace unlimited pages (-1) with finite limits. Safe to run once.
+// One-off migration: apply page limits per plan (Starter 5 / Business 10 / Professional 20)
+// alongside pricing (Starter ₹999 / Business ₹1499 / Professional ₹2999).
+// Explicit + idempotent — safe to run multiple times.
 import { PrismaClient } from "@prisma/client";
 
 const db = new PrismaClient();
 
-const UPDATES: Record<string, { priceMonthly: number; priceYearly: number; maxPages: number; aiCredits: number; swap: string[] }> = {
+const UPDATES: Record<string, { priceMonthly: number; priceYearly: number; maxPages: number; aiCredits: number; popular: boolean; features: string[] }> = {
   starter: {
-    priceMonthly: 999, priceYearly: 9990, maxPages: 8, aiCredits: 10,
-    swap: ["5 pages", "8 pages"],
+    priceMonthly: 999, priceYearly: 9990, maxPages: 5, aiCredits: 10, popular: false,
+    features: [
+      "1 website on yourname.websetu.in", "5 pages", "Professional template",
+      "Basic SEO setup", "Contact form + lead inbox", "WhatsApp button", "Mobile responsive",
+    ],
   },
   business: {
-    priceMonthly: 1499, priceYearly: 14990, maxPages: 25, aiCredits: 50,
-    swap: ["Unlimited pages", "Up to 25 pages"],
+    priceMonthly: 1499, priceYearly: 14990, maxPages: 10, aiCredits: 50, popular: true,
+    features: [
+      "Everything in Starter", "Up to 10 pages", "Premium templates",
+      "Advanced SEO + Local SEO", "Blog / CMS", "Google Maps integration",
+      "Analytics dashboard", "Lead management (CRM)", "Priority support",
+    ],
   },
   professional: {
-    priceMonthly: 2999, priceYearly: 29990, maxPages: 60, aiCredits: 500,
-    swap: ["AI content generation", "Up to 60 pages", "AI content generation"],
+    priceMonthly: 2999, priceYearly: 29990, maxPages: 20, aiCredits: 500, popular: false,
+    features: [
+      "Everything in Business", "Up to 20 pages", "AI content generation", "AEO (Answer Engine Optimization)",
+      "Advanced GEO / multi-location pages", "Custom domain connection",
+      "Advanced analytics", "Product catalogue", "Dedicated manager",
+    ],
   },
 };
 
@@ -23,12 +35,6 @@ async function main() {
   for (const [slug, u] of Object.entries(UPDATES)) {
     const plan = await db.plan.findUnique({ where: { slug } });
     if (!plan) { console.log(`⚠ plan ${slug} not found — skipped`); continue; }
-    const features: string[] = JSON.parse(plan.featuresJson || "[]");
-    let next = features.map((f) => (f === u.swap[0] ? u.swap[1] : f));
-    if (u.swap.length > 2 && !next.includes(u.swap[1])) {
-      next = next.map((f) => (f === u.swap[2] ? u.swap[1] : f));
-      if (!next.includes(u.swap[1])) next.splice(1, 0, u.swap[1]);
-    }
     await db.plan.update({
       where: { id: plan.id },
       data: {
@@ -36,10 +42,11 @@ async function main() {
         priceYearly: u.priceYearly,
         maxPages: u.maxPages,
         aiCredits: u.aiCredits,
-        featuresJson: JSON.stringify(next),
+        popular: u.popular,
+        featuresJson: JSON.stringify(u.features),
       },
     });
-    console.log(`✔ ${slug}: ₹${u.priceMonthly}/mo · maxPages ${u.maxPages} · ${next.join(" | ")}`);
+    console.log(`✔ ${slug}: ₹${u.priceMonthly}/mo · ${u.maxPages} pages · ${u.features.join(" | ")}`);
   }
 }
 
