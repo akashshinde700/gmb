@@ -23,7 +23,7 @@ export const POST = route(async (req: Request) => {
   const query = preset.key === "general" ? business.category : preset.imageQuery;
   // Each press moves one page further so it never re-adds the same photos.
   const existing = await db.galleryItem.count({ where: { businessId: business.id } });
-  const photos = await fetchStockPhotos(query, 6, Math.floor(existing / 6) + 2);
+  const photos = await fetchStockPhotos(query, 6, Math.floor(existing / 6) + 2, [business.category], business.slug);
   if (!photos.length) throw new HttpError("Could not fetch photos right now — please try again in a minute.", 502);
 
   const last = await db.galleryItem.findFirst({ where: { businessId: business.id }, orderBy: { sortOrder: "desc" } });

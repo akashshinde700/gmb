@@ -111,11 +111,16 @@ export const POST = route(async (req: Request) => {
 
   // No photo of their own yet: start them with real photos of their trade —
   // a cover, one beside the About text, and a gallery — which they can swap.
-  const imageQuery =
-    str(ai?.imageQuery, 60).replace(/[^\w\s-]/g, "") ||
-    (preset.key === "general" ? category : pick(draw("imgq"), variants.imageQueries));
+  const curated = preset.key === "general"
+    ? [category, ...variants.imageQueries]
+    : [pick(draw("imgq"), variants.imageQueries), ...variants.imageQueries];
+  const suggested = str(ai?.imageQuery, 60).replace(/[^\w\s-]/g, "");
   const photoPage = 1 + Math.floor(draw("page")() * 5);
-  const stock = coverUrl ? [] : await fetchStockPhotos(imageQuery, 8, photoPage);
+  // The trade the owner typed comes before the generic list: a jeweller should
+  // get jewellery, and only fall back to shop shelves when that finds nothing.
+  const stock = coverUrl
+    ? []
+    : await fetchStockPhotos(suggested || category, 8, photoPage, [category, ...curated, "business"], slug);
   // The hero keeps its animated industry scene unless the OWNER gave a photo:
   // a stock picture in the hero makes every site in a trade look alike, while
   // the scene is what reads as designed. Stock photos go to About and Gallery,

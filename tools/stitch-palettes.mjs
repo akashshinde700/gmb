@@ -62,15 +62,57 @@ const keys = (() => {
 })();
 
 let keyAt = 0;
-const dead = new Set();
+
+/**
+ * Keys fail for two very different reasons, and treating them the same wastes
+ * most of the daily allowance.
+ *
+ *   broken  — bad key, no permission. Never worth trying again.
+ *   waiting — today's free credits are spent. Stitch tops them up daily, so the
+ *             key comes back; it is only resting, not dead.
+ *
+ * A rested key is retried once its cooldown passes, which matters on a long run
+ * that outlives the quota reset.
+ */
+const broken = new Set();
+const waiting = new Map(); // key index -> timestamp it may be tried again
+const COOLDOWN_MS = Number(process.env.KEY_COOLDOWN_MS || 45 * 60 * 1000);
+
+const usable = (i) => !broken.has(i) && (waiting.get(i) ?? 0) <= Date.now();
+
+function rest(i, why) {
+  waiting.set(i, Date.now() + COOLDOWN_MS);
+  const mins = Math.round(COOLDOWN_MS / 60000);
+  console.error(`  key #${i + 1} out of credits (${why}) — resting ${mins}m, trying the next one`);
+}
+
+function retire(i, why) {
+  broken.add(i);
+  console.error(`  key #${i + 1} unusable (${why}) — not trying it again`);
+}
+
+/** Next key worth trying, or null when every key is broken or resting. */
+function nextKey() {
+  for (let step = 0; step < keys.length; step++) {
+    const i = (keyAt + step) % keys.length;
+    if (usable(i)) return i;
+  }
+  return null;
+}
 
 /** One call, moving to the next key when this one is out of credit. */
 async function rpc(method, params, { timeout = 240_000 } = {}) {
-  for (let tries = 0; tries < keys.length; tries++) {
-    if (dead.has(keyAt)) {
-      keyAt = (keyAt + 1) % keys.length;
+  for (let tries = 0; tries < keys.length * 2; tries++) {
+    const idx = nextKey();
+    if (idx === null) {
+      const soonest = Math.min(...[...waiting.values()], Infinity);
+      if (!Number.isFinite(soonest)) throw new Error("every key is unusable");
+      const wait = Math.max(5_000, soonest - Date.now());
+      console.error(`  all keys resting — waiting ${Math.round(wait / 60000)}m for credits to refresh`);
+      await new Promise((r) => setTimeout(r, wait));
       continue;
     }
+    keyAt = idx;
     const key = keys[keyAt];
     try {
       const res = await fetch(URL_MCP, {
@@ -84,9 +126,14 @@ async function rpc(method, params, { timeout = 240_000 } = {}) {
         signal: AbortSignal.timeout(timeout),
       });
       const text = await res.text();
-      if (res.status === 429 || res.status === 403) {
-        console.error(`  key #${keyAt + 1} exhausted (${res.status}) — switching`);
-        dead.add(keyAt);
+      // 429 is today's allowance, not a broken key; 401/403 is the key itself.
+      if (res.status === 429) {
+        rest(keyAt, "429");
+        keyAt = (keyAt + 1) % keys.length;
+        continue;
+      }
+      if (res.status === 401 || res.status === 403) {
+        retire(keyAt, String(res.status));
         keyAt = (keyAt + 1) % keys.length;
         continue;
       }
@@ -100,9 +147,13 @@ async function rpc(method, params, { timeout = 240_000 } = {}) {
         json = JSON.parse(body);
       } catch {
         const msg = body.trim().slice(0, 140);
-        if (/quota|exceed|limit|permission|caller|denied/i.test(msg)) {
-          console.error(`  key #${keyAt + 1} unusable: ${msg}`);
-          dead.add(keyAt);
+        if (/quota|exceed|exhaust|limit|rate/i.test(msg)) {
+          rest(keyAt, msg.slice(0, 50));
+          keyAt = (keyAt + 1) % keys.length;
+          continue;
+        }
+        if (/permission|caller|denied|unauthenticated|invalid/i.test(msg)) {
+          retire(keyAt, msg.slice(0, 50));
           keyAt = (keyAt + 1) % keys.length;
           continue;
         }
@@ -115,7 +166,7 @@ async function rpc(method, params, { timeout = 240_000 } = {}) {
       keyAt = (keyAt + 1) % keys.length;
     }
   }
-  throw new Error("every key failed or is out of credit");
+  throw new Error("every key is broken or out of credit right now");
 }
 
 const textOf = (r) => (r?.content ?? []).filter((c) => c.type === "text").map((c) => c.text).join("\n");
@@ -164,7 +215,8 @@ if (!wanted.length) {
   process.exit(1);
 }
 
-console.log(`${keys.length} key(s) loaded; ${PER_INDUSTRY} design(s) per industry\n`);
+console.log(`${keys.length} key(s) loaded; ${PER_INDUSTRY} design(s) per industry`);
+console.log(`a key that runs out of daily credits rests ${Math.round(COOLDOWN_MS / 60000)}m, then gets another turn\n`);
 for (const key of wanted) {
   console.log(`== ${key}`);
   try {

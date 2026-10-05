@@ -12,6 +12,7 @@
 
 import sharp from "sharp";
 import { storeImage } from "@/lib/uploads";
+import { rng, seedFrom, shuffle } from "@/lib/variants";
 
 export interface StockPhoto {
   url: string;
@@ -178,12 +179,45 @@ async function storeCandidate(c: Candidate, width: number): Promise<StockPhoto |
  * against the search words, so a thin query returns fewer photos rather than
  * unrelated ones. Never throws: a slow or failing provider just means fewer.
  */
-export async function fetchStockPhotos(query: string, count: number, page = 1): Promise<StockPhoto[]> {
-  const words = query.toLowerCase().replace(/[^a-z0-9\s-]/g, " ").split(/\s+/).filter(Boolean).slice(0, 5);
-  if (!stockImagesConfigured() || !words.length || count <= 0) return [];
+export async function fetchStockPhotos(
+  query: string,
+  count: number,
+  page = 1,
+  fallbacks: readonly string[] = [],
+  seed = "",
+): Promise<StockPhoto[]> {
+  if (!stockImagesConfigured() || count <= 0) return [];
+
+  // Try the asked-for search, then progressively broader ones. Each candidate
+  // is also tried with its last word dropped, which turns a phrase nobody has
+  // photographed into one that plenty have.
+  const candidates: string[] = [];
+  for (const raw of [query, ...fallbacks]) {
+    const w = String(raw ?? "").toLowerCase().replace(/[^a-z0-9\s-]/g, " ").split(/\s+/).filter(Boolean).slice(0, 5);
+    if (!w.length) continue;
+    const full = w.join(" ");
+    if (!candidates.includes(full)) candidates.push(full);
+    if (w.length > 1) {
+      const shorter = w.slice(0, -1).join(" ");
+      if (!candidates.includes(shorter)) candidates.push(shorter);
+    }
+  }
+  if (!candidates.length) return [];
+
+  for (const term of candidates) {
+    const got = await photosFor(term, count, page, seed);
+    // Half a gallery of the right thing beats a full one of the wrong thing,
+    // but one lonely photo means the search simply did not land.
+    if (got.length >= Math.min(count, 3)) return got;
+  }
+  return [];
+}
+
+async function photosFor(term: string, count: number, page: number, seed: string): Promise<StockPhoto[]> {
+  const words = term.split(/\s+/).filter(Boolean);
+  if (!words.length) return [];
 
   const want = count + 6; // spare candidates for failed downloads and duplicates
-  const term = words.join(" ");
 
   // Page 1 first: it reports how many results exist, which is the only way to
   // know whether the seeded page is real. Asking for page 5 of a query with 30
@@ -213,7 +247,12 @@ export async function fetchStockPhotos(query: string, count: number, page = 1): 
     (seen.has(k) ? repeats : distinct).push(c);
     seen.add(k);
   }
-  const queue = [...distinct, ...repeats];
+  // A narrow trade has one small pool — "jewellery" has twenty photos in the
+  // whole library — so paging cannot separate two shops. Shuffling the pool per
+  // business does: they draw different photos from the same twenty.
+  const queue = seed
+    ? [...shuffle(rng(seedFrom(`${seed}::photos`)), distinct), ...repeats]
+    : [...distinct, ...repeats];
 
   // Download in batches until enough have been stored, but never hold the
   // customer's "Create my website" request open chasing the last picture — a
