@@ -1,28 +1,42 @@
 import { db } from "@/lib/db";
-import { fail, getSessionUser, ok } from "@/lib/auth";
+import { audit, HttpError, ok, pageParams, readJson, requireAdmin, route, str } from "@/lib/api";
 
-async function requireAdmin(req: Request) {
-  const session = await getSessionUser(req);
-  if (!session) return { error: fail("Unauthorized", 401) as Response };
-  if (session.role !== "ADMIN") return { error: fail("Admin access required", 403) as Response };
-  return { session };
-}
+const STATUSES = ["NEW", "CONTACTED", "CONVERTED", "CLOSED"];
 
 /** GET /api/admin/platform-leads — leads captured by the SaaS's own website */
-export async function GET(req: Request) {
-  const { error } = await requireAdmin(req);
-  if (error) return error;
-  const leads = await db.platformLead.findMany({ orderBy: { createdAt: "desc" }, take: 200 });
-  return ok(leads);
-}
+export const GET = route(async (req: Request) => {
+  await requireAdmin(req);
+  const { take, skip } = pageParams(req, 100, 200);
+  const [leads, total] = await Promise.all([
+    db.platformLead.findMany({
+      orderBy: { createdAt: "desc" },
+      take,
+      skip,
+      include: { _count: { select: { followUps: true } } },
+    }),
+    db.platformLead.count(),
+  ]);
+  const rows = leads.map(({ _count, ...lead }) => ({ ...lead, followUpCount: _count.followUps }));
+  return ok(rows, 200, { total, take, skip });
+});
 
 /** PATCH — update status */
-export async function PATCH(req: Request) {
-  const { error } = await requireAdmin(req);
-  if (error) return error;
-  const body = (await req.json()) as { id?: string; status?: string };
-  if (!body.id) return fail("Lead id required");
-  const status = ["NEW", "CONTACTED", "CONVERTED", "CLOSED"].includes(body.status || "") ? body.status! : "NEW";
-  const lead = await db.platformLead.update({ where: { id: body.id }, data: { status } });
+export const PATCH = route(async (req: Request) => {
+  const admin = await requireAdmin(req);
+  const body = await readJson<{ id?: string; status?: string }>(req);
+
+  const id = str(body.id, 60);
+  if (!id) throw new HttpError("Lead id required");
+
+  // An unrecognised status used to be silently rewritten to NEW, quietly
+  // discarding whatever the admin actually chose.
+  const status = str(body.status, 30);
+  if (!STATUSES.includes(status)) throw new HttpError("Invalid status");
+
+  const existing = await db.platformLead.findUnique({ where: { id } });
+  if (!existing) throw new HttpError("Lead not found", 404);
+
+  const lead = await db.platformLead.update({ where: { id }, data: { status } });
+  await audit({ actor: admin.id, action: "PLATFORM_LEAD_STATUS", entity: "platformLead", entityId: id, meta: { status } });
   return ok(lead);
-}
+});

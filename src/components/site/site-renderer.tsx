@@ -4,13 +4,20 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Phone, Menu, X, Star, Facebook, Instagram, Youtube, Linkedin, Twitter, Globe,
-  MessageCircle, ExternalLink, Moon, ArrowUp,
+  MessageCircle, Mail, MapPin, Moon, ArrowUp,
 } from "lucide-react";
 import { api } from "@/lib/api-client";
+import { openStatus } from "@/lib/hours";
+import { jsonLdScript, siteOrigin, usableTagline } from "@/lib/site-utils";
+import { schemaTypeFor } from "@/lib/schema-types";
+import { resolveIndustry, type SceneKind } from "@/lib/industries";
+import SiteReveal from "@/components/site/site-reveal";
+import { seedFrom } from "@/lib/variants";
+import SiteImage from "@/components/site/site-image";
 import type { SitePayload, SiteSection, SiteTheme } from "@/lib/types";
 import {
   Hero, Stats, About, Services, Products, WhyUs, Gallery, Testimonials,
-  FaqSection, CtaBanner, Payment, Hours, Contact,
+  FaqSection, BlogTeaser, CtaBanner, Payment, Hours, Contact,
 } from "@/components/site/sections";
 
 export type Device = "desktop" | "tablet" | "mobile";
@@ -105,10 +112,17 @@ function buildLocalBusinessJsonLd(business: SitePayload["business"]): string | n
 
     const ld: Record<string, unknown> = {
       "@context": "https://schema.org",
-      "@type": "LocalBusiness",
+      // The most specific type the category maps to — "Dentist", "Electrician",
+      // "Restaurant" — falling back to LocalBusiness. A generic type is the
+      // least a page can say about itself, and local/AI results read the
+      // specific one to decide which questions this business answers.
+      "@type": schemaTypeFor(business.category),
       name: business.name,
-      description: business.description || business.tagline || undefined,
-      url: `https://websetu.in/${business.slug}`,
+      description: business.description || usableTagline(business.tagline) || undefined,
+      // The published site lives at /s/<slug> on the configured origin. The
+      // old hardcoded host pointed structured data at a URL that does not serve
+      // this business, which is worse than omitting it.
+      url: `${siteOrigin()}/s/${business.slug}`,
     };
     if (images.length) ld.image = images.length === 1 ? images[0] : images;
     if ((business.phone || "").trim()) ld.telephone = business.phone.trim();
@@ -130,8 +144,119 @@ function buildLocalBusinessJsonLd(business: SitePayload["business"]): string | n
     const sameAs = Object.values(business.socials || {})
       .filter((u): u is string => typeof u === "string" && /^https?:\/\//i.test(u.trim()))
       .map((u) => u.trim());
+    // The Google Business Profile belongs here too: sameAs is how a page says
+    // "that listing and this site are the same business", which is exactly the
+    // link local search is trying to establish.
+    const gmb = (business.gmbUrl || "").trim();
+    if (gmb && /^https?:\/\//i.test(gmb) && !sameAs.includes(gmb)) sameAs.push(gmb);
     if (sameAs.length) ld.sameAs = sameAs;
-    return JSON.stringify(ld); // undefined values are dropped → valid JSON
+
+    // A link to the listing on Google, which is a distinct property from the
+    // embedded map and is what "Directions" resolves to.
+    const mapsUrl = (business.mapsUrl || "").trim();
+    if (/^https?:\/\//i.test(mapsUrl)) ld.hasMap = mapsUrl;
+
+    // Where they actually work. For a service business this is the difference
+    // between "a shop in Satara" and "an electrician who covers Satara".
+    const area = [business.city, business.state].map((v) => (v || "").trim()).filter(Boolean);
+    if (area.length) {
+      ld.areaServed = area.map((name) => ({ "@type": "Place", name }));
+    }
+    return jsonLdScript(ld); // undefined values are dropped → valid JSON
+  } catch {
+    return null;
+  }
+}
+
+
+/**
+ * The services and products the page already lists, as structured data.
+ *
+ * Only what is visible on the page is marked up — marking up content the reader
+ * cannot see is the one thing Google treats as manipulation rather than as an
+ * error. So this reads the same rows the sections render.
+ *
+ * Prices are deliberately conservative: a service's price is free text ("from
+ * ₹500", "on request"), so it is emitted only when it is a plain number. A
+ * wrong price in structured data is worse than no price — it is what a customer
+ * will hold the business to.
+ */
+function buildCatalogueJsonLd(payload: SitePayload, siteUrl: string): string | null {
+  try {
+    const items: Record<string, unknown>[] = [];
+
+    for (const service of payload.services || []) {
+      const name = (service.name || "").trim();
+      if (!name) continue;
+      const entry: Record<string, unknown> = {
+        "@type": "Service",
+        name,
+        description: (service.description || "").trim() || undefined,
+        provider: { "@type": "LocalBusiness", name: payload.business.name, url: siteUrl },
+      };
+      if (service.image) entry.image = service.image;
+      const price = Number(String(service.price || "").replace(/[^0-9.]/g, ""));
+      if (Number.isFinite(price) && price > 0 && /^[₹\s]*[\d,.]+$/.test(String(service.price || "").trim())) {
+        entry.offers = { "@type": "Offer", price, priceCurrency: "INR" };
+      }
+      items.push(entry);
+    }
+
+    for (const product of payload.products || []) {
+      const name = (product.name || "").trim();
+      if (!name) continue;
+      const entry: Record<string, unknown> = {
+        "@type": "Product",
+        name,
+        description: (product.shortDesc || product.description || "").trim() || undefined,
+        sku: (product.sku || "").trim() || undefined,
+      };
+      if (product.image) entry.image = product.image;
+      // hidePrice is the owner saying "ask me" — repeating the number in the
+      // markup would publish exactly what they chose not to show.
+      const amount = product.salePrice ?? product.price;
+      if (!product.hidePrice && typeof amount === "number" && amount > 0) {
+        entry.offers = {
+          "@type": "Offer",
+          price: amount,
+          priceCurrency: "INR",
+          availability: "https://schema.org/InStock",
+          url: siteUrl,
+        };
+      }
+      items.push(entry);
+    }
+
+    if (!items.length) return null;
+    return jsonLdScript({
+      "@context": "https://schema.org",
+      "@type": "ItemList",
+      itemListElement: items.map((item, i) => ({
+        "@type": "ListItem",
+        position: i + 1,
+        item,
+      })),
+    });
+  } catch {
+    return null;
+  }
+}
+
+/** FAQPage JSON-LD built from whichever FAQ section the site is showing. */
+function buildFaqJsonLd(sections: SiteSection[]): string | null {
+  const faq = sections.find((s) => s.type === "faq");
+  const items = (faq?.content?.items as { question?: string; answer?: string }[] | undefined) || [];
+  const entities = items
+    .filter((i) => (i.question || "").trim() && (i.answer || "").trim())
+    .slice(0, 20)
+    .map((i) => ({
+      "@type": "Question",
+      name: String(i.question).trim(),
+      acceptedAnswer: { "@type": "Answer", text: String(i.answer).trim() },
+    }));
+  if (!entities.length) return null;
+  try {
+    return jsonLdScript({ "@context": "https://schema.org", "@type": "FAQPage", mainEntity: entities });
   } catch {
     return null;
   }
@@ -157,7 +282,21 @@ export default function SiteRenderer({ payload, mode = "live", device = "desktop
     [website.sections, website.theme],
   );
   const trackedVisit = useRef(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  // Which service/product the visitor clicked "Enquire" on, so the contact form
+  // arrives pre-filled and the lead records what they actually asked about.
+  const [enquirySubject, setEnquirySubject] = useState("");
   const jsonLd = useMemo(() => buildLocalBusinessJsonLd(business), [business]);
+  // FAQPage markup is what actually earns the "answer engine" placement the
+  // product promises — the questions were already on the page, unmarked.
+  const faqJsonLd = useMemo(() => buildFaqJsonLd(sections), [sections]);
+  // Services and products, so a search for one of them can reach this page.
+  const catalogueJsonLd = useMemo(
+    () => buildCatalogueJsonLd(payload, `${siteOrigin()}/s/${business.slug}`),
+    [payload, business.slug],
+  );
+  // Derived from the owner's own hours; "unknown" renders nothing.
+  const hours = useMemo(() => openStatus(business.hours), [business.hours]);
 
   // theme → CSS variables
   const themeVars = useMemo(() => {
@@ -190,7 +329,9 @@ export default function SiteRenderer({ payload, mode = "live", device = "desktop
     api.post("/api/analytics/event", { slug: business.slug, type, path: "/" }).catch(() => {});
   }
 
-  async function submitLead(data: { name: string; phone: string; email: string; message: string }): Promise<string | null> {
+  async function submitLead(data: {
+    name: string; phone: string; email: string; message: string; website: string; serviceName?: string;
+  }): Promise<string | null> {
     if (mode === "preview") {
       await new Promise((r) => setTimeout(r, 600));
       return null; // simulate success in preview
@@ -206,31 +347,98 @@ export default function SiteRenderer({ payload, mode = "live", device = "desktop
   const waNumber = (business.whatsapp || business.phone || "").replace(/[^\d]/g, "");
   const containerWidth = website.theme?.containerWidth === "wide" ? "max-w-7xl" : "max-w-6xl";
   const hasPayment = Boolean(business.upiId || business.paymentQrUrl);
+  /**
+   * Scroll to a section instead of letting the browser change the hash.
+   *
+   * The dashboard and the shareable link both run this page under a hash route
+   * (#/site/<slug>), so a plain href="#services" replaced the whole route and
+   * dropped the visitor on the WebSetu landing page. Anchors are kept in the
+   * markup for accessibility and no-JS, but the click is handled here.
+   */
+  function jump(e: React.MouseEvent<HTMLAnchorElement>, href: string) {
+    const id = href.replace(/^#/, "");
+    if (!id) return;
+    e.preventDefault();
+    const root = e.currentTarget.closest(".site-renderer");
+    const target = id === "top" ? null : (root ?? document).querySelector(`#${CSS.escape(id)}`);
+    if (target) {
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+    } else {
+      // "Top", or a section that is not on the page — go to the top of the site
+      // itself, which is not always the top of the window in the preview.
+      (root ?? document.body).scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }
+
+  // A section with nothing in it renders nothing, so linking to it scrolled the
+  // visitor to the top of the page instead — "Testimonials" on a site with no
+  // reviews yet looked like a broken link. The menu only offers what is there.
+  const sectionHasContent: Record<string, boolean> = {
+    services: services.length > 0,
+    products: products.length > 0,
+    gallery: gallery.length > 0,
+    testimonials: testimonials.length > 0,
+    faq: faqs.length > 0,
+    payment: hasPayment,
+    contact: true,
+    about: true,
+  };
+
   const navLinks = sections
     .filter((s) => ["services", "products", "gallery", "testimonials", "faq", "payment", "contact", "about"].includes(s.type))
-    .filter((s) => s.type !== "payment" || hasPayment)
+    .filter((s) => s.visible !== false)
+    .filter((s) => sectionHasContent[s.type])
     .map((s) => ({
       href: `#${s.type === "about" ? "top" : s.type}`,
       label: s.type === "whyUs" ? "Why Us" : s.type === "payment" ? "Pay Now" : s.type.charAt(0).toUpperCase() + s.type.slice(1),
     }));
 
   const deviceWidth = device === "mobile" ? "max-w-[420px]" : device === "tablet" ? "max-w-[820px]" : "max-w-full";
+  // The preview sits inside the dashboard's own <main>; nesting landmarks
+  // breaks assistive navigation, so only the live site gets the landmark.
+  const SectionsRoot = mode === "preview" ? "div" : "main";
 
   return (
     <div
       style={themeVars}
       className={`site-renderer mx-auto w-full ${deviceWidth} bg-white font-[family-name:var(--brand-font-body)] transition-all duration-300`}
     >
+      {/* Without this the sticky header covers the heading we just jumped to. */}
+      <style>{".site-renderer [id]{scroll-margin-top:76px}"}</style>
       {/* SEO: schema.org LocalBusiness structured data */}
       {jsonLd && <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLd }} />}
+      {faqJsonLd && <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: faqJsonLd }} />}
+      {catalogueJsonLd && <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: catalogueJsonLd }} />}
+
+      {/* Keyboard users land here first; the nav is long on a phone. */}
+      <a
+        href="#top"
+        onClick={(e) => jump(e, "#top")}
+        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-[60] focus:rounded-[var(--brand-radius)] focus:bg-[var(--brand-primary)] focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-white"
+      >
+        Skip to content
+      </a>
 
       {/* HEADER */}
       <header className="sticky top-0 z-40 border-b border-[var(--brand-border)] bg-white/90 backdrop-blur">
         <div className={`mx-auto flex ${containerWidth} items-center justify-between gap-4 px-4 py-3 sm:px-6`}>
-          <a href="#top" className="flex items-center gap-2.5 min-w-0">
+          <a href="#top" onClick={(e) => jump(e, "#top")} className="flex min-w-0 items-center gap-2.5">
             {business.logoUrl ? (
-               
-              <img src={business.logoUrl} alt={`${business.name} logo`} className="h-9 w-9 rounded-[var(--brand-radius)] object-cover" />
+
+              // The one picture on a tenant site that still bypassed the
+              // optimiser: everything else already goes through SiteImage, so
+              // the shop's logo was the lone original upload being sent down
+              // the wire at full size — in the header, on every page, to every
+              // visitor. It also had no dimensions, so the header reflowed once
+              // it arrived.
+              <SiteImage
+                src={business.logoUrl}
+                alt={`${business.name} logo`}
+                wrapperClassName="h-9 w-9 shrink-0 rounded-[var(--brand-radius)]"
+                className="object-cover"
+                sizes="36px"
+                priority
+              />
             ) : (
               <span
                 className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--brand-radius)] font-bold text-white"
@@ -239,35 +447,121 @@ export default function SiteRenderer({ payload, mode = "live", device = "desktop
                 {business.name.charAt(0)}
               </span>
             )}
-            <span className="truncate font-bold text-[var(--brand-secondary)]" style={{ fontFamily: "var(--brand-font-heading)" }}>
-              {business.name}
+            <span className="min-w-0">
+              <span
+                className="block truncate font-bold text-[var(--brand-secondary)]"
+                style={{ fontFamily: "var(--brand-font-heading)" }}
+              >
+                {business.name}
+              </span>
+              {hours.state !== "unknown" && (
+                <span className="flex items-center gap-1.5 text-[11px] font-medium">
+                  <span
+                    className={`h-1.5 w-1.5 rounded-full ${hours.state === "open" ? "bg-emerald-500" : "bg-zinc-400"}`}
+                    aria-hidden="true"
+                  />
+                  <span className={hours.state === "open" ? "text-emerald-700" : "text-[var(--brand-muted)]"}>
+                    {hours.label}
+                  </span>
+                </span>
+              )}
             </span>
           </a>
+
           <nav className="hidden items-center gap-5 md:flex" aria-label="Site navigation">
             {navLinks.map((l) => (
-              <a key={l.label} href={l.href} className="text-sm font-medium text-[var(--brand-body)] transition hover:text-[var(--brand-primary)]">
+              <a
+                key={l.label}
+                href={l.href}
+                onClick={(e) => jump(e, l.href)}
+                className="rounded text-sm font-medium text-[var(--brand-body)] transition hover:text-[var(--brand-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-primary)] focus-visible:ring-offset-2"
+              >
                 {l.label}
               </a>
             ))}
           </nav>
+
           <div className="flex items-center gap-2">
             <a
               href={`tel:${business.phone}`}
               onClick={() => track("CTA_CALL")}
-              className="hidden sm:inline-flex items-center gap-2 rounded-[var(--brand-radius)] bg-[var(--brand-primary)] px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:brightness-110 active:scale-95"
+              className="hidden items-center gap-2 rounded-[var(--brand-radius)] bg-[var(--brand-primary)] px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:brightness-110 active:scale-95 sm:inline-flex"
             >
-              <Phone className="h-4 w-4" /> {business.phone}
+              <Phone className="h-4 w-4" aria-hidden="true" /> {business.phone}
             </a>
+            {/* Phones had no navigation at all before this. */}
+            {navLinks.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setMenuOpen((v) => !v)}
+                aria-expanded={menuOpen}
+                aria-controls="site-mobile-nav"
+                aria-label={menuOpen ? "Close menu" : "Open menu"}
+                className="flex h-10 w-10 items-center justify-center rounded-[var(--brand-radius)] text-[var(--brand-secondary)] ring-1 ring-[var(--brand-border)] transition hover:bg-[var(--brand-surface)] md:hidden"
+              >
+                {menuOpen ? <X className="h-5 w-5" aria-hidden="true" /> : <Menu className="h-5 w-5" aria-hidden="true" />}
+              </button>
+            )}
           </div>
         </div>
+
+        {menuOpen && (
+          <nav
+            id="site-mobile-nav"
+            aria-label="Site navigation"
+            className="border-t border-[var(--brand-border)] bg-white md:hidden"
+          >
+            <ul className={`mx-auto ${containerWidth} px-4 py-2 sm:px-6`}>
+              {navLinks.map((l) => (
+                <li key={l.label}>
+                  <a
+                    href={l.href}
+                    onClick={(e) => { setMenuOpen(false); jump(e, l.href); }}
+                    className="block border-b border-[var(--brand-border)] py-3 text-sm font-medium text-[var(--brand-body)] last:border-0"
+                  >
+                    {l.label}
+                  </a>
+                </li>
+              ))}
+              <li className="py-3">
+                <a
+                  href={`tel:${business.phone}`}
+                  onClick={() => { track("CTA_CALL"); setMenuOpen(false); }}
+                  className="flex items-center justify-center gap-2 rounded-[var(--brand-radius)] bg-[var(--brand-primary)] px-4 py-2.5 text-sm font-semibold text-white"
+                >
+                  <Phone className="h-4 w-4" aria-hidden="true" /> {business.phone}
+                </a>
+              </li>
+            </ul>
+          </nav>
+        )}
       </header>
 
       {/* SECTIONS */}
-      <main id="top">
+      {/* In the dashboard preview this sits inside the dashboard's own <main>,
+          and nesting landmarks breaks assistive navigation — so the preview
+          gets a plain container while the live site keeps the landmark. */}
+      <SiteReveal />
+      <SectionsRoot id="top">
         {sections.map((section) => renderSection(section, {
           business, services, products, gallery, testimonials, faqs, track, submitLead,
+          blogPosts, businessSlug: business.slug,
+          heroStyle: website.theme?.heroStyle || "gradient",
+          scene: website.theme?.motif === "none" ? null : resolveIndustry(business.category, website.theme?.industry).motif.scene,
+          // Same trade, same scene — but a different arrangement of it per
+          // business, so two gyms do not run the identical animation.
+          sceneVariant: seedFrom(`${business.slug}::scene`),
+          // Same sections, arranged differently: which side the About photo
+          // sits on, how many service cards sit across a row.
+          layout: seedFrom(`${business.slug}::layout`),
+          onEnquire: (subject: string) => {
+            setEnquirySubject(subject);
+            document.getElementById("contact")?.scrollIntoView({ behavior: "smooth" });
+          },
+          enquirySubject,
+          hoursLabel: hours.detail,
         }))}
-      </main>
+      </SectionsRoot>
 
       {/* FOOTER */}
       <footer className="bg-[var(--brand-secondary)] text-white">
@@ -277,13 +571,21 @@ export default function SiteRenderer({ payload, mode = "live", device = "desktop
               <div className="flex items-center gap-2.5">
                 {business.logoUrl ? (
                    
-                  <img src={business.logoUrl} alt={`${business.name} logo`} className="h-9 w-9 rounded object-cover" />
+                  <SiteImage
+                    src={business.logoUrl}
+                    alt={`${business.name} logo`}
+                    wrapperClassName="h-9 w-9 shrink-0 rounded"
+                    className="object-cover"
+                    sizes="36px"
+                  />
                 ) : (
                   <span className="flex h-9 w-9 items-center justify-center rounded bg-white/10 font-bold">{business.name.charAt(0)}</span>
                 )}
                 <span className="font-bold text-lg">{business.name}</span>
               </div>
-              {business.tagline && <p className="mt-3 max-w-xs text-sm text-white/70">{business.tagline}</p>}
+              {usableTagline(business.tagline) && (
+                <p className="mt-3 max-w-xs text-sm text-white/70">{usableTagline(business.tagline)}</p>
+              )}
               <div className="mt-4 flex gap-3">
                 {Object.entries(business.socials || {}).filter(([, v]) => v).map(([k, v]) => (
                   <a key={k} href={v as string} target="_blank" rel="noreferrer" aria-label={k}
@@ -302,7 +604,9 @@ export default function SiteRenderer({ payload, mode = "live", device = "desktop
               <h3 className="font-semibold">Quick Links</h3>
               <ul className="mt-3 space-y-2 text-sm text-white/70">
                 {navLinks.slice(0, 6).map((l) => (
-                  <li key={l.label}><a href={l.href} className="hover:text-white">{l.label}</a></li>
+                  <li key={l.label}>
+                    <a href={l.href} onClick={(e) => jump(e, l.href)} className="hover:text-white">{l.label}</a>
+                  </li>
                 ))}
               </ul>
             </div>
@@ -310,7 +614,7 @@ export default function SiteRenderer({ payload, mode = "live", device = "desktop
               <h3 className="font-semibold">Contact</h3>
               <ul className="mt-3 space-y-2 text-sm text-white/70">
                 {business.phone && <li className="flex items-center gap-2"><Phone className="h-4 w-4 shrink-0" /> {business.phone}</li>}
-                {business.email && <li className="flex items-center gap-2"><ExternalLink className="h-4 w-4 shrink-0" /> {business.email}</li>}
+                {business.email && <li className="flex items-center gap-2"><Mail className="h-4 w-4 shrink-0" /> {business.email}</li>}
                 {business.address && <li className="flex items-start gap-2"><MapPinIcon /> {business.address}, {business.city} {business.pincode}</li>}
                 {business.gmbUrl && (
                   <li>
@@ -332,7 +636,50 @@ export default function SiteRenderer({ payload, mode = "live", device = "desktop
         </div>
       </footer>
 
-      {/* FLOATING CTAs */}
+      {/* On phones a bar converts better than floating circles and never covers
+          content the way two FABs did; desktop keeps a single WhatsApp button. */}
+      <div className="h-16 sm:hidden" aria-hidden="true" />
+      <div className="fixed inset-x-0 bottom-0 z-50 grid grid-cols-3 border-t border-black/10 bg-white/95 backdrop-blur sm:hidden">
+        <a
+          href={`tel:${business.phone}`}
+          onClick={() => track("CTA_CALL")}
+          className="flex flex-col items-center justify-center gap-0.5 py-2.5 text-[11px] font-semibold text-white"
+          style={{ background: "var(--brand-primary)" }}
+        >
+          <Phone className="h-5 w-5" aria-hidden="true" /> Call
+        </a>
+        {waNumber ? (
+          <a
+            href={`https://wa.me/${waNumber}?text=${encodeURIComponent(`Hello ${business.name}, I have an enquiry.`)}`}
+            target="_blank"
+            rel="noreferrer"
+            onClick={() => track("CTA_WHATSAPP")}
+            // Palette, not WhatsApp's #25D366 — see the note on the floating
+            // button below.
+            className="flex flex-col items-center justify-center gap-0.5 bg-[var(--brand-secondary)] py-2.5 text-[11px] font-semibold text-white"
+          >
+            <MessageCircle className="h-5 w-5" aria-hidden="true" /> WhatsApp
+          </a>
+        ) : (
+          <a
+            href="#contact"
+            onClick={(e) => jump(e, "#contact")}
+            className="flex flex-col items-center justify-center gap-0.5 py-2.5 text-[11px] font-semibold text-[var(--brand-secondary)]"
+          >
+            <Mail className="h-5 w-5" aria-hidden="true" /> Enquire
+          </a>
+        )}
+        <a
+          href={business.mapsUrl || `https://maps.google.com/?q=${encodeURIComponent(`${business.name} ${business.address} ${business.city}`)}`}
+          target="_blank"
+          rel="noreferrer"
+          onClick={() => track("CTA_DIRECTIONS")}
+          className="flex flex-col items-center justify-center gap-0.5 py-2.5 text-[11px] font-semibold text-[var(--brand-secondary)]"
+        >
+          <MapPin className="h-5 w-5" aria-hidden="true" /> Directions
+        </a>
+      </div>
+
       {waNumber && (
         <a
           href={`https://wa.me/${waNumber}?text=${encodeURIComponent(`Hello ${business.name}, I have an enquiry.`)}`}
@@ -340,24 +687,24 @@ export default function SiteRenderer({ payload, mode = "live", device = "desktop
           rel="noreferrer"
           onClick={() => track("CTA_WHATSAPP")}
           aria-label="Chat on WhatsApp"
-          className="fixed bottom-5 right-5 z-50 flex h-14 w-14 items-center justify-center rounded-full bg-[#25D366] text-white shadow-2xl transition hover:scale-110 active:scale-95"
+          // The brand colour, not WhatsApp's #25D366. That green is instantly
+          // recognisable, which is the argument for keeping it — but it was
+          // landing as a bright green blob on sites the owner had deliberately
+          // made terracotta, or indigo, or maroon. The owner's palette wins;
+          // the WhatsApp glyph still says what the button is.
+          //
+          // The SECONDARY colour rather than the primary, for all three of the
+          // WhatsApp surfaces. Every palette's secondary is a deep shade, so a
+          // white glyph is always legible on it; eight of the built-in primaries
+          // (Mint Studio is 2.5:1) are too light to carry white at all.
+          className="fixed bottom-5 right-5 z-50 hidden h-14 w-14 items-center justify-center rounded-full bg-[var(--brand-secondary)] text-white shadow-2xl transition hover:scale-110 active:scale-95 sm:flex"
         >
-          <MessageCircle className="h-7 w-7" />
+          <MessageCircle className="h-7 w-7" aria-hidden="true" />
         </a>
       )}
-      <a
-        href={`tel:${business.phone}`}
-        onClick={() => track("CTA_CALL")}
-        aria-label="Call now"
-        className="fixed bottom-5 left-5 z-50 flex h-14 w-14 items-center justify-center rounded-full text-white shadow-2xl transition hover:scale-110 active:scale-95 sm:hidden"
-        style={{ background: "var(--brand-primary)" }}
-      >
-        <Phone className="h-6 w-6" />
-      </a>
 
-      {/* Back to top — live site only (hidden in dashboard builder preview).
-          Bottom-left on desktop (WhatsApp owns bottom-right); sits above the
-          mobile-only call float, which already occupies bottom-left on phones. */}
+      {/* Back to top — live site only (hidden in the dashboard builder preview).
+          Sits above the mobile action bar, bottom-left on desktop. */}
       {mode === "live" && <BackToTop />}
     </div>
   );
@@ -380,7 +727,7 @@ function BackToTop() {
       aria-label="Back to top"
       aria-hidden={!visible}
       tabIndex={visible ? 0 : -1}
-      className={`fixed bottom-[5.75rem] left-5 z-40 flex h-10 w-10 items-center justify-center rounded-full text-white shadow-lg transition-all duration-300 hover:brightness-110 active:scale-90 sm:bottom-5 ${
+      className={`fixed bottom-[4.75rem] left-5 z-40 flex h-10 w-10 items-center justify-center rounded-full text-white shadow-lg transition-all duration-300 hover:brightness-110 active:scale-90 sm:bottom-5 ${
         visible ? "translate-y-0 opacity-100" : "pointer-events-none translate-y-3 opacity-0"
       }`}
       style={{ background: "var(--brand-primary)" }}
@@ -407,24 +754,48 @@ function renderSection(
     gallery: SitePayload["gallery"];
     testimonials: SitePayload["testimonials"];
     faqs: SitePayload["faqs"];
+    blogPosts: SitePayload["blogPosts"];
+    businessSlug: string;
     track: (type: string) => void;
-    submitLead: (data: { name: string; phone: string; email: string; message: string }) => Promise<string | null>;
+    submitLead: (data: {
+      name: string; phone: string; email: string; message: string; website: string; serviceName?: string;
+    }) => Promise<string | null>;
+    onEnquire: (subject: string) => void;
+    enquirySubject: string;
+    hoursLabel: string;
+    heroStyle: string;
+    scene: SceneKind | null;
+    sceneVariant: number;
+    layout: number;
   },
 ) {
   switch (section.type) {
-    case "hero": return <Hero key={section.id} section={section} business={ctx.business} onCta={ctx.track} />;
+    case "hero":
+      return (
+        <Hero
+          key={section.id}
+          section={section}
+          business={ctx.business}
+          onCta={ctx.track}
+          hoursLabel={ctx.hoursLabel}
+          heroStyle={ctx.heroStyle}
+          scene={ctx.scene}
+          sceneVariant={ctx.sceneVariant}
+        />
+      );
     case "stats": return <Stats key={section.id} section={section} />;
-    case "about": return <About key={section.id} section={section} />;
-    case "services": return <Services key={section.id} section={section} services={ctx.services} onCta={ctx.track} />;
-    case "products": return <Products key={section.id} section={section} products={ctx.products} onCta={ctx.track} />;
+    case "about": return <About key={section.id} section={section} layout={ctx.layout} />;
+    case "services": return <Services key={section.id} section={section} services={ctx.services} onCta={ctx.track} onEnquire={ctx.onEnquire} layout={ctx.layout} />;
+    case "products": return <Products key={section.id} section={section} products={ctx.products} onCta={ctx.track} onEnquire={ctx.onEnquire} />;
     case "whyUs": return <WhyUs key={section.id} section={section} />;
     case "gallery": return <Gallery key={section.id} section={section} gallery={ctx.gallery} />;
     case "testimonials": return <Testimonials key={section.id} section={section} testimonials={ctx.testimonials} />;
     case "faq": return <FaqSection key={section.id} section={section} />;
+    case "blog": return <BlogTeaser key={section.id} section={section} posts={ctx.blogPosts} businessSlug={ctx.businessSlug} />;
     case "cta": return <CtaBanner key={section.id} section={section} business={ctx.business} onCta={ctx.track} />;
     case "payment": return <Payment key={section.id} section={section} business={ctx.business} onCta={ctx.track} />;
-    case "hours": return <Hours key={section.id} section={section} business={ctx.business} />;
-    case "contact": return <Contact key={section.id} section={section} business={ctx.business} onCta={ctx.track} submitLead={ctx.submitLead} />;
+    case "hours": return <Hours key={section.id} section={section} business={ctx.business} status={ctx.hoursLabel} />;
+    case "contact": return <Contact key={section.id} section={section} business={ctx.business} onCta={ctx.track} submitLead={ctx.submitLead} subject={ctx.enquirySubject} />;
     default: return null;
   }
 }

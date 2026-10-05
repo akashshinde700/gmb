@@ -4,10 +4,14 @@
 // shell's `flex min-h-screen flex-col` root keeps the footer pinned to the bottom.
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { SHOW_LEADS } from "@/lib/marketing-flags";
+import { isQuoteOnlyPlan, TRIAL_DAYS_LABEL, TRIAL_LABEL } from "@/lib/trial";
 import type { FormEvent, MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import { motion } from "framer-motion";
 import {
   ArrowRight,
+  ArrowUp,
   Building2,
   Check,
   ClipboardList,
@@ -17,7 +21,9 @@ import {
   LayoutGrid,
   LayoutTemplate,
   Loader2,
+  Mail,
   MapPin,
+  Phone,
   Menu,
   MessageCircle,
   Rocket,
@@ -48,6 +54,8 @@ import { useToast } from "@/hooks/use-toast";
 import { api } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 import { useApp } from "@/store/app-store";
+import { CONTACT, PRIVACY, TERMS } from "@/lib/legal";
+import { themeVars, type PlatformTheme } from "@/lib/platform-theme";
 import type { Plan, TemplateDef } from "@/lib/types";
 
 // Fallback mirrors the seeded template gallery (also safelists the gradient
@@ -61,13 +69,25 @@ const FALLBACK_TEMPLATES: TemplateDef[] = [
   { id: "t6", name: "Mono Corporate", slug: "mono-corporate", category: "Professional", description: "", premium: true, gradient: "from-zinc-600 to-zinc-800", coverImage: "", theme: {} },
 ];
 
-const NAV_LINKS = [
+/**
+ * The header nav.
+ *
+ * Every entry but one scrolls to a section of this page. Blog is a real page,
+ * so it carries an `href` instead of a section id — and it is only added to the
+ * list when the platform blog actually has something published. A nav item that
+ * leads to "No posts published yet" is worse than no nav item: it is the first
+ * thing a visitor clicks to find out whether anyone is home.
+ */
+const NAV_LINKS: { id: string; label: string; href?: string }[] = [
   { id: "features", label: "Features" },
   { id: "how", label: "How it Works" },
   { id: "templates", label: "Templates" },
   { id: "pricing", label: "Pricing" },
   { id: "faq", label: "FAQ" },
+  { id: "contact", label: "Contact" },
 ];
+
+const BLOG_LINK = { id: "blog", label: "Blog", href: "/blog" };
 
 const CATEGORIES = ["Restaurant", "Clinic", "Manufacturer", "Salon", "Gym", "CA", "Real Estate", "School"];
 
@@ -76,7 +96,9 @@ const FEATURES = [
   { icon: Sparkles, title: "AI Content", desc: "AI drafts your headlines, service descriptions and About page from your business details — edit anything you like." },
   { icon: Search, title: "SEO & AEO", desc: "Meta tags, sitemap, schema markup and answer-engine optimization so customers find you on Google." },
   { icon: MapPin, title: "Google Maps & GMB", desc: "Embedded directions, business hours and Google Business Profile links that capture nearby searches." },
-  { icon: Inbox, title: "Lead CRM", desc: "Every enquiry lands in your lead inbox with statuses, notes and follow-up tracking built right in." },
+  ...(SHOW_LEADS
+    ? [{ icon: Inbox, title: "Lead CRM", desc: "Every enquiry lands in your lead inbox with statuses, notes and follow-up tracking built right in." }]
+    : []),
   { icon: MessageCircle, title: "WhatsApp & Call CTAs", desc: "One-tap WhatsApp chat and click-to-call buttons that turn casual visitors into real conversations." },
 ];
 
@@ -84,7 +106,11 @@ const STEPS = [
   { icon: ClipboardList, title: "Business details", desc: "Tell us your name, category, services and contact info — takes two minutes." },
   { icon: LayoutGrid, title: "Choose template", desc: "Pick a professionally designed template made for your industry." },
   { icon: Sparkles, title: "AI writes your content", desc: "Our AI drafts headlines, descriptions and SEO copy, ready to edit." },
-  { icon: Rocket, title: "Publish & get leads", desc: "Go live in minutes and start receiving enquiries on WhatsApp." },
+  {
+    icon: Rocket,
+    title: SHOW_LEADS ? "Publish & get leads" : "Publish your website",
+    desc: "Go live in minutes and start receiving enquiries on WhatsApp.",
+  },
 ];
 
 const STEP_FILL = ["w-1/4", "w-2/4", "w-3/4", "w-full"];
@@ -103,23 +129,27 @@ const FAQS = [
   },
   {
     q: "Can I use my own domain?",
-    a: "Yes. Every site gets a free yourname.websetu.in address, and custom domains are supported on the Professional plan and above. SSL is handled automatically.",
+    a: "Yes, it is included in the plan. Every site gets a free yourname.websetu.in address, and you can connect a domain you own (bought from GoDaddy, Hostinger, BigRock or any registrar). You pay the registrar for the domain; your WebSetu price stays ₹599/month. The dashboard shows the exact DNS records to add, step by step.",
   },
   {
     q: "What happens after the free trial?",
-    a: "Every account starts with a 14-day free trial. When it ends, pick a plan that fits to keep your site live. Your website, content and leads are preserved — nothing is deleted.",
+    a: `Every account starts with a ${TRIAL_LABEL}. When it ends, pick a plan that fits to keep your site live. Your website${SHOW_LEADS ? ", content and leads are" : " and content are"} preserved — nothing is deleted.`,
   },
   {
     q: "Will my website appear on Google?",
     a: "Yes. WebSetu generates SEO meta tags, a sitemap and schema markup for every page, and connects your Google Business Profile. Most businesses start appearing in local search within days.",
   },
-  {
-    q: "Can I manage leads?",
-    a: "Absolutely. Every form submission, WhatsApp click and call is captured in your lead inbox with statuses like New, Contacted and Converted, plus notes and follow-up tracking.",
-  },
+  ...(SHOW_LEADS
+    ? [{
+        q: "Can I manage leads?",
+        a: "Absolutely. Every form submission, WhatsApp click and call is captured in your lead inbox with statuses like New, Contacted and Converted, plus notes and follow-up tracking.",
+      }]
+    : []),
 ];
 
-const EMPTY_LEAD_FORM = { name: "", email: "", phone: "", businessType: "", message: "" };
+// `website` is a honeypot field: hidden from people, filled in by bots. The
+// server accepts and discards submissions that carry it.
+const EMPTY_LEAD_FORM = { name: "", email: "", phone: "", businessType: "", message: "", website: "" };
 
 function Eyebrow({ children }: { children: ReactNode }) {
   return <p className="text-xs font-bold uppercase tracking-widest text-emerald-700">{children}</p>;
@@ -129,8 +159,8 @@ function SectionHeading({ eyebrow, title, sub }: { eyebrow: string; title: strin
   return (
     <div className="mx-auto mb-12 max-w-2xl text-center">
       <Eyebrow>{eyebrow}</Eyebrow>
-      <h2 className="mt-3 text-3xl font-bold tracking-tight text-zinc-900 sm:text-4xl">{title}</h2>
-      {sub ? <p className="mt-4 text-base text-zinc-500">{sub}</p> : null}
+      <h2 className="mt-3 text-3xl font-bold tracking-tight text-foreground sm:text-4xl">{title}</h2>
+      {sub ? <p className="mt-4 text-base text-muted-foreground">{sub}</p> : null}
     </div>
   );
 }
@@ -154,8 +184,30 @@ function scrollToId(e: ReactMouseEvent<HTMLAnchorElement>, id: string) {
   document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
-export default function LandingView() {
+/**
+ * Short, plain-language policies. They are shown in a dialog from the footer —
+ * previously those links pointed at "#" and did nothing.
+ */
+/**
+ * @param serverTheme the platform palette, resolved on the server.
+ *
+ * Passed in rather than read from the store because this page is shown to
+ * signed-out visitors, who never run the store's hydrate() — the only thing
+ * that used to fetch the palette. The store value remains the fallback for any
+ * caller that renders this without one.
+ */
+export default function LandingView({
+  platformTheme: serverTheme,
+  hasBlogPosts = false,
+}: {
+  platformTheme?: PlatformTheme;
+  /** Whether the platform blog has at least one published post. */
+  hasBlogPosts?: boolean;
+}) {
+  const router = useRouter();
   const user = useApp((s) => s.user);
+  const storeTheme = useApp((s) => s.platformTheme);
+  const platformTheme = serverTheme ?? storeTheme;
   const storePlans = useApp((s) => s.plans);
   const setAuthMode = useApp((s) => s.setAuthMode);
   const openSite = useApp((s) => s.openSite);
@@ -170,6 +222,7 @@ export default function LandingView() {
   const [leadForm, setLeadForm] = useState(EMPTY_LEAD_FORM);
   const [leadBusy, setLeadBusy] = useState(false);
   const [leadError, setLeadError] = useState("");
+  const [legal, setLegal] = useState<"privacy" | "terms" | null>(null);
 
   // Public catalog: /api/plans returns { plans, templates }.
   useEffect(() => {
@@ -186,20 +239,20 @@ export default function LandingView() {
 
   const goRegister = () => {
     if (user) {
-      window.location.hash = "#/onboarding";
+      router.push("/onboarding");
       return;
     }
     setAuthMode("register");
-    window.location.hash = "#/login";
+    router.push("/login");
   };
 
   const goLogin = () => {
     setAuthMode("login");
-    window.location.hash = "#/login";
+    router.push("/login");
   };
 
   const goDashboard = () => {
-    window.location.hash = user?.role === "ADMIN" ? "#/admin" : "#/dashboard";
+    router.push(user?.role === "ADMIN" ? "/admin" : "/dashboard");
   };
 
   const handleNavClick = (e: ReactMouseEvent<HTMLAnchorElement>, id: string) => {
@@ -228,6 +281,8 @@ export default function LandingView() {
     }
   }
 
+  const navLinks = hasBlogPosts ? [...NAV_LINKS, BLOG_LINK] : NAV_LINKS;
+
   const navButtons = user ? (
     <Button onClick={goDashboard} className="bg-emerald-600 text-white hover:bg-emerald-700">
       Dashboard
@@ -235,7 +290,7 @@ export default function LandingView() {
   ) : (
     <div className="flex items-center gap-2">
       <Button variant="ghost" onClick={goLogin} className="text-zinc-700 hover:text-emerald-700">
-        Login
+        Log in
       </Button>
       <Button onClick={goRegister} className="bg-emerald-600 text-white hover:bg-emerald-700">
         Create Your Website
@@ -244,12 +299,14 @@ export default function LandingView() {
   );
 
   return (
-    <>
+    // `ws-theme` + the palette variables let a platform admin restyle the whole
+    // marketing page (see globals.css and Admin -> Appearance).
+    <div className="ws-theme contents" style={themeVars(platformTheme) as React.CSSProperties}>
       {/* ---------- Navbar ---------- */}
-      <header className="sticky top-0 z-50 border-b border-zinc-200/80 bg-white/80 backdrop-blur-md">
+      <header className="sticky top-0 z-50 border-b border-border/80 bg-white/80 backdrop-blur-md">
         <nav aria-label="Main navigation" className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">
           <a
-            href="#/"
+            href="/"
             className="flex items-center gap-2.5"
             onClick={(e) => {
               e.preventDefault();
@@ -259,27 +316,28 @@ export default function LandingView() {
             <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500 to-teal-700 text-lg font-bold text-white shadow-sm">
               W
             </span>
-            <span className="text-lg font-bold tracking-tight text-zinc-900">WebSetu</span>
+            <span className="text-lg font-bold tracking-tight text-foreground">WebSetu</span>
           </a>
 
-          <div className="hidden items-center gap-7 md:flex">
-            {NAV_LINKS.map((l) => (
+          <div className="hidden items-center gap-7 lg:flex">
+            {navLinks.map((l) => (
               <a
                 key={l.id}
-                href={`#${l.id}`}
-                onClick={(e) => scrollToId(e, l.id)}
-                className="text-sm font-medium text-zinc-600 transition-colors hover:text-emerald-700"
+                href={l.href ?? `#${l.id}`}
+                // A real page navigates; a section id scrolls.
+                onClick={l.href ? undefined : (e) => scrollToId(e, l.id)}
+                className="rounded text-sm font-medium text-zinc-600 transition-colors hover:text-emerald-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2"
               >
                 {l.label}
               </a>
             ))}
           </div>
 
-          <div className="hidden md:block">{navButtons}</div>
+          <div className="hidden lg:block">{navButtons}</div>
 
           <button
             type="button"
-            className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-zinc-200 text-zinc-700 md:hidden"
+            className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-border text-zinc-700 lg:hidden"
             aria-expanded={menuOpen}
             aria-label={menuOpen ? "Close menu" : "Open menu"}
             onClick={() => setMenuOpen((v) => !v)}
@@ -289,13 +347,13 @@ export default function LandingView() {
         </nav>
 
         {menuOpen ? (
-          <div className="border-t border-zinc-200 bg-white px-4 py-4 md:hidden">
+          <div className="border-t border-border bg-white px-4 py-4 lg:hidden">
             <div className="flex flex-col gap-1">
-              {NAV_LINKS.map((l) => (
+              {navLinks.map((l) => (
                 <a
                   key={l.id}
-                  href={`#${l.id}`}
-                  onClick={(e) => handleNavClick(e, l.id)}
+                  href={l.href ?? `#${l.id}`}
+                  onClick={l.href ? () => setMenuOpen(false) : (e) => handleNavClick(e, l.id)}
                   className="rounded-lg px-3 py-2.5 text-sm font-medium text-zinc-700 hover:bg-emerald-50 hover:text-emerald-700"
                 >
                   {l.label}
@@ -310,7 +368,7 @@ export default function LandingView() {
               ) : (
                 <>
                   <Button variant="outline" onClick={goLogin} className="w-full">
-                    Login
+                    Log in
                   </Button>
                   <Button onClick={goRegister} className="w-full bg-emerald-600 text-white hover:bg-emerald-700">
                     Create Your Website
@@ -337,7 +395,7 @@ export default function LandingView() {
               <span className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-4 py-1.5 text-xs font-semibold text-emerald-800">
                 🇮🇳 India&apos;s Business Website Platform
               </span>
-              <h1 className="mt-6 text-4xl font-bold leading-[1.1] tracking-tight text-zinc-900 sm:text-5xl lg:text-[3.4rem]">
+              <h1 className="mt-6 text-4xl font-bold leading-[1.1] tracking-tight text-foreground sm:text-5xl lg:text-[3.4rem]">
                 Your Business,{" "}
                 <span className="bg-gradient-to-r from-emerald-600 to-teal-600 bg-clip-text text-transparent">
                   Online in 15 Minutes
@@ -345,7 +403,7 @@ export default function LandingView() {
               </h1>
               <p className="mt-6 max-w-xl text-base leading-relaxed text-zinc-600 sm:text-lg">
                 Give us your business details — we create and operate your complete online presence. Website + Google +
-                SEO + Leads + WhatsApp + Analytics. No coding. No hassle.
+                SEO {SHOW_LEADS ? "+ Leads " : ""}+ WhatsApp + Analytics. No coding. No hassle.
               </p>
               <div className="mt-8 flex flex-col gap-3 sm:flex-row">
                 <Button
@@ -366,7 +424,7 @@ export default function LandingView() {
                   View Demo Website
                 </Button>
               </div>
-              <p className="mt-5 text-sm text-zinc-500">14-day free trial · No credit card required · Cancel anytime</p>
+              <p className="mt-5 text-sm text-muted-foreground">{TRIAL_LABEL} · No credit card required · Cancel anytime</p>
             </motion.div>
 
             {/* Mock browser window */}
@@ -376,12 +434,12 @@ export default function LandingView() {
               transition={{ duration: 0.6, delay: 0.15, ease: "easeOut" }}
               className="relative"
             >
-              <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl shadow-emerald-900/10">
+              <div className="overflow-hidden rounded-2xl border border-border bg-white shadow-2xl shadow-emerald-900/10">
                 <div className="flex items-center gap-2 border-b border-zinc-100 bg-zinc-50 px-4 py-3">
                   <span className="h-2.5 w-2.5 rounded-full bg-red-400" />
                   <span className="h-2.5 w-2.5 rounded-full bg-amber-400" />
                   <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
-                  <span className="ml-3 flex-1 truncate rounded-md border border-zinc-200 bg-white px-3 py-1 text-xs text-zinc-500">
+                  <span className="ml-3 flex-1 truncate rounded-md border border-border bg-white px-3 py-1 text-xs text-muted-foreground">
                     https://sharmaelectricals.in
                   </span>
                 </div>
@@ -417,7 +475,7 @@ export default function LandingView() {
                     <span className="rounded-lg bg-emerald-600 px-3 py-1.5 text-[10px] font-semibold text-white">
                       Get a Free Quote
                     </span>
-                    <span className="rounded-lg border border-zinc-200 px-3 py-1.5 text-[10px] font-medium text-zinc-600">
+                    <span className="rounded-lg border border-border px-3 py-1.5 text-[10px] font-medium text-zinc-600">
                       Call Now
                     </span>
                   </div>
@@ -425,22 +483,22 @@ export default function LandingView() {
               </div>
 
               {/* Floating stat chips */}
-              <div className="absolute -right-3 -top-5 hidden items-center gap-2.5 rounded-2xl border border-zinc-200 bg-white px-4 py-2.5 shadow-xl shadow-zinc-900/10 sm:flex">
+              <div className="absolute -right-3 -top-5 hidden items-center gap-2.5 rounded-2xl border border-border bg-white px-4 py-2.5 shadow-xl shadow-zinc-900/10 sm:flex">
                 <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-100">
                   <Users className="h-4 w-4 text-emerald-700" />
                 </span>
                 <span>
-                  <span className="block text-sm font-bold text-zinc-900">500+</span>
-                  <span className="block text-[10px] text-zinc-500">businesses online</span>
+                  <span className="block text-sm font-bold text-foreground">500+</span>
+                  <span className="block text-[10px] text-muted-foreground">businesses online</span>
                 </span>
               </div>
-              <div className="absolute -bottom-5 -left-3 hidden items-center gap-2.5 rounded-2xl border border-zinc-200 bg-white px-4 py-2.5 shadow-xl shadow-zinc-900/10 sm:flex">
+              <div className="absolute -bottom-5 -left-3 hidden items-center gap-2.5 rounded-2xl border border-border bg-white px-4 py-2.5 shadow-xl shadow-zinc-900/10 sm:flex">
                 <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-100">
                   <Star className="h-4 w-4 fill-amber-500 text-amber-500" />
                 </span>
                 <span>
-                  <span className="block text-sm font-bold text-zinc-900">★ 4.9</span>
-                  <span className="block text-[10px] text-zinc-500">customer rating</span>
+                  <span className="block text-sm font-bold text-foreground">★ 4.9</span>
+                  <span className="block text-[10px] text-muted-foreground">customer rating</span>
                 </span>
               </div>
             </motion.div>
@@ -448,16 +506,16 @@ export default function LandingView() {
         </section>
 
         {/* ---------- Trust bar ---------- */}
-        <section className="border-y border-zinc-200 bg-zinc-50 py-10">
+        <section className="border-y border-border bg-zinc-50 py-10">
           <div className="mx-auto max-w-6xl px-4 sm:px-6">
-            <p className="text-center text-sm font-medium text-zinc-500">
-              Works for <span className="font-bold text-zinc-900">40+ business categories</span>
+            <p className="text-center text-sm font-medium text-muted-foreground">
+              Works for <span className="font-bold text-foreground">40+ business categories</span>
             </p>
             <div className="mt-5 flex flex-wrap items-center justify-center gap-2.5">
               {CATEGORIES.map((c) => (
                 <span
                   key={c}
-                  className="rounded-full border border-zinc-200 bg-white px-4 py-1.5 text-sm text-zinc-600 shadow-sm"
+                  className="rounded-full border border-border bg-white px-4 py-1.5 text-sm text-zinc-600 shadow-sm"
                 >
                   {c}
                 </span>
@@ -480,12 +538,12 @@ export default function LandingView() {
             <div className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
               {FEATURES.map((f, i) => (
                 <FadeIn key={f.title} delay={i * 0.06}>
-                  <div className="group h-full rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm transition-all hover:-translate-y-0.5 hover:border-emerald-200 hover:shadow-lg hover:shadow-emerald-900/5">
+                  <div className="group h-full rounded-2xl border border-border bg-white p-6 shadow-sm transition-all hover:-translate-y-0.5 hover:border-emerald-200 hover:shadow-lg hover:shadow-emerald-900/5">
                     <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-emerald-50 transition-colors group-hover:bg-emerald-100">
                       <f.icon className="h-6 w-6 text-emerald-600" />
                     </span>
-                    <h3 className="mt-5 text-lg font-semibold text-zinc-900">{f.title}</h3>
-                    <p className="mt-2 text-sm leading-relaxed text-zinc-500">{f.desc}</p>
+                    <h3 className="mt-5 text-lg font-semibold text-foreground">{f.title}</h3>
+                    <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{f.desc}</p>
                   </div>
                 </FadeIn>
               ))}
@@ -494,7 +552,7 @@ export default function LandingView() {
         </section>
 
         {/* ---------- How it works ---------- */}
-        <section id="how" className="scroll-mt-20 border-y border-zinc-200 bg-zinc-50 py-20 sm:py-24">
+        <section id="how" className="scroll-mt-20 border-y border-border bg-zinc-50 py-20 sm:py-24">
           <div className="mx-auto max-w-6xl px-4 sm:px-6">
             <SectionHeading
               eyebrow="How it works"
@@ -504,7 +562,7 @@ export default function LandingView() {
             <div className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-4">
               {STEPS.map((s, i) => (
                 <FadeIn key={s.title} delay={i * 0.08}>
-                  <div className="h-full rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
+                  <div className="h-full rounded-2xl border border-border bg-white p-6 shadow-sm">
                     <div className="mb-5 h-1.5 w-full overflow-hidden rounded-full bg-zinc-100">
                       <div className={cn("h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-600", STEP_FILL[i])} />
                     </div>
@@ -513,9 +571,9 @@ export default function LandingView() {
                       <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-50">
                         <s.icon className="h-5 w-5 text-emerald-600" />
                       </span>
-                      <h3 className="font-semibold text-zinc-900">{s.title}</h3>
+                      <h3 className="font-semibold text-foreground">{s.title}</h3>
                     </div>
-                    <p className="mt-3 text-sm leading-relaxed text-zinc-500">{s.desc}</p>
+                    <p className="mt-3 text-sm leading-relaxed text-muted-foreground">{s.desc}</p>
                   </div>
                 </FadeIn>
               ))}
@@ -534,7 +592,7 @@ export default function LandingView() {
             <div className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
               {templates.length === 0
                 ? Array.from({ length: 6 }).map((_, i) => (
-                    <div key={i} className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm">
+                    <div key={i} className="overflow-hidden rounded-2xl border border-border bg-white shadow-sm">
                       <div className="h-28 animate-pulse bg-zinc-100" />
                       <div className="space-y-2 p-4">
                         <div className="h-4 w-1/2 animate-pulse rounded bg-zinc-100" />
@@ -552,7 +610,7 @@ export default function LandingView() {
                         onKeyDown={(e) => {
                           if (e.key === "Enter" || e.key === " ") goRegister();
                         }}
-                        className="group h-full cursor-pointer overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm transition-all hover:-translate-y-1 hover:shadow-xl hover:shadow-emerald-900/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600"
+                        className="group h-full cursor-pointer overflow-hidden rounded-2xl border border-border bg-white shadow-sm transition-all hover:-translate-y-1 hover:shadow-xl hover:shadow-emerald-900/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600"
                       >
                         <div className={cn("relative h-28 bg-gradient-to-br", t.gradient)}>
                           <div aria-hidden className="absolute inset-x-5 bottom-4 space-y-2">
@@ -567,10 +625,10 @@ export default function LandingView() {
                         </div>
                         <div className="p-4">
                           <div className="flex items-center justify-between gap-2">
-                            <p className="font-semibold text-zinc-900">{t.name}</p>
-                            <ArrowRight className="h-4 w-4 shrink-0 text-zinc-400 transition-transform group-hover:translate-x-0.5 group-hover:text-emerald-600" />
+                            <p className="font-semibold text-foreground">{t.name}</p>
+                            <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-emerald-600" />
                           </div>
-                          <p className="mt-0.5 text-sm text-zinc-500">{t.category}</p>
+                          <p className="mt-0.5 text-sm text-muted-foreground">{t.category}</p>
                         </div>
                       </div>
                     </FadeIn>
@@ -580,35 +638,42 @@ export default function LandingView() {
         </section>
 
         {/* ---------- Pricing ---------- */}
-        <section id="pricing" className="scroll-mt-20 border-y border-zinc-200 bg-zinc-50 py-20 sm:py-24">
+        <section id="pricing" className="scroll-mt-20 border-y border-border bg-zinc-50 py-20 sm:py-24">
           <div className="mx-auto max-w-6xl px-4 sm:px-6">
             <SectionHeading
               eyebrow="Pricing"
-              title="Simple pricing that grows with you"
-              sub="Start free for 14 days. Upgrade, downgrade or cancel anytime."
+              title="One simple price. Everything included."
+              sub={`Start free for ${TRIAL_DAYS_LABEL}. Bring your own domain — your monthly price never changes. Cancel anytime.`}
             />
 
             <div className="mb-12 flex items-center justify-center gap-3">
-              <span className={cn("text-sm font-medium", !yearly ? "text-zinc-900" : "text-zinc-400")}>Monthly</span>
+              <span className={cn("text-sm font-medium", !yearly ? "text-foreground" : "text-muted-foreground")}>Monthly</span>
               <Switch
                 checked={yearly}
                 onCheckedChange={setYearly}
                 aria-label="Toggle yearly pricing"
                 className="data-[state=checked]:bg-emerald-600"
               />
-              <span className={cn("text-sm font-medium", yearly ? "text-zinc-900" : "text-zinc-400")}>Yearly</span>
+              <span className={cn("text-sm font-medium", yearly ? "text-foreground" : "text-muted-foreground")}>Yearly</span>
               <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-800">
                 2 months free
               </Badge>
             </div>
 
-            <div className="grid grid-cols-1 gap-6 pt-3 md:grid-cols-2 lg:grid-cols-4">
+            <div
+              className={cn(
+                "grid grid-cols-1 gap-6 pt-3",
+                plans.length === 1 ? "mx-auto max-w-md" : "md:grid-cols-2 lg:grid-cols-4",
+              )}
+            >
               {plans.length === 0
-                ? Array.from({ length: 4 }).map((_, i) => (
-                    <div key={i} className="h-96 animate-pulse rounded-2xl border border-zinc-200 bg-white/60" />
+                ? Array.from({ length: 1 }).map((_, i) => (
+                    <div key={i} className="h-96 animate-pulse rounded-2xl border border-border bg-white/60" />
                   ))
                 : plans.map((p) => {
-                    const isCustom = p.priceMonthly === 0;
+                    // Quote-only tiers cannot be signed up for — they open the
+                    // sales conversation instead of the registration form.
+                    const isCustom = isQuoteOnlyPlan(p);
                     const popular = p.popular;
                     const price = yearly ? p.priceYearly : p.priceMonthly;
                     return (
@@ -616,7 +681,7 @@ export default function LandingView() {
                         key={p.id}
                         className={cn(
                           "relative flex h-full flex-col rounded-2xl border bg-white p-6 shadow-sm transition-shadow hover:shadow-lg",
-                          popular ? "border-emerald-600 shadow-lg shadow-emerald-900/10 ring-2 ring-emerald-600 lg:scale-105" : "border-zinc-200"
+                          popular ? "border-emerald-600 shadow-lg shadow-emerald-900/10 ring-2 ring-emerald-600 lg:scale-105" : "border-border"
                         )}
                       >
                         {popular ? (
@@ -625,18 +690,18 @@ export default function LandingView() {
                           </Badge>
                         ) : null}
 
-                        <h3 className="text-lg font-bold text-zinc-900">{p.name}</h3>
-                        <p className="mt-1 min-h-10 text-sm text-zinc-500">{p.tagline}</p>
+                        <h3 className="text-lg font-bold text-foreground">{p.name}</h3>
+                        <p className="mt-1 min-h-10 text-sm text-muted-foreground">{p.tagline}</p>
 
                         <div className="mt-5 flex items-baseline gap-1.5">
                           {isCustom ? (
-                            <span className="text-3xl font-bold tracking-tight text-zinc-900">Custom</span>
+                            <span className="text-3xl font-bold tracking-tight text-foreground">Custom</span>
                           ) : (
                             <>
-                              <span className="text-4xl font-bold tracking-tight text-zinc-900">
+                              <span className="text-4xl font-bold tracking-tight text-foreground">
                                 ₹{price.toLocaleString("en-IN")}
                               </span>
-                              <span className="text-sm text-zinc-500">/{yearly ? "year" : "month"}</span>
+                              <span className="text-sm text-muted-foreground">/{yearly ? "year" : "month"}</span>
                             </>
                           )}
                         </div>
@@ -645,20 +710,35 @@ export default function LandingView() {
                             2 months free
                           </Badge>
                         ) : (
-                          <p className="mt-2 text-xs text-zinc-400">{isCustom ? "Tailored to your business" : "Billed monthly, cancel anytime"}</p>
+                          <p className="mt-2 text-xs text-muted-foreground">{isCustom ? "Tailored to your business" : "Billed monthly, cancel anytime"}</p>
                         )}
 
-                        <ul className="mt-6 flex-1 space-y-2.5">
+                        {/* Hard limits, straight from the plan record. AI credits
+                            are an internal allowance and are not advertised here. */}
+                        <dl className="mt-5 grid grid-cols-2 gap-2 rounded-xl border border-zinc-100 bg-zinc-50/80 p-3 text-center">
+                          {([
+                            [p.maxPages === -1 ? "∞" : String(p.maxPages), "Pages"],
+                            [(p.maxPalettes ?? -1) === -1 ? "All" : String(p.maxPalettes), "Palettes"],
+                          ] as const).map(([value, label]) => (
+                            <div key={label}>
+                              <dt className="sr-only">{label}</dt>
+                              <dd className="text-sm font-bold text-foreground">{value}</dd>
+                              <p className="mt-0.5 text-[11px] leading-tight text-muted-foreground">{label}</p>
+                            </div>
+                          ))}
+                        </dl>
+
+                        <ul className="mt-5 flex-1 space-y-2.5">
                           {p.features.map((f) => (
                             <li key={f} className="flex items-start gap-2 text-sm text-zinc-600">
-                              <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+                              <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" aria-hidden="true" />
                               {f}
                             </li>
                           ))}
                         </ul>
 
                         <Button
-                          onClick={goRegister}
+                          onClick={isCustom ? () => setContactOpen(true) : goRegister}
                           className={cn(
                             "mt-6 w-full",
                             popular
@@ -667,7 +747,7 @@ export default function LandingView() {
                           )}
                           variant={popular ? "default" : "outline"}
                         >
-                          {isCustom ? "Get Started" : "Start Free Trial"}
+                          {isCustom ? "Talk to Sales" : `Start ${TRIAL_DAYS_LABEL} Free Trial`}
                         </Button>
                       </div>
                     );
@@ -683,7 +763,7 @@ export default function LandingView() {
               <div key={s.label} className="text-center">
                 <s.icon className="mx-auto h-6 w-6 text-emerald-400" />
                 <p className="mt-3 text-3xl font-bold text-white sm:text-4xl">{s.value}</p>
-                <p className="mt-1 text-sm text-zinc-400">{s.label}</p>
+                <p className="mt-1 text-sm text-muted-foreground">{s.label}</p>
               </div>
             ))}
           </div>
@@ -694,16 +774,74 @@ export default function LandingView() {
           <div className="mx-auto max-w-3xl px-4 sm:px-6">
             <SectionHeading eyebrow="FAQ" title="Frequently asked questions" sub="Everything you need to know before getting started." />
             <FadeIn>
-              <Accordion type="single" collapsible className="rounded-2xl border border-zinc-200 bg-white px-6 shadow-sm">
+              <Accordion type="single" collapsible className="rounded-2xl border border-border bg-white px-6 shadow-sm">
                 {FAQS.map((f, i) => (
                   <AccordionItem key={f.q} value={`faq-${i}`}>
-                    <AccordionTrigger className="text-left text-base font-semibold text-zinc-900 hover:text-emerald-700 hover:no-underline">
+                    <AccordionTrigger className="text-left text-base font-semibold text-foreground hover:text-emerald-700 hover:no-underline">
                       {f.q}
                     </AccordionTrigger>
-                    <AccordionContent className="text-sm leading-relaxed text-zinc-500">{f.a}</AccordionContent>
+                    <AccordionContent className="text-sm leading-relaxed text-muted-foreground">{f.a}</AccordionContent>
                   </AccordionItem>
                 ))}
               </Accordion>
+            </FadeIn>
+          </div>
+        </section>
+
+        {/* ---------- Talk to a person ---------- */}
+        <section id="contact" className="scroll-mt-20 border-t border-zinc-100 bg-[#f8fafc] py-20 sm:py-24">
+          <div className="mx-auto max-w-5xl px-4 sm:px-6">
+            <SectionHeading
+              eyebrow="Talk to us"
+              title="Prefer to speak to someone?"
+              sub="Call any of us directly — no forms, no waiting for a reply."
+            />
+            <FadeIn>
+              <div className={cn("grid gap-4", CONTACT.people.length > 1 && "sm:grid-cols-2")}>
+                {CONTACT.people.map((person) => (
+                  <a
+                    key={person.href}
+                    href={`tel:${person.href}`}
+                    className="group flex items-center gap-4 rounded-2xl border border-border bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-300 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2 sm:p-5"
+                  >
+                    <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600 transition-colors group-hover:bg-emerald-100">
+                      <Phone className="h-5 w-5" aria-hidden="true" />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-semibold text-foreground">{person.name}</span>
+                      <span className="mt-0.5 block text-sm font-medium text-emerald-700">{person.display}</span>
+                    </span>
+                  </a>
+                ))}
+              </div>
+
+              <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                <a
+                  href={`mailto:${CONTACT.email}`}
+                  className="group flex items-center gap-4 rounded-2xl border border-border bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-300 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2 sm:p-5"
+                >
+                  <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600 transition-colors group-hover:bg-emerald-100">
+                    <Mail className="h-5 w-5" aria-hidden="true" />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-semibold text-foreground">Email us</span>
+                    <span className="mt-0.5 block break-all text-sm font-medium text-emerald-700">{CONTACT.email}</span>
+                  </span>
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setContactOpen(true)}
+                  className="group flex items-center gap-4 rounded-2xl border border-border bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-300 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2 sm:p-5"
+                >
+                  <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600 transition-colors group-hover:bg-emerald-100">
+                    <Headset className="h-5 w-5" aria-hidden="true" />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-semibold text-foreground">Request a callback</span>
+                    <span className="mt-0.5 block text-sm text-muted-foreground">We call back within 24 hours</span>
+                  </span>
+                </button>
+              </div>
             </FadeIn>
           </div>
         </section>
@@ -717,7 +855,8 @@ export default function LandingView() {
               Ready to bring your business online?
             </h2>
             <p className="relative mx-auto mt-4 max-w-xl text-emerald-100">
-              Join 500+ businesses already growing with WebSetu. Your website, leads and Google presence — all in one place.
+              Join 500+ businesses already growing with WebSetu. Your website{SHOW_LEADS ? ", leads" : ""} and Google
+              presence — all in one place.
             </p>
             <Button
               size="lg"
@@ -727,16 +866,41 @@ export default function LandingView() {
               Create Your Website
               <ArrowRight className="h-4 w-4" />
             </Button>
-            <p className="relative mt-4 text-xs text-emerald-200">14-day free trial · No credit card required</p>
+            <p className="relative mt-4 text-xs text-emerald-200">{TRIAL_LABEL} · No credit card required</p>
           </FadeIn>
         </section>
       </main>
 
       {/* ---------- Footer (mt-auto keeps it pinned to the bottom) ---------- */}
-      <footer className="mt-auto border-t border-zinc-800 bg-zinc-950 text-zinc-400">
-        <div className="mx-auto max-w-6xl px-4 py-14 sm:px-6">
-          <div className="grid gap-10 md:grid-cols-4">
-            <div className="md:col-span-2">
+      <footer className="mt-auto bg-zinc-950 text-muted-foreground">
+        {/* Closing prompt — the last thing a scrolling visitor sees */}
+        <div className="border-b border-white/10">
+          <div className="mx-auto flex max-w-6xl flex-col items-start gap-5 px-4 py-10 sm:px-6 md:flex-row md:items-center md:justify-between">
+            <div>
+              <p className="text-lg font-semibold text-white">Still deciding?</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Talk to our team — we will set up your first website with you, free.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <Button onClick={goRegister} className="bg-emerald-600 text-white hover:bg-emerald-700">
+                Start free trial <ArrowRight className="h-4 w-4" aria-hidden="true" />
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => setContactOpen(true)}
+                className="border-white/20 bg-transparent text-white hover:bg-white/10 hover:text-white"
+              >
+                <Headset className="h-4 w-4" aria-hidden="true" /> Talk to sales
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        <div className="mx-auto max-w-6xl px-4 py-12 sm:px-6">
+          <div className="grid gap-10 sm:grid-cols-2 lg:grid-cols-12">
+            {/* Brand */}
+            <div className="lg:col-span-4">
               <div className="flex items-center gap-2.5">
                 <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500 to-teal-700 text-lg font-bold text-white">
                   W
@@ -744,77 +908,192 @@ export default function LandingView() {
                 <span className="text-lg font-bold tracking-tight text-white">WebSetu</span>
               </div>
               <p className="mt-4 max-w-sm text-sm leading-relaxed">
-                Aapke business ko online lane ka complete solution. Website + Google + SEO + Leads + WhatsApp + Analytics.
+                Aapke business ko online lane ka complete solution — website, Google presence, SEO,{SHOW_LEADS ? " leads," : ""}
+                WhatsApp and analytics in one place.
               </p>
-              <p className="mt-4 text-xs text-zinc-600">Made with ❤️ in India 🇮🇳</p>
-            </div>
-
-            <div>
-              <p className="text-sm font-semibold text-white">Product</p>
-              <ul className="mt-4 space-y-2.5 text-sm">
-                <li>
-                  <a href="#features" onClick={(e) => scrollToId(e, "features")} className="transition-colors hover:text-emerald-400">
-                    Features
-                  </a>
+              <ul className="mt-5 space-y-1.5 text-xs text-muted-foreground">
+                <li className="flex items-center gap-2">
+                  <Check className="h-3.5 w-3.5 text-emerald-400" aria-hidden="true" /> {TRIAL_LABEL}, no card needed
                 </li>
-                <li>
-                  <a href="#pricing" onClick={(e) => scrollToId(e, "pricing")} className="transition-colors hover:text-emerald-400">
-                    Pricing
-                  </a>
-                </li>
-                <li>
-                  <a href="#templates" onClick={(e) => scrollToId(e, "templates")} className="transition-colors hover:text-emerald-400">
-                    Templates
-                  </a>
-                </li>
-                <li>
-                  <a href="#faq" onClick={(e) => scrollToId(e, "faq")} className="transition-colors hover:text-emerald-400">
-                    FAQ
-                  </a>
+                <li className="flex items-center gap-2">
+                  <Check className="h-3.5 w-3.5 text-emerald-400" aria-hidden="true" /> Your content stays yours
                 </li>
               </ul>
             </div>
 
-            <div className="grid grid-cols-2 gap-8 md:contents">
-              <div>
-                <p className="text-sm font-semibold text-white">Company</p>
-                <ul className="mt-4 space-y-2.5 text-sm">
-                  <li>
-                    <a href="#" className="transition-colors hover:text-emerald-400">
-                      About
+            {/* Product */}
+            <nav aria-label="Product" className="lg:col-span-2">
+              <p className="text-sm font-semibold text-white">Product</p>
+              <ul className="mt-4 space-y-2.5 text-sm">
+                {([
+                  ["Features", "features"],
+                  ["How it works", "how"],
+                  ["Templates", "templates"],
+                  ["Pricing", "pricing"],
+                  ["FAQ", "faq"],
+                ] as const).map(([label, id]) => (
+                  <li key={id}>
+                    <a
+                      href={`#${id}`}
+                      onClick={(e) => scrollToId(e, id)}
+                      className="rounded transition-colors hover:text-emerald-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+                    >
+                      {label}
                     </a>
                   </li>
-                  <li>
-                    <button type="button" onClick={() => setContactOpen(true)} className="transition-colors hover:text-emerald-400">
-                      Contact
-                    </button>
-                  </li>
-                </ul>
-              </div>
-              <div>
-                <p className="text-sm font-semibold text-white">Legal</p>
-                <ul className="mt-4 space-y-2.5 text-sm">
-                  <li>
-                    <a href="#" className="transition-colors hover:text-emerald-400">
-                      Privacy
-                    </a>
-                  </li>
-                  <li>
-                    <a href="#" className="transition-colors hover:text-emerald-400">
-                      Terms
-                    </a>
-                  </li>
-                </ul>
-              </div>
+                ))}
+              </ul>
+            </nav>
+
+            {/* Account */}
+            <nav aria-label="Account" className="lg:col-span-2">
+              <p className="text-sm font-semibold text-white">Account</p>
+              <ul className="mt-4 space-y-2.5 text-sm">
+                <li>
+                  <button
+                    type="button"
+                    onClick={user ? goDashboard : goLogin}
+                    className="rounded transition-colors hover:text-emerald-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+                  >
+                    {user ? "Dashboard" : "Log in"}
+                  </button>
+                </li>
+                <li>
+                  <button
+                    type="button"
+                    onClick={goRegister}
+                    className="rounded transition-colors hover:text-emerald-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+                  >
+                    Create account
+                  </button>
+                </li>
+                <li>
+                  <button
+                    type="button"
+                    onClick={() => openSite("sharma-electricals", "public")}
+                    className="rounded transition-colors hover:text-emerald-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+                  >
+                    See a live example
+                  </button>
+                </li>
+                <li>
+                  <a
+                    href="/blog"
+                    className="rounded transition-colors hover:text-emerald-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+                  >
+                    Blog
+                  </a>
+                </li>
+              </ul>
+            </nav>
+
+            {/* Contact — real, actionable links rather than dead anchors */}
+            <div className="sm:col-span-2 lg:col-span-4">
+              <p className="text-sm font-semibold text-white">Get in touch</p>
+              <ul className="mt-4 space-y-3 text-sm">
+                <li>
+                  <a
+                    href={`mailto:${CONTACT.email}`}
+                    className="group flex items-center gap-3 rounded transition-colors hover:text-emerald-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+                  >
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white/5 text-emerald-400 transition-colors group-hover:bg-white/10">
+                      <Mail className="h-4 w-4" aria-hidden="true" />
+                    </span>
+                    <span>
+                      <span className="block text-xs text-muted-foreground">Email</span>
+                      {CONTACT.email}
+                    </span>
+                  </a>
+                </li>
+                {/* One number here, the full team in the contact section above —
+                    listing all four twice on one page just adds noise. */}
+                <li>
+                  <a
+                    href={`tel:${CONTACT.people[0].href}`}
+                    className="group flex items-center gap-3 rounded transition-colors hover:text-emerald-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+                  >
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white/5 text-emerald-400 transition-colors group-hover:bg-white/10">
+                      <Phone className="h-4 w-4" aria-hidden="true" />
+                    </span>
+                    <span>
+                      <span className="block text-xs text-muted-foreground">{CONTACT.people[0].name}</span>
+                      {CONTACT.people[0].display}
+                    </span>
+                  </a>
+                </li>
+                <li>
+                  <button
+                    type="button"
+                    onClick={() => setContactOpen(true)}
+                    className="group flex w-full items-center gap-3 rounded text-left transition-colors hover:text-emerald-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+                  >
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white/5 text-emerald-400 transition-colors group-hover:bg-white/10">
+                      <Headset className="h-4 w-4" aria-hidden="true" />
+                    </span>
+                    <span>
+                      <span className="block text-xs text-muted-foreground">Sales</span>
+                      Request a callback
+                    </span>
+                  </button>
+                </li>
+              </ul>
             </div>
           </div>
 
-          <div className="mt-12 flex flex-col items-center justify-between gap-3 border-t border-zinc-800 pt-6 text-xs sm:flex-row">
-            <p>© {new Date().getFullYear()} WebSetu. All rights reserved.</p>
-            <p>Your business, online in 15 minutes.</p>
+          {/* Bottom bar */}
+          <div className="mt-12 flex flex-col items-center justify-between gap-4 border-t border-white/10 pt-6 text-xs sm:flex-row">
+            <p>© {new Date().getFullYear()} WebSetu. Made with ❤️ in India 🇮🇳</p>
+            <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2">
+              <button
+                type="button"
+                onClick={() => setLegal("privacy")}
+                className="rounded transition-colors hover:text-emerald-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+              >
+                Privacy
+              </button>
+              <button
+                type="button"
+                onClick={() => setLegal("terms")}
+                className="rounded transition-colors hover:text-emerald-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+              >
+                Terms
+              </button>
+              <button
+                type="button"
+                onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+                className="flex items-center gap-1.5 rounded transition-colors hover:text-emerald-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+              >
+                Back to top <ArrowUp className="h-3.5 w-3.5" aria-hidden="true" />
+              </button>
+            </div>
           </div>
         </div>
       </footer>
+
+      {/* ---------- Privacy / Terms ---------- */}
+      <Dialog open={legal !== null} onOpenChange={(o) => !o && setLegal(null)}>
+        <DialogContent className="max-h-[80vh] overflow-y-auto rounded-2xl sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{legal === "terms" ? "Terms of Service" : "Privacy Policy"}</DialogTitle>
+            <DialogDescription>
+              {legal === "terms"
+                ? "The short version of what you agree to when you use WebSetu."
+                : "What we collect, why we collect it, and what we never do with it."}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 text-sm leading-relaxed text-zinc-600">
+            {(legal === "terms" ? TERMS : PRIVACY).map((item) => (
+              <div key={item.heading}>
+                <p className="font-semibold text-foreground">{item.heading}</p>
+                <p className="mt-1">{item.body}</p>
+              </div>
+            ))}
+            <p className="text-xs text-muted-foreground">
+              Questions? Write to {CONTACT.email} and we will answer within one working day.
+            </p>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* ---------- Talk to Sales dialog ---------- */}
       <Dialog open={contactOpen} onOpenChange={setContactOpen}>
@@ -826,6 +1105,16 @@ export default function LandingView() {
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={submitLead} className="space-y-4">
+            <input
+              type="text"
+              name="website"
+              tabIndex={-1}
+              autoComplete="off"
+              aria-hidden="true"
+              value={leadForm.website}
+              onChange={(e) => setLeadForm((f) => ({ ...f, website: e.target.value }))}
+              className="hidden"
+            />
             <div className="space-y-1.5">
               <Label htmlFor="lead-name">Name *</Label>
               <Input
@@ -852,7 +1141,7 @@ export default function LandingView() {
               <div className="space-y-1.5">
                 <Label htmlFor="lead-phone">Phone</Label>
                 <Input
-                  id="lead-phone"
+                  id="lead-phone" inputMode="tel"
                   type="tel"
                   autoComplete="tel"
                   value={leadForm.phone}
@@ -894,6 +1183,6 @@ export default function LandingView() {
           </form>
         </DialogContent>
       </Dialog>
-    </>
+    </div>
   );
 }

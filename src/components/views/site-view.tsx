@@ -3,6 +3,7 @@
 // Public visitors get the pure site; admins opening from the dashboard get a slim preview bar
 // with device toggles. Handles 404/402/403 with branded error screens.
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   AlertTriangle, ArrowLeft, ArrowRight, Clock, Globe, Loader2, Monitor,
   ShieldAlert, Smartphone, Tablet, type LucideIcon,
@@ -20,7 +21,7 @@ interface ErrorMeta {
 }
 
 const ERROR_META: Record<number, ErrorMeta> = {
-  404: { icon: Globe, title: "Website not found", tone: "text-zinc-400" },
+  404: { icon: Globe, title: "Website not found", tone: "text-muted-foreground" },
   402: { icon: Clock, title: "Website expired", tone: "text-amber-500" },
   403: { icon: ShieldAlert, title: "Website suspended", tone: "text-red-500" },
 };
@@ -35,7 +36,7 @@ const BUSINESS_STATUS_PILL: Record<string, string> = {
   DRAFT: "border-zinc-400/30 bg-zinc-500/20 text-zinc-300",
   SUSPENDED: "border-red-400/30 bg-red-500/20 text-red-300",
   EXPIRED: "border-amber-400/30 bg-amber-500/20 text-amber-300",
-  ARCHIVED: "border-zinc-400/20 bg-zinc-500/20 text-zinc-400",
+  ARCHIVED: "border-zinc-400/20 bg-zinc-500/20 text-muted-foreground",
 };
 
 const DEVICES: { id: Device; icon: LucideIcon; label: string }[] = [
@@ -133,11 +134,11 @@ function LoadingScreen() {
       role="status"
       aria-label="Loading website"
     >
-      <a href="#/" className="flex items-center gap-2.5" aria-label="WebSetu home">
+      <a href="/" className="flex items-center gap-2.5" aria-label="WebSetu home">
         <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-600 text-lg font-bold text-white">
           W
         </span>
-        <span className="text-lg font-bold text-zinc-900">WebSetu</span>
+        <span className="text-lg font-bold text-foreground">WebSetu</span>
       </a>
       <Loader2 className="h-5 w-5 animate-spin text-emerald-600" aria-hidden="true" />
     </div>
@@ -160,32 +161,32 @@ function ErrorScreen({
   const Icon = meta.icon;
   return (
     <div className="flex min-h-screen flex-col items-center justify-center gap-6 bg-[#fafaf9] px-4 py-16 text-center">
-      <a href="#/" className="flex items-center gap-2.5" aria-label="WebSetu home">
+      <a href="/" className="flex items-center gap-2.5" aria-label="WebSetu home">
         <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-600 text-lg font-bold text-white">
           W
         </span>
-        <span className="text-lg font-bold text-zinc-900">WebSetu</span>
+        <span className="text-lg font-bold text-foreground">WebSetu</span>
       </a>
 
       <div
-        className="flex h-16 w-16 items-center justify-center rounded-full border border-zinc-200 bg-white shadow-sm"
+        className="flex h-16 w-16 items-center justify-center rounded-full border border-border bg-white shadow-sm"
         aria-hidden="true"
       >
         <Icon className={`h-8 w-8 ${meta.tone}`} />
       </div>
 
       <div>
-        <h1 className="text-xl font-bold tracking-tight text-zinc-900 sm:text-2xl">{meta.title}</h1>
-        <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-zinc-500">{message}</p>
+        <h1 className="text-xl font-bold tracking-tight text-foreground sm:text-2xl">{meta.title}</h1>
+        <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-muted-foreground">{message}</p>
         {slug ? (
-          <p className="mt-3 font-mono text-xs text-zinc-400">{slug}.websetu.in</p>
+          <p className="mt-3 font-mono text-xs text-muted-foreground">{slug}.websetu.in</p>
         ) : null}
       </div>
 
       <div className="flex flex-wrap items-center justify-center gap-3">
         {status === 404 && (
           <a
-            href="#/"
+            href="/"
             className="inline-flex h-10 items-center gap-2 rounded-lg bg-emerald-600 px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700 active:scale-95"
           >
             Create your own website <ArrowRight className="h-4 w-4" aria-hidden="true" />
@@ -214,10 +215,11 @@ function PreviewBar({
   device: Device;
   setDevice: (d: Device) => void;
 }) {
+  const router = useRouter();
   return (
     <div className="fixed inset-x-0 top-0 z-50 flex h-10 items-center justify-between gap-2 bg-zinc-900 px-3 text-white sm:px-4">
       <div className="flex min-w-0 items-center gap-2">
-        <span className="hidden shrink-0 items-center gap-1.5 text-xs text-zinc-400 sm:flex">
+        <span className="hidden shrink-0 items-center gap-1.5 text-xs text-muted-foreground sm:flex">
           <Monitor className="h-3.5 w-3.5" aria-hidden="true" /> Previewing
         </span>
         <span className="truncate text-xs font-semibold">{name}</span>
@@ -247,8 +249,8 @@ function PreviewBar({
                 onClick={() => setDevice(d.id)}
                 className={`flex h-7 w-7 items-center justify-center rounded-md transition ${
                   active
-                    ? "bg-white text-zinc-900 shadow-sm"
-                    : "text-zinc-400 hover:bg-white/10 hover:text-white"
+                    ? "bg-white text-foreground shadow-sm"
+                    : "text-muted-foreground hover:bg-white/10 hover:text-white"
                 }`}
               >
                 <d.icon className="h-4 w-4" aria-hidden="true" />
@@ -260,7 +262,7 @@ function PreviewBar({
           size="sm"
           className="h-7 gap-1.5 bg-emerald-600 px-2.5 text-xs font-semibold text-white hover:bg-emerald-700"
           onClick={() => {
-            window.location.hash = "#/dashboard";
+            router.push("/dashboard");
           }}
         >
           <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />

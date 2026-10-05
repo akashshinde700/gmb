@@ -10,6 +10,17 @@ function hash(password: string): string {
   return `${salt}:${scryptSync(password, salt, 64).toString("hex")}`;
 }
 
+const PLAN_FEATURES = [
+  "Website designed for your business type",
+  "AI-written content, services & FAQs",
+  "Connect your own domain — www and bare domain (you buy the domain)",
+  "Free yourname.websetu subdomain",
+  "Unlimited pages & design changes",
+  "SEO + Google Maps + AEO ready",
+  "Lead inbox, WhatsApp & call buttons",
+  "UPI payment QR, blog & analytics",
+];
+
 async function main() {
   console.log("🌱 Seeding WebSetu…");
 
@@ -35,8 +46,13 @@ async function main() {
   await db.user.deleteMany();
 
   // ---------- users ----------
+  // The platform admin is whoever deploy.py put in the environment; the
+  // fallback is only for a local `tsx prisma/seed.ts` with no env set.
+  const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "admin@websetu.in";
+  const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin1234";
+  const ADMIN_NAME = process.env.ADMIN_NAME || "Platform Admin";
   const admin = await db.user.create({
-    data: { name: "Platform Admin", email: "admin@websetu.in", passwordHash: hash("admin1234"), role: "ADMIN" },
+    data: { name: ADMIN_NAME, email: ADMIN_EMAIL, passwordHash: hash(ADMIN_PASSWORD), role: "ADMIN" },
   });
   const demo = await db.user.create({
     data: { name: "Rajesh Sharma", email: "demo@websetu.in", passwordHash: hash("demo1234"), role: "CUSTOMER" },
@@ -46,51 +62,19 @@ async function main() {
   });
 
   // ---------- plans ----------
-  const starter = await db.plan.create({
+  // One plan, one price. A custom domain is included; the customer buys the
+  // domain itself from any registrar, so the subscription never changes.
+  const plan = await db.plan.create({
     data: {
-      name: "Starter", slug: "starter", tagline: "Get your business online quickly",
-      priceMonthly: 999, priceYearly: 9990, maxPages: 5, aiCredits: 10, sortOrder: 1,
-      featuresJson: JSON.stringify([
-        "1 website on yourname.websetu.in", "5 pages", "Professional template",
-        "Basic SEO setup", "Contact form + lead inbox", "WhatsApp button", "Mobile responsive",
-      ]),
-    },
-  });
-  const businessPlan = await db.plan.create({
-    data: {
-      name: "Business", slug: "business", tagline: "Everything a growing business needs",
-      priceMonthly: 1499, priceYearly: 14990, maxPages: 10, aiCredits: 50, popular: true, sortOrder: 2,
-      featuresJson: JSON.stringify([
-        "Everything in Starter", "Up to 10 pages", "Premium templates",
-        "Advanced SEO + Local SEO", "Blog / CMS", "Google Maps integration",
-        "Analytics dashboard", "Lead management (CRM)", "Priority support",
-      ]),
-    },
-  });
-  const professional = await db.plan.create({
-    data: {
-      name: "Professional", slug: "professional", tagline: "AI-powered growth & custom domain",
-      priceMonthly: 2999, priceYearly: 29990, maxPages: 20, aiCredits: 500, sortOrder: 3,
-      featuresJson: JSON.stringify([
-        "Everything in Business", "Up to 20 pages", "AI content generation", "AEO (Answer Engine Optimization)",
-        "Advanced GEO / multi-location pages", "Custom domain connection",
-        "Advanced analytics", "Product catalogue", "Dedicated manager",
-      ]),
-    },
-  });
-  await db.plan.create({
-    data: {
-      name: "Enterprise", slug: "enterprise", tagline: "Custom solutions for large businesses",
-      priceMonthly: 0, priceYearly: 0, maxPages: -1, aiCredits: 10000, sortOrder: 4,
-      featuresJson: JSON.stringify([
-        "Custom pricing & features", "Multi-brand agency mode", "Custom design & sections",
-        "API access", "SLA & premium support", "White-label options",
-      ]),
+      name: "WebSetu", slug: "standard", tagline: "Everything your business needs online",
+      priceMonthly: 599, priceYearly: 5999, maxPages: -1, aiCredits: 100, maxDomains: 2,
+      maxPalettes: -1, maxThemeChanges: -1, popular: true, sortOrder: 1,
+      featuresJson: JSON.stringify(PLAN_FEATURES),
     },
   });
 
   // ---------- templates ----------
-  const t1 = await db.template.create({
+  await db.template.create({
     data: {
       name: "Modern Pro", slug: "modern-pro", category: "Local Business",
       description: "Clean, trust-building layout perfect for service businesses",
@@ -114,7 +98,7 @@ async function main() {
       themeJson: JSON.stringify({ primary: "#ea580c", secondary: "#9a3412", accent: "#fbbf24", font: "modern", radius: "pill", heroStyle: "image", cardStyle: "shadow" }),
     },
   });
-  const t4 = await db.template.create({
+  await db.template.create({
     data: {
       name: "Care Plus", slug: "care-plus", category: "Clinic / Medical",
       description: "Calm, professional design for clinics, doctors & dentists",
@@ -122,7 +106,7 @@ async function main() {
       themeJson: JSON.stringify({ primary: "#0d9488", secondary: "#0f766e", accent: "#14b8a6", font: "modern", radius: "rounded", heroStyle: "split", cardStyle: "flat" }),
     },
   });
-  const t5 = await db.template.create({
+  await db.template.create({
     data: {
       name: "Luxe Lounge", slug: "luxe-lounge", category: "Salon / Hotel",
       description: "Elegant, premium feel for salons, hotels & luxury brands",
@@ -130,7 +114,7 @@ async function main() {
       themeJson: JSON.stringify({ primary: "#be123c", secondary: "#1c1917", accent: "#e879f9", font: "elegant", radius: "pill", heroStyle: "image", cardStyle: "shadow" }),
     },
   });
-  const t6 = await db.template.create({
+  await db.template.create({
     data: {
       name: "Corporate Slate", slug: "corporate-slate", category: "Professional Services",
       description: "Authoritative design for consultants, CAs & agencies",
@@ -225,15 +209,15 @@ async function main() {
 
   await db.subscription.create({
     data: {
-      businessId: b1.id, planId: businessPlan.id, cycle: "MONTHLY", status: "ACTIVE",
-      amount: 999, startedAt: new Date(Date.now() - 20 * 24 * 60 * 60 * 1000),
+      businessId: b1.id, planId: plan.id, cycle: "MONTHLY", status: "ACTIVE",
+      amount: 599, startedAt: new Date(Date.now() - 20 * 24 * 60 * 60 * 1000),
       renewsAt: new Date(Date.now() + 10 * 24 * 60 * 60 * 1000),
     },
   });
   await db.payment.create({
     data: {
-      businessId: b1.id, amount: 999, method: "UPI", status: "SUCCESS",
-      invoiceNo: "WS-2025-100241", description: "Business plan — Monthly subscription",
+      businessId: b1.id, amount: 599, method: "UPI", status: "SUCCESS",
+      invoiceNo: "WS-2025-100241", description: "WebSetu plan — Monthly subscription",
       createdAt: new Date(Date.now() - 20 * 24 * 60 * 60 * 1000),
     },
   });
@@ -307,15 +291,15 @@ async function main() {
 
   await db.subscription.create({
     data: {
-      businessId: b2.id, planId: starter.id, cycle: "YEARLY", status: "ACTIVE",
-      amount: 4990, startedAt: new Date(Date.now() - 45 * 24 * 60 * 60 * 1000),
+      businessId: b2.id, planId: plan.id, cycle: "YEARLY", status: "ACTIVE",
+      amount: 5999, startedAt: new Date(Date.now() - 45 * 24 * 60 * 60 * 1000),
       renewsAt: new Date(Date.now() + 320 * 24 * 60 * 60 * 1000),
     },
   });
   await db.payment.create({
     data: {
-      businessId: b2.id, amount: 4491, method: "CARD", status: "SUCCESS",
-      invoiceNo: "WS-2025-100118", description: "Starter plan — Annual subscription (LAUNCH50 applied)",
+      businessId: b2.id, amount: 5999, method: "CARD", status: "SUCCESS",
+      invoiceNo: "WS-2025-100118", description: "WebSetu plan — Annual subscription",
       couponCode: "LAUNCH50", createdAt: new Date(Date.now() - 45 * 24 * 60 * 60 * 1000),
     },
   });
@@ -339,7 +323,7 @@ async function main() {
   ]});
 
   console.log("✅ Seed complete");
-  console.log("   Admin:  admin@websetu.in / admin1234");
+  console.log(`   Admin:  ${ADMIN_EMAIL}`);
   console.log("   Demo:   demo@websetu.in / demo1234  (Sharma Electricals — published)");
   console.log("   Demo 2: cafe@websetu.in / cafe1234  (Cafe Aroma — published)");
 }

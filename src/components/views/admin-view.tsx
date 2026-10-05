@@ -1,16 +1,25 @@
 "use client";
 // WebSetu — AdminView: Super Admin console (zinc-900 sidebar, emerald accents).
 // Tabs: Overview | Customers | Plans | Templates | Coupons | Platform Leads.
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormError } from "@/components/views/console-ui";
+import ConsoleBreadcrumb from "@/components/views/console-breadcrumb";
+import DomainRequestsTab from "@/components/views/admin-domain-requests";
+import SupportVisitBanner from "@/components/views/support-visit-banner";
+import { tabTitle } from "@/lib/console-tabs";
+import { TRIAL_DAYS } from "@/lib/trial";
 import {
-  AlertTriangle, ArrowLeft, BadgeCheck, Ban, CalendarX2, Check, Crown, Download, ExternalLink,
+  AlertTriangle, ArrowLeft, ChevronLeft, ChevronRight,
+  LogOut, BadgeCheck, Ban, CalendarX2, Check, Crown, Download, ExternalLink,
   Globe, Inbox, Layers, LayoutDashboard, LayoutTemplate, Loader2, Menu, MoreVertical,
   Pencil, Plus, Power, RotateCcw, Search, TicketPercent, Timer, Trash2, TrendingUp,
-  UserPlus, Users, Wallet, type LucideIcon,
+  KeyRound, LogIn, MessageSquare, Newspaper, Palette, Sparkles, UserPlus, Users, Wallet, type LucideIcon,
 } from "lucide-react";
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api } from "@/lib/api-client";
 import { useApp, type AdminTab } from "@/store/app-store";
+import { useDebounced } from "@/hooks/use-debounced";
+import { themeVars } from "@/lib/platform-theme";
 import type { Business, Plan, Subscription } from "@/lib/types";
 import { toast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -62,10 +71,10 @@ function errMsg(e: unknown): string {
 
 const BIZ_BADGE: Record<string, string> = {
   PUBLISHED: "border-emerald-200 bg-emerald-50 text-emerald-700",
-  DRAFT: "border-zinc-200 bg-zinc-100 text-zinc-600",
+  DRAFT: "border-border bg-muted text-muted-foreground",
   SUSPENDED: "border-red-200 bg-red-50 text-red-600",
   EXPIRED: "border-amber-200 bg-amber-50 text-amber-700",
-  ARCHIVED: "border-zinc-200 bg-zinc-100 text-zinc-500",
+  ARCHIVED: "border-border bg-muted text-muted-foreground",
 };
 
 const SUB_BADGE: Record<string, string> = {
@@ -73,7 +82,7 @@ const SUB_BADGE: Record<string, string> = {
   ACTIVE: "border-emerald-200 bg-emerald-50 text-emerald-700",
   PAST_DUE: "border-amber-200 bg-amber-100 text-amber-800",
   EXPIRED: "border-red-200 bg-red-50 text-red-600",
-  CANCELED: "border-zinc-200 bg-zinc-100 text-zinc-500",
+  CANCELED: "border-border bg-muted text-muted-foreground",
 };
 
 const LEAD_BADGE: Record<string, string> = {
@@ -82,13 +91,13 @@ const LEAD_BADGE: Record<string, string> = {
   FOLLOW_UP: "border-amber-200 bg-amber-50 text-amber-700",
   QUALIFIED: "border-amber-200 bg-amber-100 text-amber-800",
   CONVERTED: "border-emerald-600 bg-emerald-600 text-white",
-  CLOSED: "border-zinc-200 bg-zinc-100 text-zinc-600",
+  CLOSED: "border-border bg-muted text-muted-foreground",
   SPAM: "border-red-200 bg-red-50 text-red-600",
 };
 
 function StatusBadge({ status, map }: { status: string; map: Record<string, string> }) {
   return (
-    <Badge variant="outline" className={`border ${map[status] || "border-zinc-200 bg-zinc-100 text-zinc-600"}`}>
+    <Badge variant="outline" className={`border ${map[status] || "border-border bg-muted text-muted-foreground"}`}>
       {titleCase(status)}
     </Badge>
   );
@@ -109,8 +118,8 @@ function TabHeader({ title, desc, action }: { title: string; desc: string; actio
   return (
     <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
       <div>
-        <h1 className="text-xl font-bold tracking-tight text-zinc-900 sm:text-2xl">{title}</h1>
-        <p className="mt-1 text-sm text-zinc-500">{desc}</p>
+        <h1 className="text-xl font-bold tracking-tight text-foreground sm:text-2xl">{title}</h1>
+        <p className="mt-1 text-sm text-muted-foreground">{desc}</p>
       </div>
       {action}
     </div>
@@ -119,10 +128,10 @@ function TabHeader({ title, desc, action }: { title: string; desc: string; actio
 
 function EmptyState({ icon: Icon, title, hint }: { icon: LucideIcon; title: string; hint?: string }) {
   return (
-    <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-zinc-300 bg-zinc-50 px-4 py-12 text-center">
+    <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-input bg-muted px-4 py-12 text-center">
       <Icon className="h-8 w-8 text-zinc-300" aria-hidden="true" />
-      <p className="text-sm font-medium text-zinc-700">{title}</p>
-      {hint ? <p className="max-w-xs text-xs text-zinc-400">{hint}</p> : null}
+      <p className="text-sm font-medium text-foreground">{title}</p>
+      {hint ? <p className="max-w-xs text-xs text-muted-foreground">{hint}</p> : null}
     </div>
   );
 }
@@ -143,7 +152,7 @@ function ErrorState({ message, onRetry }: { message: string; onRetry?: () => voi
 
 function TableSkeleton({ rows = 6 }: { rows?: number }) {
   return (
-    <div className="space-y-2.5 rounded-xl border border-zinc-200 bg-white p-4" aria-busy="true">
+    <div className="space-y-2.5 rounded-xl border border-border bg-card p-4" aria-busy="true">
       <Skeleton className="h-9 w-full" />
       {Array.from({ length: rows }).map((_, i) => (
         <Skeleton key={i} className="h-11 w-full" />
@@ -195,12 +204,16 @@ const NAV: { id: AdminTab; label: string; icon: LucideIcon }[] = [
   { id: "templates", label: "Templates", icon: LayoutTemplate },
   { id: "coupons", label: "Coupons", icon: TicketPercent },
   { id: "leads", label: "Platform Leads", icon: Inbox },
+  { id: "blog", label: "Blog", icon: Newspaper },
+  { id: "appearance", label: "Appearance", icon: Palette },
+  { id: "domains", label: "Domains", icon: Globe },
 ];
 
 export default function AdminView() {
   const adminTab = useApp((s) => s.adminTab);
   const setAdminTab = useApp((s) => s.setAdminTab);
   const user = useApp((s) => s.user);
+  const logout = useApp((s) => s.logout);
   const [navOpen, setNavOpen] = useState(false);
   const current = NAV.find((n) => n.id === adminTab) || NAV[0];
 
@@ -211,7 +224,10 @@ export default function AdminView() {
   }
 
   return (
-    <div className="flex min-h-screen bg-zinc-50">
+    <div className="flex min-h-screen bg-muted text-foreground">
+      {/* An admin console rendered under a customer's session is a picture of a
+          session that no longer exists — say so before anything is clicked. */}
+      <SupportVisitBanner />
       {/* Desktop sidebar */}
       <aside className="fixed inset-y-0 left-0 z-40 hidden w-60 flex-col bg-zinc-900 lg:flex">
         <SidebarBody activeId={adminTab} onNavigate={go} email={user?.email} />
@@ -219,7 +235,7 @@ export default function AdminView() {
 
       <div className="flex min-h-screen w-full flex-col lg:pl-60">
         {/* Topbar */}
-        <header className="sticky top-0 z-30 flex h-14 items-center justify-between gap-3 border-b border-zinc-200 bg-white/95 px-4 backdrop-blur sm:px-6">
+        <header className="sticky top-0 z-30 flex h-14 items-center justify-between gap-3 border-b border-border bg-card/95 px-4 backdrop-blur sm:px-6">
           <div className="flex min-w-0 items-center gap-2">
             <Sheet open={navOpen} onOpenChange={setNavOpen}>
               <SheetTrigger asChild>
@@ -232,7 +248,7 @@ export default function AdminView() {
                   <SheetTitle className="text-white">WebSetu Admin</SheetTitle>
                 </SheetHeader>
                 <div className="h-[calc(100%-5rem)]">
-                  <SidebarBody activeId={adminTab} onNavigate={go} email={user?.email} inSheet />
+                  <SidebarBody activeId={adminTab} onNavigate={go} email={user?.email} />
                 </div>
               </SheetContent>
             </Sheet>
@@ -240,36 +256,50 @@ export default function AdminView() {
               W
             </span>
             <div className="min-w-0 leading-tight">
-              <p className="text-sm font-bold text-zinc-900">WebSetu Admin</p>
-              <p className="hidden text-xs text-zinc-500 sm:block">{current.label}</p>
+              <p className="text-sm font-bold text-foreground">WebSetu Admin</p>
+              <p className="hidden text-xs text-muted-foreground sm:block">{current.label}</p>
             </div>
           </div>
 
           <div className="flex shrink-0 items-center gap-2 sm:gap-3">
-            <span className="hidden max-w-[220px] truncate text-xs text-zinc-500 md:block">{user?.email}</span>
+            <span className="hidden max-w-[220px] truncate text-xs text-muted-foreground md:block">{user?.email}</span>
             <a
-              href="#/"
-              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 text-sm font-medium text-zinc-700 transition hover:border-emerald-300 hover:text-emerald-700"
+              href="/"
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border bg-card px-3 text-sm font-medium text-foreground transition hover:border-emerald-300 hover:text-emerald-700"
             >
               <ArrowLeft className="h-4 w-4" aria-hidden="true" />
               <span className="hidden sm:inline">Back to site</span>
               <span className="sm:hidden">Site</span>
             </a>
+            {/* The console had no way out: "Back to site" leaves the admin
+                signed in, which is the wrong default on a shared machine. */}
+            <Button
+              variant="outline"
+              onClick={logout}
+              className="h-9 rounded-lg border-border px-3 text-sm font-medium text-red-600 hover:border-red-200 hover:bg-red-50 hover:text-red-700"
+            >
+              <LogOut className="h-4 w-4" aria-hidden="true" />
+              <span className="hidden sm:inline">Log out</span>
+            </Button>
           </div>
         </header>
 
         {/* Tab content */}
         <main className="flex-1 p-4 sm:p-6">
+          <ConsoleBreadcrumb root="Admin" rootHref="/admin" current={tabTitle(adminTab)} />
           {adminTab === "overview" && <OverviewTab />}
           {adminTab === "customers" && <CustomersTab />}
           {adminTab === "plans" && <PlansTab />}
           {adminTab === "templates" && <TemplatesTab />}
           {adminTab === "coupons" && <CouponsTab />}
           {adminTab === "leads" && <PlatformLeadsTab />}
+          {adminTab === "blog" && <BlogTab />}
+          {adminTab === "appearance" && <AppearanceTab />}
+          {adminTab === "domains" && <DomainRequestsTab />}
         </main>
 
         {/* Sticky footer (mt-auto pushes to bottom when content is short) */}
-        <footer className="mt-auto border-t border-zinc-200 bg-white px-4 py-4 text-xs text-zinc-500 sm:px-6">
+        <footer className="mt-auto border-t border-border bg-card px-4 py-4 text-xs text-muted-foreground sm:px-6">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p>© {new Date().getFullYear()} WebSetu — Platform Administration</p>
             <p>Region: India · Currency: INR</p>
@@ -284,12 +314,10 @@ function SidebarBody({
   activeId,
   onNavigate,
   email,
-  inSheet,
 }: {
   activeId: AdminTab;
   onNavigate: (t: AdminTab) => void;
   email?: string;
-  inSheet?: boolean;
 }) {
   return (
     <div className="flex h-full flex-col">
@@ -313,7 +341,7 @@ function SidebarBody({
               className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition ${
                 active
                   ? "bg-emerald-600 text-white shadow-sm"
-                  : "text-zinc-400 hover:bg-white/5 hover:text-white"
+                  : "text-muted-foreground hover:bg-card/5 hover:text-white"
               }`}
             >
               <item.icon className="h-4 w-4 shrink-0" aria-hidden="true" />
@@ -324,18 +352,18 @@ function SidebarBody({
       </nav>
 
       <div className="border-t border-zinc-800 p-3">
-        <div className="flex items-center gap-2.5 rounded-lg bg-white/5 px-3 py-2.5">
+        <div className="flex items-center gap-2.5 rounded-lg bg-card/5 px-3 py-2.5">
           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-600/20 text-xs font-bold text-emerald-300">
             {(email || "A").charAt(0).toUpperCase()}
           </span>
           <div className="min-w-0">
-            <p className="truncate text-xs font-medium text-white">{email || "admin@websetu.in"}</p>
-            <p className="text-[11px] text-zinc-500">Super Admin</p>
+            <p className="truncate text-xs font-medium text-white">{email || "Platform admin"}</p>
+            <p className="text-[11px] text-muted-foreground">Super Admin</p>
           </div>
         </div>
         <a
-          href="#/"
-          className="mt-2 flex items-center gap-2 rounded-lg px-3 py-2 text-xs text-zinc-400 transition hover:bg-white/5 hover:text-white"
+          href="/"
+          className="mt-2 flex items-center gap-2 rounded-lg px-3 py-2 text-xs text-muted-foreground transition hover:bg-card/5 hover:text-white"
         >
           <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" /> Back to site
         </a>
@@ -360,6 +388,67 @@ interface AdminStats {
   expired: number; leads: number; newLeads: number; activeSubs: number;
   plans: number; templates: number; monthRevenue: number; totalRevenue: number;
   recentPayments: PaymentRow[]; recentLeads: StatLeadRow[];
+}
+
+/**
+ * Download a snapshot of the live database.
+ *
+ * The deploy no longer keeps backups on the server, so this is the only copy
+ * that exists — it is taken when the admin asks for one and lands in their
+ * downloads folder.
+ *
+ * Fetched as a blob rather than linked with a plain <a href>: a direct
+ * navigation that fails would leave the admin staring at a JSON error page
+ * instead of the console, with no idea whether they have a backup or not.
+ */
+function BackupButton() {
+  const [busy, setBusy] = useState(false);
+
+  async function download() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const res = await fetch("/api/admin/backup", { credentials: "same-origin" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error || `Backup failed (${res.status})`);
+      }
+      const blob = await res.blob();
+      const name =
+        /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") || "")?.[1] ||
+        "websetu-backup.db.gz";
+
+      const href = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = href;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      // Revoking immediately can cancel the download in some browsers.
+      setTimeout(() => URL.revokeObjectURL(href), 60_000);
+
+      toast({
+        title: "Backup downloaded",
+        description: `${name} — ${(blob.size / 1024).toFixed(0)} KB. Keep it somewhere off this server.`,
+      });
+    } catch (e) {
+      toast({ title: "Backup failed", description: errMsg(e), variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Button variant="outline" className="rounded-xl" disabled={busy} onClick={() => void download()}>
+      {busy ? (
+        <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+      ) : (
+        <Download className="h-4 w-4" aria-hidden="true" />
+      )}
+      {busy ? "Preparing…" : "Download backup"}
+    </Button>
+  );
 }
 
 function OverviewTab() {
@@ -396,7 +485,11 @@ function OverviewTab() {
   if (err && !stats) {
     return (
       <div>
-        <TabHeader title="Overview" desc="Platform health, revenue and activity at a glance." />
+        <TabHeader
+          title="Overview"
+          desc="Platform health, revenue and activity at a glance."
+          action={<BackupButton />}
+        />
         <ErrorState message={err} onRetry={() => void load()} />
       </div>
     );
@@ -445,9 +538,12 @@ function OverviewTab() {
         title="Overview"
         desc="Platform health, revenue and activity at a glance."
         action={
-          <Button variant="outline" size="sm" onClick={() => void load()}>
-            <RotateCcw className="h-4 w-4" aria-hidden="true" /> Refresh
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <BackupButton />
+            <Button variant="outline" size="sm" onClick={() => void load()}>
+              <RotateCcw className="h-4 w-4" aria-hidden="true" /> Refresh
+            </Button>
+          </div>
         }
       />
 
@@ -463,12 +559,12 @@ function OverviewTab() {
           <CardContent>
             <div className="flex flex-wrap items-end justify-between gap-6">
               <div>
-                <p className="text-xs text-zinc-500">{monthLabel}</p>
+                <p className="text-xs text-muted-foreground">{monthLabel}</p>
                 <p className="text-3xl font-bold tracking-tight text-emerald-700">{inr(stats.monthRevenue)}</p>
               </div>
               <div className="text-right">
-                <p className="text-xs text-zinc-500">All-time revenue</p>
-                <p className="text-xl font-semibold text-zinc-900">{inr(stats.totalRevenue)}</p>
+                <p className="text-xs text-muted-foreground">All-time revenue</p>
+                <p className="text-xl font-semibold text-foreground">{inr(stats.totalRevenue)}</p>
               </div>
             </div>
             <div className="mt-4 h-24">
@@ -492,7 +588,7 @@ function OverviewTab() {
                   </LineChart>
                 </ResponsiveContainer>
               ) : (
-                <div className="flex h-full items-center justify-center rounded-lg border border-dashed border-zinc-200 text-xs text-zinc-400">
+                <div className="flex h-full items-center justify-center rounded-lg border border-dashed border-border text-xs text-muted-foreground">
                   <TrendingUp className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
                   Sparkline appears once there are two or more payments
                 </div>
@@ -501,11 +597,11 @@ function OverviewTab() {
             <Separator className="my-4" />
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               {miniStats.map((m) => (
-                <div key={m.label} className="rounded-lg bg-zinc-50 p-3">
-                  <div className="flex items-center gap-1.5 text-xs text-zinc-500">
+                <div key={m.label} className="rounded-lg bg-muted p-3">
+                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                     <m.icon className="h-3.5 w-3.5 text-emerald-600" aria-hidden="true" /> {m.label}
                   </div>
-                  <p className="mt-1 text-lg font-bold text-zinc-900">{m.value.toLocaleString("en-IN")}</p>
+                  <p className="mt-1 text-lg font-bold text-foreground">{m.value.toLocaleString("en-IN")}</p>
                 </div>
               ))}
             </div>
@@ -519,20 +615,20 @@ function OverviewTab() {
           </CardHeader>
           <CardContent className="max-h-72 overflow-y-auto">
             {stats.recentPayments.length === 0 ? (
-              <p className="py-8 text-center text-sm text-zinc-400">No payments yet</p>
+              <p className="py-8 text-center text-sm text-muted-foreground">No payments yet</p>
             ) : (
               <ul className="space-y-3">
                 {stats.recentPayments.map((p) => (
                   <li key={p.id} className="flex items-center justify-between gap-3 text-sm">
                     <div className="min-w-0">
-                      <p className="truncate font-medium text-zinc-800">{p.invoiceNo || "—"}</p>
-                      <p className="truncate text-xs text-zinc-400">
+                      <p className="truncate font-medium text-foreground">{p.invoiceNo || "—"}</p>
+                      <p className="truncate text-xs text-muted-foreground">
                         {p.method} {p.couponCode ? `· ${p.couponCode}` : ""}
                       </p>
                     </div>
                     <div className="shrink-0 text-right">
                       <p className="font-semibold text-emerald-700">{inr(p.amount)}</p>
-                      <p className="text-xs text-zinc-400">{fmtDate(p.createdAt)}</p>
+                      <p className="text-xs text-muted-foreground">{fmtDate(p.createdAt)}</p>
                     </div>
                   </li>
                 ))}
@@ -545,14 +641,14 @@ function OverviewTab() {
       {/* KPI cards */}
       <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-6">
         {kpis.map((k) => (
-          <div key={k.label} className="rounded-xl border border-zinc-200 bg-white p-4">
+          <div key={k.label} className="rounded-xl border border-border bg-card p-4">
             <span className={`flex h-8 w-8 items-center justify-center rounded-lg ${k.tone}`}>
               <k.icon className="h-4 w-4" aria-hidden="true" />
             </span>
-            <p className="mt-3 text-2xl font-bold tracking-tight text-zinc-900">
+            <p className="mt-3 text-2xl font-bold tracking-tight text-foreground">
               {k.value.toLocaleString("en-IN")}
             </p>
-            <p className="mt-0.5 text-xs leading-snug text-zinc-500">{k.label}</p>
+            <p className="mt-0.5 text-xs leading-snug text-muted-foreground">{k.label}</p>
           </div>
         ))}
       </div>
@@ -571,7 +667,7 @@ function OverviewTab() {
               <div className="overflow-x-auto">
                 <Table className="min-w-[640px]">
                   <TableHeader>
-                    <TableRow className="bg-zinc-50 hover:bg-zinc-50">
+                    <TableRow className="bg-muted hover:bg-muted">
                       <TableHead>Invoice</TableHead>
                       <TableHead>Amount</TableHead>
                       <TableHead>Method</TableHead>
@@ -582,19 +678,19 @@ function OverviewTab() {
                   <TableBody>
                     {stats.recentPayments.map((p) => (
                       <TableRow key={p.id}>
-                        <TableCell className="whitespace-nowrap font-mono text-xs font-medium text-zinc-700">
+                        <TableCell className="whitespace-nowrap font-mono text-xs font-medium text-foreground">
                           {p.invoiceNo || "—"}
                         </TableCell>
                         <TableCell className="whitespace-nowrap font-semibold text-emerald-700">{inr(p.amount)}</TableCell>
                         <TableCell>
-                          <Badge variant="outline" className="border-zinc-200 bg-zinc-50 text-zinc-600">
+                          <Badge variant="outline" className="border-border bg-muted text-muted-foreground">
                             {p.method}
                           </Badge>
                         </TableCell>
-                        <TableCell className="max-w-[220px] truncate text-sm text-zinc-600" title={p.description}>
+                        <TableCell className="max-w-[220px] truncate text-sm text-muted-foreground" title={p.description}>
                           {p.description || "—"}
                         </TableCell>
-                        <TableCell className="whitespace-nowrap text-right text-sm text-zinc-500">
+                        <TableCell className="whitespace-nowrap text-right text-sm text-muted-foreground">
                           {fmtDate(p.createdAt)}
                         </TableCell>
                       </TableRow>
@@ -621,14 +717,14 @@ function OverviewTab() {
                     <Initial text={l.name} />
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <p className="truncate text-sm font-medium text-zinc-900">{l.name}</p>
+                        <p className="truncate text-sm font-medium text-foreground">{l.name}</p>
                         <StatusBadge status={l.status} map={LEAD_BADGE} />
                       </div>
-                      <p className="mt-0.5 truncate text-xs text-zinc-500">
+                      <p className="mt-0.5 truncate text-xs text-muted-foreground">
                         {l.business?.name || "—"} · {l.phone}
                       </p>
                     </div>
-                    <span className="shrink-0 pt-0.5 text-xs text-zinc-400">{fmtDate(l.createdAt)}</span>
+                    <span className="shrink-0 pt-0.5 text-xs text-muted-foreground">{fmtDate(l.createdAt)}</span>
                   </li>
                 ))}
               </ul>
@@ -642,15 +738,38 @@ function OverviewTab() {
 
 /* ================================== CUSTOMERS ================================== */
 
+/** Paging counts the customers endpoint reports alongside the rows. */
+interface CustomersMeta { total: number; take: number; skip: number }
+
+const CUSTOMERS_PAGE_SIZE = 50;
+/** The endpoint caps `take` at 200, so that is the most one export can carry. */
+const EXPORT_MAX = 200;
+
 interface CustomerRow {
   id: string; name: string; email: string; createdAt: string;
   business: Business | null; subscription: Subscription | null;
+  usage: {
+    services: number; products: number; gallery: number; leads: number; aiUsed: number;
+    domains: number; domainCredits: number;
+  } | null;
+}
+
+/**
+ * CSV cell escaping. A leading =, +, - or @ makes Excel/Sheets treat the value
+ * as a formula, so lead-supplied text is prefixed with a quote first.
+ */
+function csvCell(v: unknown): string {
+  const raw = String(v ?? "");
+  const safe = /^[=+\-@\t\r]/.test(raw) ? `'${raw}` : raw;
+  return `"${safe.replace(/"/g, '""')}"`;
 }
 
 /** /api/admin/customers has no revenue aggregates — those columns are skipped. */
 function exportCustomersCsv(rows: CustomerRow[]) {
-  const head = ["Name", "Email", "Business", "Website (slug)", "Website status", "Plan", "Status", "Created"];
-  const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const head = [
+    "Name", "Email", "Business", "Website (slug)", "Website status", "Plan", "Status",
+    "Services", "Products", "Photos", "Leads", "AI used", "Renews / trial ends", "Created",
+  ];
   const csvRows = rows.map((r) => [
     r.name,
     r.email,
@@ -659,9 +778,19 @@ function exportCustomersCsv(rows: CustomerRow[]) {
     r.business?.status || "",
     r.subscription?.plan?.name || "",
     r.subscription?.status || "",
+    r.usage?.services ?? "",
+    r.usage?.products ?? "",
+    r.usage?.gallery ?? "",
+    r.usage?.leads ?? "",
+    r.usage?.aiUsed ?? "",
+    r.subscription?.renewsAt
+      ? new Date(r.subscription.renewsAt).toLocaleDateString("en-IN")
+      : r.subscription?.trialEndsAt
+        ? `trial ends ${new Date(r.subscription.trialEndsAt).toLocaleDateString("en-IN")}`
+        : "",
     new Date(r.createdAt).toLocaleString("en-IN"),
-  ].map(esc).join(","));
-  const csv = [head.map(esc).join(","), ...csvRows].join("\n");
+  ].map(csvCell).join(","));
+  const csv = [head.map(csvCell).join(","), ...csvRows].join("\n");
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -671,41 +800,154 @@ function exportCustomersCsv(rows: CustomerRow[]) {
   URL.revokeObjectURL(url);
 }
 
+
+/** "3/10 AI" style allowance summary, or "unlimited" where the plan says so. */
+function planAllowance(row: CustomerRow): string {
+  const credits = row.subscription?.plan?.aiCredits ?? 0;
+  const used = row.usage?.aiUsed ?? 0;
+  if (credits < 0) return `${used} AI used`;
+  return `${used}/${credits} AI`;
+}
+
+/** What the account is running on: a trial that ends, or a paid period. */
+function renewalLabel(row: CustomerRow): string {
+  const sub = row.subscription;
+  if (!sub) return "—";
+  if (sub.status === "TRIALING" && sub.trialEndsAt) {
+    const days = Math.ceil((new Date(sub.trialEndsAt).getTime() - Date.now()) / 86400000);
+    return days >= 0 ? `Trial · ${days}d left` : `Trial ended ${fmtDate(sub.trialEndsAt)}`;
+  }
+  if (sub.renewsAt) return `Paid until ${fmtDate(sub.renewsAt)}`;
+  return sub.status === "ACTIVE" ? "Active" : "—";
+}
+
 function CustomersTab() {
   const openSite = useApp((s) => s.openSite);
+  // Which customer's palette list is being tailored, if any.
+  const [paletteTarget, setPaletteTarget] = useState<{ id: string; name: string } | null>(null);
+  // Which customer is being granted paid-for custom domains, if any.
+  const [domainTarget, setDomainTarget] = useState<
+    { id: string; name: string; credits: number; connected: number } | null
+  >(null);
+  const [creating, setCreating] = useState(false);
+  // Shown once after creating an account or resetting a password.
+  const [credentials, setCredentials] = useState<{ email: string; password: string; heading: string } | null>(null);
+  const [busyRow, setBusyRow] = useState<string | null>(null);
+  // Plans for the inline switcher; a failure just leaves the current value shown.
+  const [planOptions, setPlanOptions] = useState<Plan[]>([]);
   const [rows, setRows] = useState<CustomerRow[] | null>(null);
   const [err, setErr] = useState("");
   const [q, setQ] = useState("");
+  // Paging state. The server already searched and paged this list — the browser
+  // holds one page and the count the server reported, nothing more.
+  const [meta, setMeta] = useState<CustomersMeta>({ total: 0, take: CUSTOMERS_PAGE_SIZE, skip: 0 });
+  const [page, setPage] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const debouncedQ = useDebounced(q, 350);
   const [confirm, setConfirm] = useState<ConfirmReq | null>(null);
+  // Deleting an account is permanent and takes the customer's whole site with
+  // it, so it gets its own dialog with the email typed out rather than the
+  // one-click confirm the other actions use.
+  const [deleteUser, setDeleteUser] = useState<CustomerRow | null>(null);
+  const [deleteTyped, setDeleteTyped] = useState("");
+  const [deleting, setDeleting] = useState(false);
 
-  const load = useCallback(() => {
-    return api
-      .get<CustomerRow[]>("/api/admin/customers")
-      .then((d) => {
-        setRows(d);
-        setErr("");
-      })
-      .catch((e: unknown) => {
-        setErr(errMsg(e));
-      });
-  }, []);
+  /**
+   * Fetch one page from the server, with the search term applied in SQL.
+   *
+   * This used to be `api.get("/api/admin/customers")` with no parameters, and
+   * the search was a `.filter()` over whatever came back. The endpoint returns
+   * at most 100 rows by default, so customer 101 onwards could not be found,
+   * listed, or exported — silently, with the header still reporting
+   * "Showing 100 of 100 customers". The endpoint had grown SQL search and
+   * paging; this screen was never connected to them.
+   */
+  // Guards against a slow early response overwriting a fast later one — the
+  // classic search race where the results for "sha" land after "sharma".
+  const requestId = useRef(0);
+
+  const load = useCallback(async () => {
+    const id = ++requestId.current;
+    setLoading(true);
+    const params = new URLSearchParams({
+      take: String(CUSTOMERS_PAGE_SIZE),
+      skip: String(page * CUSTOMERS_PAGE_SIZE),
+    });
+    if (debouncedQ.trim()) params.set("q", debouncedQ.trim());
+    try {
+      const res = await api.raw<CustomerRow[], CustomersMeta>(`/api/admin/customers?${params}`);
+      if (id !== requestId.current) return; // a newer request already answered
+      setRows(res.data);
+      setMeta(res.meta);
+      setErr("");
+    } catch (e) {
+      if (id !== requestId.current) return;
+      setErr(errMsg(e));
+    } finally {
+      if (id === requestId.current) setLoading(false);
+    }
+  }, [page, debouncedQ]);
 
   useEffect(() => {
+    // Fetch on change; `load` flips its own loading flag before the first await.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [load]);
 
-  const filtered = useMemo(() => {
-    const needle = q.trim().toLowerCase();
-    if (!rows) return [];
-    if (!needle) return rows;
-    return rows.filter(
-      (r) =>
-        r.name.toLowerCase().includes(needle) ||
-        r.email.toLowerCase().includes(needle) ||
-        (r.business?.name || "").toLowerCase().includes(needle) ||
-        (r.business?.slug || "").toLowerCase().includes(needle),
-    );
-  }, [rows, q]);
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .get<Plan[]>("/api/admin/plans")
+      .then((d) => {
+        if (!cancelled) setPlanOptions(d.filter((p) => p.active));
+      })
+      .catch(() => {
+        /* the row still shows the assigned plan */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // The rows on screen ARE the result — the server did the filtering.
+  const filtered = rows ?? [];
+  const totalPages = Math.max(1, Math.ceil(meta.total / CUSTOMERS_PAGE_SIZE));
+  const from = meta.total === 0 ? 0 : page * CUSTOMERS_PAGE_SIZE + 1;
+  const to = Math.min(meta.total, page * CUSTOMERS_PAGE_SIZE + filtered.length);
+
+  /** Change the search and return to page 1 — page 3 of the old result set is
+   *  not page 3 of the new one. */
+  function applySearch(next: string) {
+    setQ(next);
+    setPage(0);
+  }
+
+  /**
+   * Export every customer the current search describes — not just the page on
+   * screen. Exporting `filtered` used to mean the file silently stopped at the
+   * first 100 accounts, which is the kind of wrong that only shows up when
+   * somebody reconciles the spreadsheet against the billing total.
+   */
+  async function exportAll() {
+    setExporting(true);
+    try {
+      const params = new URLSearchParams({ take: String(EXPORT_MAX) });
+      if (debouncedQ.trim()) params.set("q", debouncedQ.trim());
+      const { data } = await api.raw<CustomerRow[], CustomersMeta>(`/api/admin/customers?${params}`);
+      exportCustomersCsv(data);
+      if (meta.total > data.length) {
+        toast({
+          title: `Exported the first ${data.length}`,
+          description: `${meta.total} customers match. Narrow the search to export the rest.`,
+        });
+      }
+    } catch (e) {
+      toast({ title: "Export failed", description: errMsg(e), variant: "destructive" });
+    } finally {
+      setExporting(false);
+    }
+  }
 
   function askToggleStatus(r: CustomerRow) {
     const biz = r.business;
@@ -757,6 +999,141 @@ function CustomersTab() {
     });
   }
 
+  /** Permanently remove the account itself, not just its website. */
+  async function deleteCustomer() {
+    const row = deleteUser;
+    if (!row) return;
+    setDeleting(true);
+    try {
+      const res = await api.del<{ paymentsKept: number }>(`/api/admin/customers/${row.id}`);
+      toast({
+        title: "Customer deleted",
+        description: res.paymentsKept
+          ? `${row.email} and their website were removed. ${res.paymentsKept} payment record${res.paymentsKept === 1 ? "" : "s"} kept for your accounts.`
+          : `${row.email} and their website were removed.`,
+      });
+      setDeleteUser(null);
+      setDeleteTyped("");
+      // Deleting the only row on the last page would otherwise leave the admin
+      // staring at an empty page 3 with no way back except Previous.
+      if (rows?.length === 1 && page > 0) setPage((p) => p - 1);
+      else await load();
+    } catch (e) {
+      toast({ title: "Could not delete", description: errMsg(e), variant: "destructive" });
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  async function resetPassword(row: CustomerRow) {
+    setBusyRow(row.id);
+    try {
+      const res = await api.post<{ password: string }>(`/api/admin/customers/${row.id}/password`);
+      setCredentials({ email: row.email, password: res.password, heading: "New password issued" });
+    } catch (e) {
+      toast({ title: "Could not reset the password", description: errMsg(e), variant: "destructive" });
+    } finally {
+      setBusyRow(null);
+    }
+  }
+
+  /**
+   * Open the customer's own dashboard in a new tab.
+   *
+   * The tab is opened BEFORE the request, not after: a window.open() that does
+   * not happen inside the click's own event handler is a popup as far as the
+   * browser is concerned, and gets blocked. So the tab is claimed first and
+   * pointed at the dashboard once the session has actually been swapped.
+   *
+   * Worth being clear about what "new tab" can and cannot mean here: a browser
+   * has one cookie jar, so this tab is now signed in as the customer too — the
+   * new tab changes where the customer's dashboard is visible, not who the
+   * browser is. That is what the banner this raises is for: one click puts the
+   * admin session back, instead of logging out and signing in again.
+   */
+  async function loginAs(row: CustomerRow) {
+    // NO "noopener" here, deliberately. It sounds like the safe choice and it is
+    // the opposite of one for this call: window.open() returns null whenever
+    // noopener is set — that is what the flag means, the opener gets no handle —
+    // so there was nothing left to point at /dashboard and the new tab sat on
+    // about:blank forever. noopener protects against a page you do not control
+    // reaching back through window.opener; this is our own dashboard, on our own
+    // origin.
+    //
+    // Opened empty and pointed afterwards, rather than straight at /dashboard,
+    // because the session swap has not happened yet at click time: a tab opened
+    // on the URL now would load as the ADMIN and bounce to the wrong place.
+    // Opening it must still happen inside the click's own handler, or the
+    // browser treats it as a popup and blocks it — hence empty first, await
+    // second.
+    const tab = window.open("", "_blank");
+    if (tab) {
+      // Something to look at for the second the request takes.
+      tab.document.write(
+        '<!doctype html><meta charset="utf-8"><title>Opening…</title>' +
+          '<body style="margin:0;display:grid;place-items:center;height:100vh;' +
+          'font:15px system-ui,sans-serif;color:#3f3f46">Opening ' +
+          row.name.replace(/[<>&]/g, "") +
+          "'s dashboard…</body>",
+      );
+      tab.document.close();
+    }
+    setBusyRow(row.id);
+    try {
+      // The response sets the session cookie; there is nothing to store here.
+      await api.post<{ token: string }>(`/api/admin/customers/${row.id}/impersonate`);
+      if (tab) tab.location.href = "/dashboard";
+      else {
+        // Popups blocked. Falling back to this tab is better than a click that
+        // silently does nothing.
+        // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+        window.location.assign("/dashboard");
+        return;
+      }
+      // The banner is driven by the server (/api/auth/me reports the parked
+      // admin session), so this tab only has to go and ask again.
+      await useApp.getState().hydrate();
+    } catch (e) {
+      tab?.close();
+      toast({ title: "Could not open that account", description: errMsg(e), variant: "destructive" });
+    } finally {
+      setBusyRow(null);
+    }
+  }
+
+  async function subscriptionAction(row: CustomerRow, body: Record<string, unknown>, done: string) {
+    if (!row.business) return;
+    setBusyRow(row.id);
+    try {
+      await api.patch(`/api/admin/businesses/${row.business.id}/subscription`, body);
+      toast({ title: done, description: row.business.name });
+      await load();
+    } catch (e) {
+      toast({ title: "Could not update the subscription", description: errMsg(e), variant: "destructive" });
+    } finally {
+      setBusyRow(null);
+    }
+  }
+
+  async function makeCustomPlan(row: CustomerRow) {
+    if (!row.business) return;
+    setBusyRow(row.id);
+    try {
+      const res = await api.post<{ plan: Plan; created: boolean }>(
+        `/api/admin/businesses/${row.business.id}/custom-plan`,
+      );
+      toast({
+        title: res.created ? "Dedicated plan created" : "Dedicated plan reassigned",
+        description: `${res.plan.name} — edit its limits under Plans.`,
+      });
+      await load();
+    } catch (e) {
+      toast({ title: "Could not create a dedicated plan", description: errMsg(e), variant: "destructive" });
+    } finally {
+      setBusyRow(null);
+    }
+  }
+
   return (
     <div>
       <TabHeader
@@ -764,20 +1141,23 @@ function CustomersTab() {
         desc="All customer accounts, their websites and subscriptions."
         action={
           <div className="flex flex-wrap items-center gap-2">
+            <Button className="rounded-xl" onClick={() => setCreating(true)}>
+              <UserPlus className="h-4 w-4" aria-hidden="true" /> Add customer
+            </Button>
             <Button
               variant="outline"
               className="rounded-xl"
-              onClick={() => exportCustomersCsv(filtered)}
-              disabled={filtered.length === 0}
+              onClick={() => void exportAll()}
+              disabled={meta.total === 0 || exporting}
               aria-label="Export customers as CSV"
             >
               <Download className="h-4 w-4" aria-hidden="true" /> Export CSV
             </Button>
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" aria-hidden="true" />
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
               <Input
                 value={q}
-                onChange={(e) => setQ(e.target.value)}
+                onChange={(e) => applySearch(e.target.value)}
                 placeholder="Search name, email or business…"
                 className="w-full pl-9 sm:w-72"
                 aria-label="Search customers"
@@ -795,22 +1175,28 @@ function CustomersTab() {
         <EmptyState
           icon={Users}
           title={q ? "No customers match your search" : "No customers yet"}
-          hint={q ? "Try a different name, email or business." : "Customers appear here after they sign up."}
+          hint={
+            q
+              ? "Try a different name, email or business."
+              : "Customers appear here after they sign up — or add one yourself."
+          }
         />
       ) : (
         <>
-          <p className="mb-2 text-xs text-zinc-500">
-            Showing {filtered.length} of {rows.length} customers
+          <p className="mb-2 text-xs text-muted-foreground">
+            Showing {from}–{to} of {meta.total}{debouncedQ.trim() ? " matching" : ""} customer{meta.total === 1 ? "" : "s"}
           </p>
-          <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
+          <div className="overflow-hidden rounded-xl border border-border bg-card">
             <div className="overflow-x-auto">
-              <Table className="min-w-[860px]">
+              <Table className="min-w-[1180px]">
                 <TableHeader>
-                  <TableRow className="bg-zinc-50 hover:bg-zinc-50">
+                  <TableRow className="bg-muted hover:bg-muted">
                     <TableHead>Customer</TableHead>
                     <TableHead>Business</TableHead>
                     <TableHead>Website</TableHead>
                     <TableHead>Plan</TableHead>
+                    <TableHead>Usage</TableHead>
+                    <TableHead>Renews / trial</TableHead>
                     <TableHead>Joined</TableHead>
                     <TableHead className="w-14 text-right">Actions</TableHead>
                   </TableRow>
@@ -822,41 +1208,82 @@ function CustomersTab() {
                         <div className="flex items-center gap-3">
                           <Initial text={r.name} />
                           <div className="min-w-0">
-                            <p className="truncate text-sm font-medium text-zinc-900">{r.name}</p>
-                            <p className="truncate text-xs text-zinc-500">{r.email}</p>
+                            <p className="truncate text-sm font-medium text-foreground">{r.name}</p>
+                            <p className="truncate text-xs text-muted-foreground">{r.email}</p>
                           </div>
                         </div>
                       </TableCell>
                       <TableCell>
                         {r.business ? (
                           <div className="min-w-0">
-                            <p className="truncate text-sm text-zinc-800">{r.business.name}</p>
-                            <p className="truncate font-mono text-xs text-zinc-400">/{r.business.slug}</p>
+                            <p className="truncate text-sm text-foreground">{r.business.name}</p>
+                            <p className="truncate font-mono text-xs text-muted-foreground">/{r.business.slug}</p>
                           </div>
                         ) : (
-                          <span className="text-xs text-zinc-400">No website yet</span>
+                          <span className="text-xs text-muted-foreground">No website yet</span>
                         )}
                       </TableCell>
                       <TableCell>
                         {r.business ? (
                           <StatusBadge status={r.business.status} map={BIZ_BADGE} />
                         ) : (
-                          <span className="text-xs text-zinc-400">—</span>
+                          <span className="text-xs text-muted-foreground">—</span>
                         )}
                       </TableCell>
                       <TableCell>
                         {r.subscription ? (
                           <div className="flex flex-col items-start gap-1">
-                            <span className="text-sm text-zinc-800">
-                              {r.subscription.plan?.name || "Plan"}
-                            </span>
+                            {/* Changing a plan is the most common admin action,
+                                so it happens in the row rather than in a menu. */}
+                            <Select
+                              value={r.subscription.planId}
+                              disabled={busyRow === r.id}
+                              onValueChange={(planId) => {
+                                if (planId !== r.subscription?.planId) {
+                                  void subscriptionAction(r, { planId }, "Plan changed");
+                                }
+                              }}
+                            >
+                              <SelectTrigger className="h-8 w-[150px] text-xs" aria-label={`Plan for ${r.name}`}>
+                                <SelectValue placeholder="Plan" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {planOptions
+                                  .filter((p) => !p.customForBusinessId || p.customForBusinessId === r.business?.id)
+                                  .map((p) => (
+                                    <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                                  ))}
+                              </SelectContent>
+                            </Select>
                             <StatusBadge status={r.subscription.status} map={SUB_BADGE} />
                           </div>
                         ) : (
-                          <span className="text-xs text-zinc-400">No subscription</span>
+                          <span className="text-xs text-muted-foreground">No subscription</span>
                         )}
                       </TableCell>
-                      <TableCell className="whitespace-nowrap text-sm text-zinc-600">{fmtDate(r.createdAt)}</TableCell>
+                      <TableCell>
+                        {r.usage ? (
+                          <div className="text-xs text-muted-foreground">
+                            <p>
+                              <span className="font-medium text-foreground">
+                                {r.usage.services + r.usage.products}
+                              </span>{" "}
+                              items ·{" "}
+                              <span className="font-medium text-foreground">{r.usage.gallery}</span> photos
+                            </p>
+                            <p className="mt-0.5">
+                              <span className="font-medium text-foreground">{r.usage.leads}</span> leads ·{" "}
+                              {planAllowance(r)}
+                            </p>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                        {renewalLabel(r)}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap text-sm text-muted-foreground">{fmtDate(r.createdAt)}</TableCell>
                       <TableCell className="text-right">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
@@ -879,6 +1306,61 @@ function CustomersTab() {
                             >
                               <ExternalLink className="h-4 w-4" aria-hidden="true" /> View site
                             </DropdownMenuItem>
+                            <DropdownMenuItem
+                              disabled={busyRow === r.id}
+                              onClick={() => void loginAs(r)}
+                            >
+                              <LogIn className="h-4 w-4" aria-hidden="true" /> Log in as customer
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              disabled={busyRow === r.id}
+                              onClick={() => void resetPassword(r)}
+                            >
+                              <KeyRound className="h-4 w-4" aria-hidden="true" /> Reset password
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuLabel>Subscription</DropdownMenuLabel>
+                            <DropdownMenuItem
+                              disabled={!r.subscription || busyRow === r.id}
+                              onClick={() => void subscriptionAction(r, { extendTrialDays: 7 }, "Trial extended by 7 days")}
+                            >
+                              <Timer className="h-4 w-4" aria-hidden="true" /> Extend trial +7 days
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              disabled={!r.subscription || busyRow === r.id}
+                              onClick={() => void subscriptionAction(r, { markPaid: true }, "Payment recorded")}
+                            >
+                              <Wallet className="h-4 w-4" aria-hidden="true" /> Mark as paid
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              disabled={!r.subscription || busyRow === r.id}
+                              onClick={() => void makeCustomPlan(r)}
+                            >
+                              <Sparkles className="h-4 w-4" aria-hidden="true" /> Dedicated plan
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              disabled={!r.business}
+                              onClick={() => {
+                                if (r.business) setPaletteTarget({ id: r.business.id, name: r.business.name });
+                              }}
+                            >
+                              <Palette className="h-4 w-4" aria-hidden="true" /> Palettes
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              disabled={!r.business}
+                              onClick={() => {
+                                if (!r.business) return;
+                                setDomainTarget({
+                                  id: r.business.id,
+                                  name: r.business.name,
+                                  credits: r.usage?.domainCredits ?? 0,
+                                  connected: r.usage?.domains ?? 0,
+                                });
+                              }}
+                            >
+                              <Globe className="h-4 w-4" aria-hidden="true" /> Custom domains
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
                             <DropdownMenuItem disabled={!r.business} onClick={() => askToggleStatus(r)}>
                               {r.business?.status === "SUSPENDED" ? (
                                 <Power className="h-4 w-4" aria-hidden="true" />
@@ -895,6 +1377,12 @@ function CustomersTab() {
                             >
                               <Trash2 className="h-4 w-4" aria-hidden="true" /> Delete website
                             </DropdownMenuItem>
+                            <DropdownMenuItem
+                              className="text-red-600 focus:bg-red-50 focus:text-red-600"
+                              onClick={() => { setDeleteTyped(""); setDeleteUser(r); }}
+                            >
+                              <Trash2 className="h-4 w-4" aria-hidden="true" /> Delete customer
+                            </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </TableCell>
@@ -904,10 +1392,396 @@ function CustomersTab() {
               </Table>
             </div>
           </div>
+          {totalPages > 1 ? (
+            <div className="mt-3 flex items-center justify-between gap-3">
+              <Button
+                variant="outline"
+                size="sm"
+                className="rounded-xl"
+                disabled={page === 0 || loading}
+                onClick={() => setPage((p) => Math.max(0, p - 1))}
+              >
+                <ChevronLeft className="h-4 w-4" aria-hidden="true" /> Previous
+              </Button>
+              <span className="text-xs text-muted-foreground">Page {page + 1} of {totalPages}</span>
+              <Button
+                variant="outline"
+                size="sm"
+                className="rounded-xl"
+                disabled={page + 1 >= totalPages || loading}
+                onClick={() => setPage((p) => p + 1)}
+              >
+                Next <ChevronRight className="h-4 w-4" aria-hidden="true" />
+              </Button>
+            </div>
+          ) : null}
           <ConfirmDialog req={confirm} onOpenChange={(o) => !o && setConfirm(null)} />
         </>
       )}
+      {/*
+        Account deletion is the one action here with no undo and no backup, so it
+        does not share the one-click ConfirmDialog. The admin has to type the
+        customer's email — enough friction that the wrong row cannot be deleted
+        by muscle memory.
+      */}
+      <Dialog
+        open={!!deleteUser}
+        onOpenChange={(o) => { if (!o && !deleting) { setDeleteUser(null); setDeleteTyped(""); } }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-red-600">Delete this customer permanently?</DialogTitle>
+            <DialogDescription asChild>
+              <div className="space-y-3 text-sm">
+                <p>
+                  This removes <strong>{deleteUser?.name || deleteUser?.email}</strong> and everything
+                  they own{deleteUser?.business ? <> — including the website <strong>{deleteUser.business.name}</strong>, its pages, photos, leads and analytics</> : null}.
+                  They will not be able to log in again.
+                </p>
+                {deleteUser?.usage?.leads ? (
+                  <p className="text-amber-700">
+                    {deleteUser.usage.leads} saved {deleteUser.usage.leads === 1 ? "enquiry" : "enquiries"} will
+                    be deleted with them. Export the leads first if you need them.
+                  </p>
+                ) : null}
+                {deleteUser?.subscription?.status === "ACTIVE" ? (
+                  <p className="text-amber-700">
+                    This customer has an active subscription. Their payment records and invoices are
+                    kept for your accounts, but cancel any recurring billing separately.
+                  </p>
+                ) : null}
+                <p className="text-muted-foreground">
+                  Payment history is never deleted. This cannot be undone — there is no backup.
+                </p>
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="delete-confirm-email">
+              Type <span className="font-mono text-foreground">{deleteUser?.email}</span> to confirm
+            </Label>
+            <Input
+              id="delete-confirm-email"
+              autoComplete="off"
+              value={deleteTyped}
+              onChange={(e) => setDeleteTyped(e.target.value)}
+              placeholder={deleteUser?.email}
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              disabled={deleting}
+              onClick={() => { setDeleteUser(null); setDeleteTyped(""); }}
+            >
+              Cancel
+            </Button>
+            <Button
+              className="bg-red-600 text-white hover:bg-red-700"
+              disabled={deleting || deleteTyped.trim().toLowerCase() !== (deleteUser?.email ?? "").toLowerCase()}
+              onClick={deleteCustomer}
+            >
+              {deleting ? "Deleting..." : "Delete permanently"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <CustomerPaletteDialog target={paletteTarget} onClose={() => setPaletteTarget(null)} />
+      <DomainCreditsDialog
+        target={domainTarget}
+        onClose={() => setDomainTarget(null)}
+        onSaved={() => {
+          setDomainTarget(null);
+          void load();
+        }}
+      />
+      <AddCustomerDialog
+        open={creating}
+        onClose={() => setCreating(false)}
+        onCreated={(created) => {
+          setCreating(false);
+          setCredentials({ email: created.email, password: created.password, heading: "Customer created" });
+          void load();
+        }}
+      />
+      <CredentialsDialog data={credentials} onClose={() => setCredentials(null)} />
     </div>
+  );
+}
+
+interface CustomerPaletteData {
+  business: { id: string; name: string };
+  plan: { name: string; maxPalettes: number } | null;
+  override: string[];
+  effective: string[];
+  source: "override" | "plan" | "default";
+  library: PaletteRow[];
+}
+
+/**
+ * Grant a customer the custom domains they have paid for.
+ *
+ * Domains are sold as an add-on rather than bundled into a plan, so this is the
+ * step that actually unlocks the feature for someone — after money has changed
+ * hands, outside the product. -1 means unlimited, for a customer on a bespoke
+ * arrangement.
+ */
+function DomainCreditsDialog({
+  target,
+  onClose,
+  onSaved,
+}: {
+  target: { id: string; name: string; credits: number; connected: number } | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  return (
+    <Dialog open={!!target} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        {target ? <DomainCreditsBody key={target.id} target={target} onSaved={onSaved} /> : null}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function DomainCreditsBody({
+  target,
+  onSaved,
+}: {
+  target: { id: string; name: string; credits: number; connected: number };
+  onSaved: () => void;
+}) {
+  const [value, setValue] = useState(String(target.credits));
+  const [saving, setSaving] = useState(false);
+
+  async function save() {
+    setSaving(true);
+    try {
+      await api.patch(`/api/admin/businesses/${target.id}`, { domainCredits: Number(value) });
+      toast({
+        title: "Domain allowance updated",
+        description: `${target.name} can now connect ${Number(value) === -1 ? "unlimited" : value} domain(s).`,
+      });
+      onSaved();
+    } catch (e) {
+      toast({ title: "Could not update", description: errMsg(e), variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle>Custom domains — {target.name}</DialogTitle>
+        <DialogDescription>
+          How many of their own domains this customer may connect. They have {target.connected}{" "}
+          connected right now.
+        </DialogDescription>
+      </DialogHeader>
+
+      <div className="space-y-3">
+        <div className="flex flex-wrap gap-2">
+          {[0, 1, 2, 3, -1].map((n) => (
+            <Button
+              key={n}
+              type="button"
+              size="sm"
+              variant={String(n) === value ? "default" : "outline"}
+              className="rounded-xl"
+              onClick={() => setValue(String(n))}
+            >
+              {n === -1 ? "Unlimited" : n === 0 ? "None" : n}
+            </Button>
+          ))}
+        </div>
+        <Input
+          type="number"
+          min={-1}
+          max={100}
+          className="rounded-xl"
+          aria-label="Domain allowance"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+        />
+        <p className="text-xs text-muted-foreground">
+          Lowering this below {target.connected} is refused — disconnect their domains first, so a
+          live site never goes dark as a side effect of an edit here.
+        </p>
+      </div>
+
+      <DialogFooter>
+        <Button disabled={saving || value === ""} onClick={() => void save()} className="rounded-xl">
+          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save allowance"}
+        </Button>
+      </DialogFooter>
+    </>
+  );
+}
+
+/**
+ * Tailor one customer's palette choices. With nothing ticked the customer
+ * follows their plan's allowance; ticking specific palettes pins their picker
+ * to exactly those, regardless of plan.
+ */
+function CustomerPaletteDialog({
+  target,
+  onClose,
+}: {
+  target: { id: string; name: string } | null;
+  onClose: () => void;
+}) {
+  return (
+    <Dialog open={!!target} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-lg">
+        {/* Keyed on the customer so opening a different one starts from scratch
+            instead of resetting state inside an effect. */}
+        {target ? <CustomerPaletteBody key={target.id} target={target} onClose={onClose} /> : null}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function CustomerPaletteBody({
+  target,
+  onClose,
+}: {
+  target: { id: string; name: string };
+  onClose: () => void;
+}) {
+  const [data, setData] = useState<CustomerPaletteData | null>(null);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .get<CustomerPaletteData>(`/api/admin/businesses/${target.id}/palettes`)
+      .then((d) => {
+        if (cancelled) return;
+        setData(d);
+        setSelected(d.override);
+      })
+      .catch((e) => {
+        if (!cancelled) setError(errMsg(e));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [target.id]);
+
+  function toggle(id: string) {
+    setSelected((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
+  }
+
+  async function save(ids: string[]) {
+    setSaving(true);
+    try {
+      await api.put(`/api/admin/businesses/${target.id}/palettes`, { paletteIds: ids });
+      toast({
+        title: ids.length ? "Palettes updated" : "Back to the plan allowance",
+        description: ids.length
+          ? `${target.name} can now choose from ${ids.length} palette${ids.length === 1 ? "" : "s"}.`
+          : `${target.name} follows their plan again.`,
+      });
+      onClose();
+    } catch (e) {
+      toast({ title: "Could not save", description: errMsg(e), variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const planAllowance = data?.plan
+    ? data.plan.maxPalettes === -1
+      ? `${data.plan.name}: all palettes`
+      : `${data.plan.name}: ${data.plan.maxPalettes} palettes`
+    : "No active plan";
+
+  return (
+    <>
+        <DialogHeader>
+          <DialogTitle>Palettes for {target.name}</DialogTitle>
+          <DialogDescription>
+            {planAllowance}. Tick palettes to give this customer a specific set instead, or clear the
+            selection to follow the plan.
+          </DialogDescription>
+        </DialogHeader>
+
+        {loading ? (
+          <div className="space-y-2">
+            {[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-12 rounded-lg" />)}
+          </div>
+        ) : error ? (
+          <ErrorState message={error} />
+        ) : data ? (
+          <>
+            <div className="max-h-72 space-y-1.5 overflow-y-auto pr-1">
+              {data.library.map((p) => {
+                const checked = selected.includes(p.id);
+                const byPlan = !selected.length && data.effective.includes(p.id);
+                return (
+                  <label
+                    key={p.id}
+                    className={
+                      "flex cursor-pointer items-center gap-3 rounded-lg border p-2.5 transition " +
+                      (checked ? "border-zinc-900 bg-muted" : "border-border hover:border-input")
+                    }
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggle(p.id)}
+                      className="h-4 w-4 shrink-0 accent-zinc-900"
+                    />
+                    <span className="flex shrink-0 overflow-hidden rounded-md ring-1 ring-black/5">
+                      {p.colors.map((c) => (
+                        <span key={c} className="h-7 w-3.5" style={{ backgroundColor: c }} />
+                      ))}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium text-foreground">{p.name}</span>
+                      <span className="block truncate text-xs text-muted-foreground">{p.mood}</span>
+                    </span>
+                    {byPlan ? (
+                      <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                        via plan
+                      </span>
+                    ) : null}
+                  </label>
+                );
+              })}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {selected.length
+                ? `${selected.length} palette${selected.length === 1 ? "" : "s"} pinned for this customer.`
+                : "Nothing pinned — the plan allowance applies."}
+            </p>
+          </>
+        ) : null}
+
+        <DialogFooter className="gap-2 sm:justify-between">
+          <Button
+            variant="ghost"
+            disabled={saving || !data || !data.override.length}
+            onClick={() => void save([])}
+          >
+            <RotateCcw className="h-4 w-4" aria-hidden="true" /> Follow plan
+          </Button>
+          <div className="flex gap-2">
+            <Button variant="ghost" onClick={onClose} disabled={saving}>Cancel</Button>
+            <Button onClick={() => void save(selected)} disabled={saving || !data}>
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Check className="h-4 w-4" aria-hidden="true" />}
+              Save
+            </Button>
+          </div>
+        </DialogFooter>
+    </>
   );
 }
 
@@ -915,12 +1789,13 @@ function CustomersTab() {
 
 interface PlanForm {
   name: string; tagline: string; priceMonthly: string; priceYearly: string;
-  features: string; maxPages: string; aiCredits: string; popular: boolean; active: boolean;
+  features: string; maxPages: string; aiCredits: string; maxPalettes: string;
+  popular: boolean; active: boolean;
 }
 
 const EMPTY_PLAN: PlanForm = {
   name: "", tagline: "", priceMonthly: "499", priceYearly: "4999", features: "",
-  maxPages: "10", aiCredits: "20", popular: false, active: true,
+  maxPages: "10", aiCredits: "20", maxPalettes: "-1", popular: false, active: true,
 };
 
 function PlansTab() {
@@ -998,8 +1873,8 @@ function PlansTab() {
       ) : plans.length === 0 ? (
         <EmptyState icon={Layers} title="No plans yet" hint="Create your first pricing plan to start selling." />
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {plans.map((p) => (
+        <PlanGroups plans={plans}>
+          {(p) => (
             <Card key={p.id} className="flex flex-col">
               <CardHeader className="flex-row items-start justify-between space-y-0 pb-3">
                 <div className="min-w-0">
@@ -1012,36 +1887,37 @@ function PlansTab() {
                       <Crown className="mr-1 h-3 w-3" aria-hidden="true" /> Popular
                     </Badge>
                   )}
-                  {!p.active && <Badge variant="outline" className="border-zinc-300 text-zinc-500">Inactive</Badge>}
+                  {!p.active && <Badge variant="outline" className="border-input text-muted-foreground">Inactive</Badge>}
                 </div>
               </CardHeader>
               <CardContent className="flex-1">
                 <div className="flex items-baseline gap-2">
-                  <span className="text-2xl font-bold tracking-tight text-zinc-900">{inr(p.priceMonthly)}</span>
-                  <span className="text-xs text-zinc-500">/month</span>
-                  <span className="ml-2 text-sm text-zinc-500">or {inr(p.priceYearly)}/yr</span>
+                  <span className="text-2xl font-bold tracking-tight text-foreground">{inr(p.priceMonthly)}</span>
+                  <span className="text-xs text-muted-foreground">/month</span>
+                  <span className="ml-2 text-sm text-muted-foreground">or {inr(p.priceYearly)}/yr</span>
                 </div>
                 <Separator className="my-3" />
                 {p.features.length === 0 ? (
-                  <p className="text-xs text-zinc-400">No features listed</p>
+                  <p className="text-xs text-muted-foreground">No features listed</p>
                 ) : (
                   <ul className="space-y-1.5">
                     {p.features.slice(0, 4).map((f, i) => (
-                      <li key={i} className="flex items-start gap-2 text-sm text-zinc-600">
+                      <li key={i} className="flex items-start gap-2 text-sm text-muted-foreground">
                         <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600" aria-hidden="true" />
                         <span className="line-clamp-1">{f}</span>
                       </li>
                     ))}
                     {p.features.length > 4 && (
-                      <li className="pl-5 text-xs text-zinc-400">+{p.features.length - 4} more</li>
+                      <li className="pl-5 text-xs text-muted-foreground">+{p.features.length - 4} more</li>
                     )}
                   </ul>
                 )}
-                <p className="mt-3 text-xs text-zinc-400">
-                  {p.maxPages === -1 ? "Unlimited pages" : `${p.maxPages} pages`} · {p.aiCredits} AI credits/mo
+                <p className="mt-3 text-xs text-muted-foreground">
+                  {p.maxPages === -1 ? "Unlimited pages" : `${p.maxPages} pages`} · {p.aiCredits} AI credits/mo ·{" "}
+                  {(p.maxPalettes ?? -1) === -1 ? "all palettes" : `${p.maxPalettes} palettes`}
                 </p>
               </CardContent>
-              <div className="flex justify-end gap-2 border-t border-zinc-100 px-4 py-3">
+              <div className="flex justify-end gap-2 border-t border-border px-4 py-3">
                 <Button
                   variant="outline"
                   size="sm"
@@ -1062,8 +1938,8 @@ function PlansTab() {
                 </Button>
               </div>
             </Card>
-          ))}
-        </div>
+          )}
+        </PlanGroups>
       )}
 
       <PlanDialog
@@ -1120,20 +1996,25 @@ function PlanFormBody({
           features: plan.features.join("\n"),
           maxPages: String(plan.maxPages),
           aiCredits: String(plan.aiCredits),
+          maxPalettes: String(plan.maxPalettes ?? -1),
           popular: plan.popular,
           active: plan.active,
         }
       : EMPTY_PLAN,
   );
   const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState("");
 
   function set<K extends keyof PlanForm>(key: K, value: PlanForm[K]) {
     setForm((f) => ({ ...f, [key]: value }));
   }
 
   async function save() {
+    setFormError("");
     if (!form.name.trim()) {
-      toast({ title: "Plan name is required", variant: "destructive" });
+      // Inline, not a toast: the problem is a field in this dialog, and a
+      // message in the corner of the screen does not point at it.
+      setFormError("Enter a name for the plan.");
       return;
     }
     const body = {
@@ -1144,6 +2025,7 @@ function PlanFormBody({
       features: form.features.split("\n").map((s) => s.trim()).filter(Boolean),
       maxPages: Math.trunc(Number(form.maxPages)) || 0,
       aiCredits: Math.trunc(Number(form.aiCredits)) || 0,
+      maxPalettes: Number.isFinite(Number(form.maxPalettes)) ? Math.trunc(Number(form.maxPalettes)) : -1,
       popular: form.popular,
       ...(isEdit ? { active: form.active } : {}),
     };
@@ -1226,7 +2108,7 @@ function PlanFormBody({
                 value={form.maxPages}
                 onChange={(e) => set("maxPages", e.target.value)}
               />
-              <p className="text-xs text-zinc-400">-1 means unlimited</p>
+              <p className="text-xs text-muted-foreground">-1 means unlimited</p>
             </div>
             <div className="grid gap-2">
               <Label htmlFor="plan-credits">AI credits</Label>
@@ -1238,25 +2120,38 @@ function PlanFormBody({
                 onChange={(e) => set("aiCredits", e.target.value)}
               />
             </div>
+            <div className="grid gap-2">
+              <Label htmlFor="plan-palettes">Colour palettes</Label>
+              <Input
+                id="plan-palettes"
+                type="number"
+                value={form.maxPalettes}
+                onChange={(e) => set("maxPalettes", e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                How many palettes this plan may pick from. -1 means the whole library.
+              </p>
+            </div>
           </div>
-          <div className="flex items-center justify-between rounded-lg border border-zinc-200 px-3 py-2.5">
+          <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5">
             <div>
               <Label htmlFor="plan-popular">Mark as Popular</Label>
-              <p className="text-xs text-zinc-400">Highlights the plan on the pricing grid</p>
+              <p className="text-xs text-muted-foreground">Highlights the plan on the pricing grid</p>
             </div>
             <Switch id="plan-popular" checked={form.popular} onCheckedChange={(v) => set("popular", v)} />
           </div>
           {isEdit && (
-            <div className="flex items-center justify-between rounded-lg border border-zinc-200 px-3 py-2.5">
+            <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5">
               <div>
                 <Label htmlFor="plan-active">Active</Label>
-                <p className="text-xs text-zinc-400">Inactive plans are hidden from checkout</p>
+                <p className="text-xs text-muted-foreground">Inactive plans are hidden from checkout</p>
               </div>
               <Switch id="plan-active" checked={form.active} onCheckedChange={(v) => set("active", v)} />
             </div>
           )}
         </div>
 
+        <FormError message={formError} />
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={saving}>
             Cancel
@@ -1364,7 +2259,7 @@ function TemplatesTab() {
               <div className={`relative flex h-28 items-end bg-gradient-to-br ${t.gradient} p-3`}>
                 <div className="absolute right-2.5 top-2.5 flex gap-1.5">
                   {t.premium && (
-                    <Badge className="border-0 bg-white/90 text-amber-700 hover:bg-white/90">
+                    <Badge className="border-0 bg-card/90 text-amber-700 hover:bg-card/90">
                       <Crown className="mr-1 h-3 w-3" aria-hidden="true" /> Premium
                     </Badge>
                   )}
@@ -1380,16 +2275,16 @@ function TemplatesTab() {
               </div>
               <CardContent className="p-4">
                 <div className="flex items-start justify-between gap-2">
-                  <p className="font-semibold text-zinc-900">{t.name}</p>
-                  <Badge variant="outline" className="shrink-0 border-zinc-200 bg-zinc-50 text-[10px] uppercase tracking-wide text-zinc-500">
+                  <p className="font-semibold text-foreground">{t.name}</p>
+                  <Badge variant="outline" className="shrink-0 border-border bg-muted text-[10px] uppercase tracking-wide text-muted-foreground">
                     {t.category}
                   </Badge>
                 </div>
-                <p className="mt-1.5 line-clamp-2 min-h-10 text-sm text-zinc-500">
+                <p className="mt-1.5 line-clamp-2 min-h-10 text-sm text-muted-foreground">
                   {t.description || "No description"}
                 </p>
               </CardContent>
-              <div className="flex justify-end gap-2 border-t border-zinc-100 px-4 py-3">
+              <div className="flex justify-end gap-2 border-t border-border px-4 py-3">
                 <Button
                   variant="outline"
                   size="sm"
@@ -1480,6 +2375,7 @@ function TemplateFormBody({
       : { name: "", category: "", description: "", premium: false, gradient: GRADIENTS[0], active: true },
   );
   const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState("");
 
   function set<K extends keyof TemplateForm>(key: K, value: TemplateForm[K]) {
     setForm((f) => ({ ...f, [key]: value }));
@@ -1490,7 +2386,7 @@ function TemplateFormBody({
 
   async function save() {
     if (form.name.trim().length < 2) {
-      toast({ title: "Template name must be at least 2 characters", variant: "destructive" });
+      setFormError("The template name needs at least 2 characters.");
       return;
     }
     const shared = {
@@ -1575,24 +2471,25 @@ function TemplateFormBody({
               </SelectContent>
             </Select>
           </div>
-          <div className="flex items-center justify-between rounded-lg border border-zinc-200 px-3 py-2.5">
+          <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5">
             <div>
               <Label htmlFor="tpl-premium">Premium</Label>
-              <p className="text-xs text-zinc-400">Premium templates can be restricted to paid plans</p>
+              <p className="text-xs text-muted-foreground">Premium templates can be restricted to paid plans</p>
             </div>
             <Switch id="tpl-premium" checked={form.premium} onCheckedChange={(v) => set("premium", v)} />
           </div>
           {isEdit && (
-            <div className="flex items-center justify-between rounded-lg border border-zinc-200 px-3 py-2.5">
+            <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5">
               <div>
                 <Label htmlFor="tpl-active">Active</Label>
-                <p className="text-xs text-zinc-400">Inactive templates are hidden from onboarding</p>
+                <p className="text-xs text-muted-foreground">Inactive templates are hidden from onboarding</p>
               </div>
               <Switch id="tpl-active" checked={form.active} onCheckedChange={(v) => set("active", v)} />
             </div>
           )}
         </div>
 
+        <FormError message={formError} />
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={saving}>
             Cancel
@@ -1689,11 +2586,11 @@ function CouponsTab() {
       ) : rows.length === 0 ? (
         <EmptyState icon={TicketPercent} title="No coupons yet" hint="Create a launch coupon to nudge early signups." />
       ) : (
-        <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
+        <div className="overflow-hidden rounded-xl border border-border bg-card">
           <div className="overflow-x-auto">
             <Table className="min-w-[760px]">
               <TableHeader>
-                <TableRow className="bg-zinc-50 hover:bg-zinc-50">
+                <TableRow className="bg-muted hover:bg-muted">
                   <TableHead>Code</TableHead>
                   <TableHead>Type</TableHead>
                   <TableHead>Value</TableHead>
@@ -1707,9 +2604,9 @@ function CouponsTab() {
                 {rows.map((c) => (
                   <TableRow key={c.id}>
                     <TableCell>
-                      <p className="font-mono text-sm font-semibold text-zinc-900">{c.code}</p>
+                      <p className="font-mono text-sm font-semibold text-foreground">{c.code}</p>
                       {c.description ? (
-                        <p className="max-w-[200px] truncate text-xs text-zinc-400" title={c.description}>
+                        <p className="max-w-[200px] truncate text-xs text-muted-foreground" title={c.description}>
                           {c.description}
                         </p>
                       ) : null}
@@ -1726,10 +2623,10 @@ function CouponsTab() {
                         {c.type}
                       </Badge>
                     </TableCell>
-                    <TableCell className="whitespace-nowrap text-sm font-medium text-zinc-800">
+                    <TableCell className="whitespace-nowrap text-sm font-medium text-foreground">
                       {c.type === "PERCENT" ? `${c.value}%` : inr(c.value)}
                     </TableCell>
-                    <TableCell className="whitespace-nowrap text-sm text-zinc-600">
+                    <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
                       {c.usedCount}/{c.maxUses}
                     </TableCell>
                     <TableCell>
@@ -1739,7 +2636,7 @@ function CouponsTab() {
                         aria-label={`Toggle ${c.code}`}
                       />
                     </TableCell>
-                    <TableCell className="whitespace-nowrap text-sm text-zinc-500">{fmtDate(c.expiresAt)}</TableCell>
+                    <TableCell className="whitespace-nowrap text-sm text-muted-foreground">{fmtDate(c.expiresAt)}</TableCell>
                     <TableCell className="text-right">
                       <Button
                         variant="ghost"
@@ -1795,15 +2692,17 @@ function CouponFormBody({ onClose, onSaved }: { onClose: () => void; onSaved: ()
     code: "", type: "PERCENT", value: "", description: "", maxUses: "100", expiresAt: "",
   });
   const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState("");
 
   async function save() {
     const value = Number(form.value) || 0;
+    setFormError("");
     if (!form.code.trim()) {
-      toast({ title: "Coupon code is required", variant: "destructive" });
+      setFormError("Enter the coupon code customers will type.");
       return;
     }
     if (value <= 0) {
-      toast({ title: "Discount value must be positive", variant: "destructive" });
+      setFormError("The discount has to be more than zero.");
       return;
     }
     const body: Record<string, unknown> = {
@@ -1901,6 +2800,7 @@ function CouponFormBody({ onClose, onSaved }: { onClose: () => void; onSaved: ()
           </div>
         </div>
 
+        <FormError message={formError} />
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={saving}>
             Cancel
@@ -1919,12 +2819,20 @@ function CouponFormBody({ onClose, onSaved }: { onClose: () => void; onSaved: ()
 interface PLeadRow {
   id: string; name: string; email: string; phone: string; businessType: string;
   message: string; source: string; status: string; createdAt: string;
+  followUpCount?: number;
+}
+
+interface FollowUp {
+  id: string;
+  note: string;
+  actor: string;
+  createdAt: string;
 }
 
 const P_LEAD_STATUSES = ["NEW", "CONTACTED", "CONVERTED", "CLOSED"] as const;
 
 const SOURCE_BADGE: Record<string, string> = {
-  CONTACT: "border-zinc-200 bg-zinc-100 text-zinc-600",
+  CONTACT: "border-border bg-muted text-muted-foreground",
   DEMO: "border-amber-200 bg-amber-50 text-amber-700",
   SALES: "border-emerald-200 bg-emerald-50 text-emerald-700",
 };
@@ -1932,6 +2840,7 @@ const SOURCE_BADGE: Record<string, string> = {
 function PlatformLeadsTab() {
   const [rows, setRows] = useState<PLeadRow[] | null>(null);
   const [err, setErr] = useState("");
+  const [followUpLead, setFollowUpLead] = useState<PLeadRow | null>(null);
 
   const load = useCallback(() => {
     return api
@@ -1977,18 +2886,19 @@ function PlatformLeadsTab() {
         />
       ) : (
         <>
-          <p className="mb-2 text-xs text-zinc-500">{rows.length} lead{rows.length === 1 ? "" : "s"}</p>
-          <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
+          <p className="mb-2 text-xs text-muted-foreground">{rows.length} lead{rows.length === 1 ? "" : "s"}</p>
+          <div className="overflow-hidden rounded-xl border border-border bg-card">
             <div className="overflow-x-auto">
               <Table className="min-w-[920px]">
                 <TableHeader>
-                  <TableRow className="bg-zinc-50 hover:bg-zinc-50">
+                  <TableRow className="bg-muted hover:bg-muted">
                     <TableHead>Lead</TableHead>
                     <TableHead>Contact</TableHead>
                     <TableHead>Business type</TableHead>
                     <TableHead>Message</TableHead>
                     <TableHead>Source</TableHead>
                     <TableHead>Status</TableHead>
+                    <TableHead>Follow-ups</TableHead>
                     <TableHead className="text-right">Date</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -1998,16 +2908,16 @@ function PlatformLeadsTab() {
                       <TableCell>
                         <div className="flex items-center gap-3">
                           <Initial text={l.name} />
-                          <p className="truncate text-sm font-medium text-zinc-900">{l.name}</p>
+                          <p className="truncate text-sm font-medium text-foreground">{l.name}</p>
                         </div>
                       </TableCell>
                       <TableCell>
-                        <p className="whitespace-nowrap text-sm text-zinc-700">{l.phone || "—"}</p>
-                        <p className="truncate text-xs text-zinc-400">{l.email || "—"}</p>
+                        <p className="whitespace-nowrap text-sm text-foreground">{l.phone || "—"}</p>
+                        <p className="truncate text-xs text-muted-foreground">{l.email || "—"}</p>
                       </TableCell>
-                      <TableCell className="whitespace-nowrap text-sm text-zinc-600">{l.businessType || "—"}</TableCell>
+                      <TableCell className="whitespace-nowrap text-sm text-muted-foreground">{l.businessType || "—"}</TableCell>
                       <TableCell
-                        className="max-w-[220px] truncate text-sm text-zinc-600"
+                        className="max-w-[220px] truncate text-sm text-muted-foreground"
                         title={l.message}
                       >
                         {l.message || "—"}
@@ -2031,7 +2941,18 @@ function PlatformLeadsTab() {
                           </SelectContent>
                         </Select>
                       </TableCell>
-                      <TableCell className="whitespace-nowrap text-right text-sm text-zinc-500">
+                      <TableCell>
+                        <Button
+                          size="sm"
+                          variant={l.followUpCount ? "outline" : "ghost"}
+                          className="h-8 gap-1.5 text-xs"
+                          onClick={() => setFollowUpLead(l)}
+                        >
+                          <MessageSquare className="h-3.5 w-3.5" aria-hidden="true" />
+                          {l.followUpCount ? `${l.followUpCount} note${l.followUpCount === 1 ? "" : "s"}` : "Add note"}
+                        </Button>
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap text-right text-sm text-muted-foreground">
                         {fmtDate(l.createdAt)}
                       </TableCell>
                     </TableRow>
@@ -2040,8 +2961,1237 @@ function PlatformLeadsTab() {
               </Table>
             </div>
           </div>
+          <FollowUpDialog
+            lead={followUpLead}
+            onClose={() => setFollowUpLead(null)}
+            onChanged={() => void load()}
+          />
         </>
       )}
+    </div>
+  );
+}
+
+
+/* ================================ APPEARANCE ================================ */
+
+interface PaletteRow {
+  id: string;
+  name: string;
+  mood: string;
+  colors: [string, string, string];
+  scope: "BUSINESS" | "PLATFORM" | "BOTH";
+  active: boolean;
+  builtIn: boolean;
+  sortOrder: number;
+}
+
+const SCOPE_LABEL: Record<string, string> = {
+  BOTH: "Customers + WebSetu",
+  BUSINESS: "Customer websites",
+  PLATFORM: "WebSetu pages",
+};
+
+const EMPTY_PALETTE = {
+  name: "",
+  mood: "",
+  primary: "#059669",
+  secondary: "#064e3b",
+  accent: "#f59e0b",
+  scope: "BOTH" as PaletteRow["scope"],
+};
+
+/**
+ * Palette management. One library feeds both pickers: the palettes customers
+ * choose from for their own website, and the palette WebSetu's landing + login
+ * pages use. Selecting a platform palette applies it immediately — there is no
+ * separate save step.
+ */
+function AppearanceTab() {
+  const storeTheme = useApp((s) => s.platformTheme);
+  const setPlatformTheme = useApp((s) => s.setPlatformTheme);
+
+  const [palettes, setPalettes] = useState<PaletteRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [applying, setApplying] = useState<string | null>(null);
+  const [editing, setEditing] = useState<PaletteRow | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [confirm, setConfirm] = useState<ConfirmReq | null>(null);
+
+  // No synchronous setState here: the component already starts in the loading
+  // state, and the retry button sets it back before calling this.
+  const load = useCallback(async () => {
+    try {
+      const [lib, theme] = await Promise.all([
+        api.get<{ palettes: PaletteRow[] }>("/api/admin/palettes"),
+        api.get<{ theme: typeof storeTheme }>("/api/settings/theme"),
+      ]);
+      setPalettes(lib.palettes);
+      setPlatformTheme(theme.theme);
+    } catch (e) {
+      setError(errMsg(e));
+    } finally {
+      setLoading(false);
+    }
+  }, [setPlatformTheme]);
+
+  useEffect(() => {
+    // Fetch on mount — see the note on the other loader effects: the flag is
+    // set once, before the first await.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void load();
+  }, [load]);
+
+  const platformOptions = useMemo(
+    () => palettes.filter((p) => p.active && (p.scope === "BOTH" || p.scope === "PLATFORM")),
+    [palettes],
+  );
+
+  /** Click = apply. The store updates first so the preview and the rest of the
+   *  app react instantly; a failed save rolls it back. */
+  async function applyPlatform(p: PaletteRow) {
+    const previous = storeTheme;
+    setApplying(p.id);
+    setPlatformTheme({ palette: p.name, primary: p.colors[0], secondary: p.colors[1], accent: p.colors[2] });
+    try {
+      const res = await api.put<{ theme: typeof storeTheme }>("/api/settings/theme", { palette: p.name });
+      setPlatformTheme(res.theme);
+      toast({ title: "Applied " + p.name, description: "The landing and login pages now use this palette." });
+    } catch (e) {
+      setPlatformTheme(previous);
+      toast({ title: "Could not apply the palette", description: errMsg(e), variant: "destructive" });
+    } finally {
+      setApplying(null);
+    }
+  }
+
+  async function toggleActive(p: PaletteRow, active: boolean) {
+    setPalettes((rows) => rows.map((r) => (r.id === p.id ? { ...r, active } : r)));
+    try {
+      await api.put(`/api/admin/palettes/${p.id}`, { active });
+      toast({ title: active ? "Palette enabled" : "Palette retired", description: p.name });
+    } catch (e) {
+      setPalettes((rows) => rows.map((r) => (r.id === p.id ? { ...r, active: !active } : r)));
+      toast({ title: "Could not update the palette", description: errMsg(e), variant: "destructive" });
+    }
+  }
+
+  function askDelete(p: PaletteRow) {
+    setConfirm({
+      title: p.builtIn ? "Retire this palette?" : "Delete this palette?",
+      description: p.builtIn
+        ? `"${p.name}" is built in, so it is retired from the pickers rather than deleted. You can enable it again later.`
+        : `"${p.name}" is removed from both pickers. Websites already using these colours keep them.`,
+      confirmLabel: p.builtIn ? "Retire" : "Delete",
+      destructive: true,
+      run: async () => {
+        try {
+          await api.del(`/api/admin/palettes/${p.id}`);
+          toast({ title: p.builtIn ? "Palette retired" : "Palette deleted", description: p.name });
+          await load();
+        } catch (e) {
+          toast({ title: "Could not remove the palette", description: errMsg(e), variant: "destructive" });
+        }
+      },
+    });
+  }
+
+  return (
+    <div className="space-y-6">
+      <TabHeader
+        title="Appearance"
+        desc="One palette library for customer websites and for WebSetu's own landing and login pages."
+        action={
+          <Button onClick={() => setCreating(true)}>
+            <Plus className="h-4 w-4" aria-hidden="true" /> Add palette
+          </Button>
+        }
+      />
+
+      {error ? (
+        <ErrorState
+          message={error}
+          onRetry={() => {
+            setLoading(true);
+            setError("");
+            void load();
+          }}
+        />
+      ) : null}
+
+      {/* -------------------------- platform palette -------------------------- */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">WebSetu landing &amp; login</CardTitle>
+          <CardDescription>
+            Click a palette to apply it right away. Currently live:{" "}
+            <span className="font-medium text-foreground">{storeTheme.palette}</span>
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {loading ? (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {[0, 1, 2, 3, 4, 5].map((i) => <Skeleton key={i} className="h-20 rounded-xl" />)}
+            </div>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {platformOptions.map((p) => {
+                const live = storeTheme.palette === p.name;
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    aria-pressed={live}
+                    disabled={applying !== null}
+                    onClick={() => void applyPlatform(p)}
+                    className={
+                      "flex items-center gap-3 rounded-xl border p-3 text-left transition disabled:opacity-60 " +
+                      (live
+                        ? "border-zinc-900 bg-muted ring-2 ring-zinc-900/10"
+                        : "border-border hover:border-zinc-400 hover:bg-muted")
+                    }
+                  >
+                    <span className="flex shrink-0 overflow-hidden rounded-lg ring-1 ring-black/5">
+                      {p.colors.map((c) => (
+                        <span key={c} className="h-10 w-4" style={{ backgroundColor: c }} />
+                      ))}
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-semibold text-foreground">{p.name}</span>
+                      <span className="block truncate text-xs text-muted-foreground">{p.mood || SCOPE_LABEL[p.scope]}</span>
+                    </span>
+                    {applying === p.id ? (
+                      <Loader2 className="ml-auto h-4 w-4 shrink-0 animate-spin text-muted-foreground" aria-hidden="true" />
+                    ) : live ? (
+                      <Check className="ml-auto h-4 w-4 shrink-0 text-foreground" aria-hidden="true" />
+                    ) : null}
+                  </button>
+                );
+              })}
+              {!platformOptions.length ? (
+                <div className="sm:col-span-2 lg:col-span-3">
+                  <EmptyState icon={Palette} title="No palettes available for WebSetu pages"
+                    hint="Add one, or set an existing palette's scope to include WebSetu." />
+                </div>
+              ) : null}
+            </div>
+          )}
+
+          <Separator />
+
+          {/* Rendered with the same class names the real pages use, so the
+              preview shows exactly what the theme layer produces. */}
+          <div className="ws-theme space-y-3" style={themeVars(storeTheme) as React.CSSProperties}>
+            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Live preview</p>
+            <div className="rounded-2xl bg-gradient-to-br from-emerald-600 to-teal-800 p-6 text-white">
+              <p className="text-lg font-bold">Bring your business online today.</p>
+              <p className="mt-1 text-sm text-emerald-100">Launch in 15 minutes · Leads + WhatsApp built in</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white">Log In</span>
+              <span className="rounded-lg bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700">Get started</span>
+              <span className="text-sm font-medium text-emerald-700">Learn more</span>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* --------------------------- palette library --------------------------- */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Palette library</CardTitle>
+          <CardDescription>
+            Palettes scoped to customer websites appear in the onboarding wizard and in every customer&apos;s
+            branding panel. Retiring one leaves existing websites untouched.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {loading ? (
+            <TableSkeleton rows={5} />
+          ) : (
+            <div className="space-y-2">
+              {palettes.map((p) => (
+                <div
+                  key={p.id}
+                  className={
+                    "flex flex-wrap items-center gap-3 rounded-xl border p-3 " +
+                    (p.active ? "border-border" : "border-dashed border-border bg-muted/60 opacity-70")
+                  }
+                >
+                  <span className="flex shrink-0 overflow-hidden rounded-lg ring-1 ring-black/5">
+                    {p.colors.map((c) => (
+                      <span key={c} className="h-9 w-4" style={{ backgroundColor: c }} />
+                    ))}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold text-foreground">
+                      {p.name}
+                      {p.builtIn ? <span className="ml-2 text-[11px] font-medium text-muted-foreground">built-in</span> : null}
+                    </p>
+                    <p className="truncate text-xs text-muted-foreground">
+                      {p.mood ? p.mood + " · " : ""}{SCOPE_LABEL[p.scope]} · {p.colors.join(" ")}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <Switch
+                      checked={p.active}
+                      aria-label={`Show ${p.name} in the pickers`}
+                      onCheckedChange={(v) => void toggleActive(p, v)}
+                    />
+                    <Button size="sm" variant="ghost" aria-label={`Edit ${p.name}`} onClick={() => setEditing(p)}>
+                      <Pencil className="h-4 w-4" aria-hidden="true" />
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      aria-label={`Remove ${p.name}`}
+                      className="text-red-600 hover:bg-red-50 hover:text-red-700"
+                      onClick={() => askDelete(p)}
+                    >
+                      <Trash2 className="h-4 w-4" aria-hidden="true" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <PaletteDialog
+        open={creating || !!editing}
+        palette={editing}
+        onClose={() => {
+          setCreating(false);
+          setEditing(null);
+        }}
+        onSaved={() => {
+          setCreating(false);
+          setEditing(null);
+          void load();
+        }}
+      />
+      <ConfirmDialog req={confirm} onOpenChange={(open) => !open && setConfirm(null)} />
+    </div>
+  );
+}
+
+function PaletteDialog({
+  open,
+  palette,
+  onClose,
+  onSaved,
+}: {
+  open: boolean;
+  palette: PaletteRow | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{palette ? "Edit palette" : "Add palette"}</DialogTitle>
+          <DialogDescription>
+            Three colours: primary for buttons and links, secondary for dark backgrounds, accent for highlights.
+          </DialogDescription>
+        </DialogHeader>
+        {open ? <PaletteFormBody key={palette?.id ?? "new"} palette={palette} onClose={onClose} onSaved={onSaved} /> : null}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function PaletteFormBody({
+  palette,
+  onClose,
+  onSaved,
+}: {
+  palette: PaletteRow | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [form, setForm] = useState(
+    palette
+      ? {
+          name: palette.name,
+          mood: palette.mood,
+          primary: palette.colors[0],
+          secondary: palette.colors[1],
+          accent: palette.colors[2],
+          scope: palette.scope,
+        }
+      : EMPTY_PALETTE,
+  );
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const HEX = /^#[0-9a-fA-F]{6}$/;
+
+  async function save() {
+    setErr("");
+    if (form.name.trim().length < 2) return setErr("Give the palette a name of at least 2 characters.");
+    for (const [label, value] of [["Primary", form.primary], ["Secondary", form.secondary], ["Accent", form.accent]] as const) {
+      if (!HEX.test(value)) return setErr(`${label} must be a 6-digit hex colour like #059669.`);
+    }
+    setBusy(true);
+    try {
+      const body = {
+        name: form.name.trim(),
+        mood: form.mood.trim(),
+        primary: form.primary,
+        secondary: form.secondary,
+        accent: form.accent,
+        scope: form.scope,
+      };
+      if (palette) await api.put(`/api/admin/palettes/${palette.id}`, body);
+      else await api.post("/api/admin/palettes", body);
+      toast({ title: palette ? "Palette updated" : "Palette added", description: body.name });
+      onSaved();
+    } catch (e) {
+      const msg = errMsg(e);
+      setErr(msg);
+      toast({ title: "Could not save the palette", description: msg, variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="space-y-1.5">
+          <Label htmlFor="palette-name">Name</Label>
+          <Input
+            id="palette-name"
+            value={form.name}
+            onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+            placeholder="Ocean Blue"
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="palette-mood">Best for</Label>
+          <Input
+            id="palette-mood"
+            value={form.mood}
+            onChange={(e) => setForm((f) => ({ ...f, mood: e.target.value }))}
+            placeholder="Travel · Hotels"
+          />
+        </div>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-3">
+        {([
+          ["primary", "Primary"],
+          ["secondary", "Secondary"],
+          ["accent", "Accent"],
+        ] as const).map(([key, label]) => (
+          <div key={key} className="space-y-1.5">
+            <Label htmlFor={`palette-${key}`}>{label}</Label>
+            <div className="flex items-center gap-2">
+              <input
+                type="color"
+                aria-label={`${label} colour picker`}
+                value={HEX.test(form[key]) ? form[key] : "#000000"}
+                onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
+                className="h-9 w-9 shrink-0 cursor-pointer rounded-lg border border-border bg-card p-0.5"
+              />
+              <Input
+                id={`palette-${key}`}
+                value={form[key]}
+                onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value.trim() }))}
+                className="font-mono text-xs"
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="space-y-1.5">
+        <Label htmlFor="palette-scope">Available in</Label>
+        <Select value={form.scope} onValueChange={(v) => setForm((f) => ({ ...f, scope: v as PaletteRow["scope"] }))}>
+          <SelectTrigger id="palette-scope">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="BOTH">Customer websites + WebSetu pages</SelectItem>
+            <SelectItem value="BUSINESS">Customer websites only</SelectItem>
+            <SelectItem value="PLATFORM">WebSetu landing &amp; login only</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      {/* preview */}
+      <div className="rounded-xl border p-3">
+        <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Preview</p>
+        <div
+          className="rounded-lg p-4 text-white"
+          style={{ background: `linear-gradient(135deg, ${form.primary}, ${form.secondary})` }}
+        >
+          <p className="text-sm font-bold">{form.name || "Your palette"}</p>
+          <p className="mt-2 inline-block rounded-md px-3 py-1 text-xs font-semibold" style={{ backgroundColor: form.accent, color: "#1c1917" }}>
+            Call to action
+          </p>
+        </div>
+      </div>
+
+      {err ? <p className="text-xs font-medium text-red-600">{err}</p> : null}
+
+      <DialogFooter>
+        <Button variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button>
+        <Button onClick={() => void save()} disabled={busy}>
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Check className="h-4 w-4" aria-hidden="true" />}
+          {palette ? "Save changes" : "Add palette"}
+        </Button>
+      </DialogFooter>
+    </div>
+  );
+}
+
+
+/* ============================ CUSTOMER PROVISIONING ========================= */
+
+const BUSINESS_CATEGORIES = [
+  "Electrician", "Plumber", "Restaurant", "Cafe", "Clinic", "Dentist", "Salon", "Gym",
+  "Real Estate", "Manufacturer", "Wholesaler", "Retail Store", "School", "Consultant", "Other",
+];
+
+/**
+ * Create a customer account on their behalf. With a business name filled in the
+ * tenant is provisioned end to end — business, generated website and a
+ * subscription — so the customer can log straight into a working dashboard.
+ */
+function AddCustomerDialog({
+  open,
+  onClose,
+  onCreated,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onCreated: (created: { email: string; password: string }) => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Add customer</DialogTitle>
+          <DialogDescription>
+            Creates the login and, optionally, the whole website so they can start from a working dashboard.
+          </DialogDescription>
+        </DialogHeader>
+        {open ? <AddCustomerBody onClose={onClose} onCreated={onCreated} /> : null}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function AddCustomerBody({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void;
+  onCreated: (created: { email: string; password: string }) => void;
+}) {
+  const [form, setForm] = useState({
+    name: "",
+    email: "",
+    password: "",
+    businessName: "",
+    category: "",
+    phone: "",
+    city: "",
+    planId: "",
+    cycle: "MONTHLY",
+    trialDays: String(TRIAL_DAYS),
+  });
+  const [plans, setPlans] = useState<Plan[]>([]);
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .get<Plan[]>("/api/admin/plans")
+      .then((d) => {
+        if (!cancelled) setPlans(d.filter((p) => p.active && !p.customForBusinessId));
+      })
+      .catch(() => {
+        /* the form still works: the server falls back to the entry plan */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const set = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }));
+
+  async function submit() {
+    setErr("");
+    if (form.name.trim().length < 2) return setErr("Enter the customer's full name.");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) return setErr("Enter a valid email address.");
+    if (form.password && form.password.length < 8) return setErr("A password you set must be at least 8 characters.");
+    if (form.businessName.trim() && !form.category) return setErr("Choose a business category.");
+
+    // disabled={busy} only takes effect on the next render, so a double click
+    // would create the customer — and their website — twice.
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    try {
+      const created = await api.post<{ email: string; password: string }>("/api/admin/customers", {
+        name: form.name.trim(),
+        email: form.email.trim(),
+        password: form.password || undefined,
+        businessName: form.businessName.trim() || undefined,
+        category: form.category || undefined,
+        phone: form.phone.trim() || undefined,
+        city: form.city.trim() || undefined,
+        planId: form.planId || undefined,
+        cycle: form.cycle,
+        trialDays: Number(form.trialDays) || 0,
+      });
+      onCreated(created);
+      // Stay latched: the dialog closes with an animation, and a click landing
+      // during it would create a second customer and a second website.
+      return;
+    } catch (e) {
+      const msg = errMsg(e);
+      setErr(msg);
+      toast({ title: "Could not create the customer", description: msg, variant: "destructive" });
+      busyRef.current = false;
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="space-y-4">
+        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Account</p>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-2">
+            <Label htmlFor="cust-name">Full name</Label>
+            <Input id="cust-name" value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="Ramesh Sharma" />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="cust-email">Email</Label>
+            <Input id="cust-email" type="email" value={form.email} onChange={(e) => set("email", e.target.value)} placeholder="ramesh@business.in" />
+          </div>
+        </div>
+        <div className="grid gap-2">
+          <Label htmlFor="cust-password">Password</Label>
+          <Input
+            id="cust-password"
+            value={form.password}
+            onChange={(e) => set("password", e.target.value)}
+            placeholder="Leave blank to generate one"
+          />
+          <p className="text-xs text-muted-foreground">
+            Whatever is used here is shown to you once after creating the account, then only stored hashed.
+          </p>
+        </div>
+      </div>
+
+      <Separator />
+
+      <div className="space-y-4">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Business (optional)</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Fill this in to create their website too. Leave it empty and they will run the setup wizard themselves.
+          </p>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-2">
+            <Label htmlFor="cust-business">Business name</Label>
+            <Input id="cust-business" value={form.businessName} onChange={(e) => set("businessName", e.target.value)} placeholder="Sharma Electricals" />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="cust-category">Category</Label>
+            <Select value={form.category} onValueChange={(v) => set("category", v)}>
+              <SelectTrigger id="cust-category">
+                <SelectValue placeholder="Choose one" />
+              </SelectTrigger>
+              <SelectContent>
+                {BUSINESS_CATEGORIES.map((c) => (
+                  <SelectItem key={c} value={c}>{c}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="cust-phone">Phone</Label>
+            <Input id="cust-phone" type="tel" inputMode="tel" autoComplete="tel" value={form.phone} onChange={(e) => set("phone", e.target.value)} placeholder="+91 90000 00000" />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="cust-city">City</Label>
+            <Input id="cust-city" value={form.city} onChange={(e) => set("city", e.target.value)} placeholder="Pune" />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="cust-plan">Plan</Label>
+            <Select value={form.planId} onValueChange={(v) => set("planId", v)}>
+              <SelectTrigger id="cust-plan">
+                <SelectValue placeholder="Entry plan" />
+              </SelectTrigger>
+              <SelectContent>
+                {plans.map((p) => (
+                  <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="cust-trial">Trial days</Label>
+            <Input
+              id="cust-trial"
+              type="number"
+              min={0}
+              value={form.trialDays}
+              onChange={(e) => set("trialDays", e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">0 starts the plan as active immediately.</p>
+          </div>
+        </div>
+      </div>
+
+      {err ? <p className="text-xs font-medium text-red-600">{err}</p> : null}
+
+      <DialogFooter>
+        <Button variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button>
+        <Button onClick={() => void submit()} disabled={busy}>
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <UserPlus className="h-4 w-4" aria-hidden="true" />}
+          Create customer
+        </Button>
+      </DialogFooter>
+    </div>
+  );
+}
+
+/**
+ * One-time credential hand-off. Passwords are stored hashed, so this is the only
+ * moment the value can be read — the dialog says so plainly.
+ */
+function CredentialsDialog({
+  data,
+  onClose,
+}: {
+  data: { email: string; password: string; heading: string } | null;
+  onClose: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  async function copy() {
+    if (!data) return;
+    try {
+      await navigator.clipboard.writeText(`${data.email} / ${data.password}`);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast({ title: "Could not copy", description: "Select the text and copy it manually.", variant: "destructive" });
+    }
+  }
+
+  return (
+    <Dialog open={!!data} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{data?.heading}</DialogTitle>
+          <DialogDescription>
+            Copy these now and send them to the customer. The password is stored hashed, so it cannot be shown again —
+            you can only issue a new one.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-2 rounded-xl border border-border bg-muted p-4">
+          <div>
+            <p className="text-xs font-medium text-muted-foreground">Email</p>
+            <p className="font-mono text-sm text-foreground">{data?.email}</p>
+          </div>
+          <div>
+            <p className="text-xs font-medium text-muted-foreground">Password</p>
+            <p className="font-mono text-sm text-foreground">{data?.password}</p>
+          </div>
+        </div>
+        <DialogFooter className="sm:justify-between">
+          <Button variant="outline" onClick={() => void copy()}>
+            {copied ? <Check className="h-4 w-4" aria-hidden="true" /> : <Download className="h-4 w-4" aria-hidden="true" />}
+            {copied ? "Copied" : "Copy both"}
+          </Button>
+          <Button onClick={onClose}>Done</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+
+/**
+ * Plans render in two groups: the plans on public pricing, and plans created for
+ * a single customer (Customers -> Dedicated plan), which are never sold openly.
+ */
+function PlanGroups({
+  plans,
+  children,
+}: {
+  plans: Plan[];
+  children: (plan: Plan) => React.ReactNode;
+}) {
+  const standard = plans.filter((p) => !p.customForBusinessId);
+  const custom = plans.filter((p) => p.customForBusinessId);
+
+  return (
+    <div className="space-y-8">
+      <section>
+        <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Standard plans</p>
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{standard.map(children)}</div>
+      </section>
+
+      {custom.length ? (
+        <section>
+          <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Dedicated plans (one customer each)
+          </p>
+          <p className="mb-3 text-xs text-muted-foreground">
+            Hidden from public pricing. Editing one affects only the customer it belongs to.
+          </p>
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{custom.map(children)}</div>
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
+
+/**
+ * Follow-up trail for one platform enquiry. A status dropdown alone loses the
+ * detail that matters when chasing a sale: who called, when, and what was said.
+ */
+function FollowUpDialog({
+  lead,
+  onClose,
+  onChanged,
+}: {
+  lead: PLeadRow | null;
+  onClose: () => void;
+  onChanged: () => void;
+}) {
+  return (
+    <Dialog open={!!lead} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
+        {lead ? <FollowUpBody key={lead.id} lead={lead} onChanged={onChanged} /> : null}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function FollowUpBody({ lead, onChanged }: { lead: PLeadRow; onChanged: () => void }) {
+  const [items, setItems] = useState<FollowUp[] | null>(null);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const load = useCallback(async () => {
+    try {
+      const d = await api.get<{ followUps: FollowUp[] }>(`/api/admin/platform-leads/${lead.id}/follow-ups`);
+      setItems(d.followUps);
+      setError("");
+    } catch (e) {
+      setError(errMsg(e));
+      setItems([]);
+    }
+  }, [lead.id]);
+
+  useEffect(() => {
+    // Fetch on mount: `load` flips its own loading flag before its first
+    // await, which the rule sees as a synchronous setState. That is one extra
+    // render on mount, not a cascade.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void load();
+  }, [load]);
+
+  async function add() {
+    if (note.trim().length < 2) return setError("Write what happened on this follow-up.");
+    setBusy(true);
+    setError("");
+    try {
+      await api.post(`/api/admin/platform-leads/${lead.id}/follow-ups`, { note: note.trim() });
+      setNote("");
+      await load();
+      onChanged();
+      toast({ title: "Follow-up saved", description: lead.name });
+    } catch (e) {
+      setError(errMsg(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove(id: string) {
+    try {
+      await api.del(`/api/admin/platform-leads/${lead.id}/follow-ups?noteId=${id}`);
+      await load();
+      onChanged();
+    } catch (e) {
+      toast({ title: "Could not delete the note", description: errMsg(e), variant: "destructive" });
+    }
+  }
+
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle>{lead.name}</DialogTitle>
+        <DialogDescription>
+          {[lead.phone, lead.email, lead.businessType].filter(Boolean).join(" · ") || "No contact details"}
+        </DialogDescription>
+      </DialogHeader>
+
+      {lead.message ? (
+        <p className="rounded-xl bg-muted p-3 text-sm text-foreground ring-1 ring-zinc-200">“{lead.message}”</p>
+      ) : null}
+
+      <div className="space-y-2">
+        <Label htmlFor="follow-up-note">Add a follow-up</Label>
+        <Textarea
+          id="follow-up-note"
+          rows={3}
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          placeholder="Called — asked for a demo on Friday, wants the Business plan."
+        />
+        {error ? <p className="text-xs font-medium text-red-600">{error}</p> : null}
+        <Button onClick={() => void add()} disabled={busy} className="w-full sm:w-auto">
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Plus className="h-4 w-4" aria-hidden="true" />}
+          Save follow-up
+        </Button>
+        <p className="text-xs text-muted-foreground">
+          Saving the first note moves a new lead to Contacted, since that is what it means.
+        </p>
+      </div>
+
+      <Separator />
+
+      {!items ? (
+        <div className="space-y-2">
+          {[0, 1].map((i) => <Skeleton key={i} className="h-14 rounded-lg" />)}
+        </div>
+      ) : items.length === 0 ? (
+        <p className="py-4 text-center text-sm text-muted-foreground">No follow-ups recorded yet.</p>
+      ) : (
+        <ol className="space-y-2">
+          {items.map((f) => (
+            <li key={f.id} className="rounded-xl border border-border p-3">
+              <div className="flex items-start justify-between gap-3">
+                <p className="whitespace-pre-line text-sm text-foreground">{f.note}</p>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  aria-label="Delete this follow-up"
+                  className="shrink-0 text-red-600 hover:bg-red-50 hover:text-red-700"
+                  onClick={() => void remove(f.id)}
+                >
+                  <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                </Button>
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {f.actor ? `${f.actor} · ` : ""}
+                {new Date(f.createdAt).toLocaleString("en-IN")}
+              </p>
+            </li>
+          ))}
+        </ol>
+      )}
+    </>
+  );
+}
+
+
+/* ================================== BLOG =================================== */
+
+interface PostRow {
+  id: string;
+  title: string;
+  slug: string;
+  excerpt: string;
+  content: string;
+  cover: string;
+  author: string;
+  tags: string;
+  published: boolean;
+  publishedAt: string | null;
+  updatedAt: string;
+}
+
+/**
+ * WebSetu's own blog. Tenants have their own per-business posts; this is the
+ * platform's marketing content, served at /blog with real indexable URLs.
+ */
+function BlogTab() {
+  const [rows, setRows] = useState<PostRow[] | null>(null);
+  const [err, setErr] = useState("");
+  const [editing, setEditing] = useState<PostRow | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [confirm, setConfirm] = useState<ConfirmReq | null>(null);
+  const [busyRow, setBusyRow] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    return api
+      .get<PostRow[]>("/api/admin/posts")
+      .then((d) => {
+        setRows(d);
+        setErr("");
+      })
+      .catch((e: unknown) => setErr(errMsg(e)));
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function togglePublished(post: PostRow, published: boolean) {
+    setBusyRow(post.id);
+    setRows((prev) => (prev ? prev.map((r) => (r.id === post.id ? { ...r, published } : r)) : prev));
+    try {
+      await api.put(`/api/admin/posts/${post.id}`, { published });
+      toast({
+        title: published ? "Post published" : "Post moved to drafts",
+        description: published ? `Live at /blog/${post.slug}` : post.title,
+      });
+      await load();
+    } catch (e) {
+      setRows((prev) => (prev ? prev.map((r) => (r.id === post.id ? { ...r, published: !published } : r)) : prev));
+      toast({ title: "Could not update the post", description: errMsg(e), variant: "destructive" });
+    } finally {
+      setBusyRow(null);
+    }
+  }
+
+  function askDelete(post: PostRow) {
+    setConfirm({
+      title: "Delete this post?",
+      description: `"${post.title}" will be removed from the blog permanently.`,
+      confirmLabel: "Delete",
+      destructive: true,
+      run: () => {
+        void api
+          .del(`/api/admin/posts/${post.id}`)
+          .then(() => {
+            toast({ title: "Post deleted", description: post.title });
+            return load();
+          })
+          .catch((e: unknown) => toast({ title: "Delete failed", description: errMsg(e), variant: "destructive" }));
+      },
+    });
+  }
+
+  return (
+    <div>
+      <TabHeader
+        title="Blog"
+        desc="WebSetu's own posts, published at /blog for search engines to index."
+        action={
+          <div className="flex flex-wrap items-center gap-2">
+            <a
+              href="/blog"
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex h-9 items-center gap-2 rounded-xl border border-border px-3 text-sm font-medium text-foreground hover:bg-muted"
+            >
+              <ExternalLink className="h-4 w-4" aria-hidden="true" /> View blog
+            </a>
+            <Button className="rounded-xl" onClick={() => setCreating(true)}>
+              <Plus className="h-4 w-4" aria-hidden="true" /> New post
+            </Button>
+          </div>
+        }
+      />
+
+      {err && !rows ? (
+        <ErrorState message={err} onRetry={() => void load()} />
+      ) : !rows ? (
+        <TableSkeleton rows={4} />
+      ) : rows.length === 0 ? (
+        <EmptyState icon={Newspaper} title="No posts yet" hint="Write your first post to start pulling in search traffic." />
+      ) : (
+        <div className="space-y-2">
+          {rows.map((post) => (
+            <div key={post.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-card p-3">
+              {post.cover ? (
+                <img src={post.cover} alt="" className="h-14 w-20 shrink-0 rounded-lg object-cover" />
+              ) : (
+                <span className="flex h-14 w-20 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                  <Newspaper className="h-5 w-5" aria-hidden="true" />
+                </span>
+              )}
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-semibold text-foreground">{post.title}</p>
+                <p className="truncate text-xs text-muted-foreground">
+                  /blog/{post.slug}
+                  {post.author ? ` · ${post.author}` : ""}
+                  {post.publishedAt ? ` · ${fmtDate(post.publishedAt)}` : " · draft"}
+                </p>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Badge
+                  variant="outline"
+                  className={post.published ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-border bg-muted text-muted-foreground"}
+                >
+                  {post.published ? "Published" : "Draft"}
+                </Badge>
+                <Switch
+                  checked={post.published}
+                  disabled={busyRow === post.id}
+                  aria-label={`Publish ${post.title}`}
+                  onCheckedChange={(v) => void togglePublished(post, v)}
+                />
+                <Button size="sm" variant="ghost" aria-label={`Edit ${post.title}`} onClick={() => setEditing(post)}>
+                  <Pencil className="h-4 w-4" aria-hidden="true" />
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  aria-label={`Delete ${post.title}`}
+                  className="text-red-600 hover:bg-red-50 hover:text-red-700"
+                  onClick={() => askDelete(post)}
+                >
+                  <Trash2 className="h-4 w-4" aria-hidden="true" />
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <PostDialog
+        open={creating || !!editing}
+        post={editing}
+        onClose={() => {
+          setCreating(false);
+          setEditing(null);
+        }}
+        onSaved={() => {
+          setCreating(false);
+          setEditing(null);
+          void load();
+        }}
+      />
+      <ConfirmDialog req={confirm} onOpenChange={(o) => !o && setConfirm(null)} />
+    </div>
+  );
+}
+
+function PostDialog({
+  open,
+  post,
+  onClose,
+  onSaved,
+}: {
+  open: boolean;
+  post: PostRow | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>{post ? "Edit post" : "New post"}</DialogTitle>
+          <DialogDescription>
+            Content is stored and rendered as plain text with line breaks preserved — no HTML.
+          </DialogDescription>
+        </DialogHeader>
+        {open ? <PostFormBody key={post?.id ?? "new"} post={post} onClose={onClose} onSaved={onSaved} /> : null}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function PostFormBody({
+  post,
+  onClose,
+  onSaved,
+}: {
+  post: PostRow | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [form, setForm] = useState({
+    title: post?.title ?? "",
+    excerpt: post?.excerpt ?? "",
+    content: post?.content ?? "",
+    cover: post?.cover ?? "",
+    author: post?.author ?? "",
+    tags: post?.tags ?? "",
+    published: post?.published ?? false,
+  });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const set = (k: keyof typeof form, v: string | boolean) => setForm((f) => ({ ...f, [k]: v }));
+
+  async function save() {
+    setErr("");
+    if (form.title.trim().length < 3) return setErr("Give the post a title of at least 3 characters.");
+    if (form.content.trim().length < 20) return setErr("Write at least a couple of sentences.");
+    setBusy(true);
+    try {
+      if (post) await api.put(`/api/admin/posts/${post.id}`, form);
+      else await api.post("/api/admin/posts", form);
+      toast({ title: post ? "Post updated" : "Post created", description: form.title });
+      onSaved();
+    } catch (e) {
+      const msg = errMsg(e);
+      setErr(msg);
+      toast({ title: "Could not save the post", description: msg, variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-2">
+        <Label htmlFor="post-title">Title</Label>
+        <Input id="post-title" value={form.title} onChange={(e) => set("title", e.target.value)} placeholder="How local businesses win on Google" />
+      </div>
+      <div className="grid gap-2">
+        <Label htmlFor="post-excerpt">Excerpt</Label>
+        <Textarea id="post-excerpt" rows={2} value={form.excerpt} onChange={(e) => set("excerpt", e.target.value)} placeholder="One or two lines shown on the blog card and in search results." />
+      </div>
+      <div className="grid gap-2">
+        <Label htmlFor="post-content">Content</Label>
+        <Textarea id="post-content" rows={12} value={form.content} onChange={(e) => set("content", e.target.value)} placeholder="Write the post…" />
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-2">
+          <Label htmlFor="post-author">Author</Label>
+          <Input id="post-author" value={form.author} onChange={(e) => set("author", e.target.value)} placeholder="Akash Shinde" />
+        </div>
+        <div className="grid gap-2">
+          <Label htmlFor="post-tags">Tags</Label>
+          <Input id="post-tags" value={form.tags} onChange={(e) => set("tags", e.target.value)} placeholder="seo, google, leads" />
+        </div>
+      </div>
+      <div className="grid gap-2">
+        <Label htmlFor="post-cover">Cover image URL</Label>
+        <Input id="post-cover" value={form.cover} onChange={(e) => set("cover", e.target.value)} placeholder="https://… or /api/uploads/…" />
+      </div>
+      <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5">
+        <div>
+          <Label htmlFor="post-published">Published</Label>
+          <p className="text-xs text-muted-foreground">Drafts are hidden from /blog, including by direct link.</p>
+        </div>
+        <Switch id="post-published" checked={form.published} onCheckedChange={(v) => set("published", v)} />
+      </div>
+
+      {err ? <p className="text-xs font-medium text-red-600">{err}</p> : null}
+
+      <DialogFooter>
+        <Button variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button>
+        <Button onClick={() => void save()} disabled={busy}>
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Check className="h-4 w-4" aria-hidden="true" />}
+          {post ? "Save changes" : "Create post"}
+        </Button>
+      </DialogFooter>
     </div>
   );
 }

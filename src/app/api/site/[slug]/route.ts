@@ -1,14 +1,17 @@
 import { db } from "@/lib/db";
-import { fail, getSessionUser, ok } from "@/lib/auth";
+import { getSessionUser } from "@/lib/auth";
 import { serializeBusiness, serializeWebsite } from "@/lib/serialize";
+import { HttpError, ok, route, str } from "@/lib/api";
+import { subscriptionServesSite } from "@/lib/expiry";
 
 /**
  * GET /api/site/[slug] — PUBLIC endpoint that renders a tenant website.
  * If the requester holds a valid session token of the owning user, unpublished
  * (DRAFT) sites are also returned so the dashboard can preview before publish.
  */
-export async function GET(req: Request, { params }: { params: Promise<{ slug: string }> }) {
-  const { slug } = await params;
+export const GET = route(async (req: Request, { params }: { params: Promise<{ slug: string }> }) => {
+  const slug = str((await params).slug, 120);
+  if (!slug) throw new HttpError("Website not found", 404);
 
   const business = await db.business.findUnique({
     where: { slug },
@@ -24,29 +27,37 @@ export async function GET(req: Request, { params }: { params: Promise<{ slug: st
     },
   });
 
-  if (!business) return fail("Website not found", 404);
+  if (!business) throw new HttpError("Website not found", 404);
 
   if (business.status === "SUSPENDED") {
-    return fail("This website has been suspended by the platform administrator.", 403);
+    throw new HttpError("This website has been suspended by the platform administrator.", 403);
   }
-  if (business.status === "EXPIRED" || business.subscription?.status === "EXPIRED") {
-    return fail("This website has expired. The owner needs to renew their subscription.", 402);
+  if (business.status === "EXPIRED" || !subscriptionServesSite(business.subscription)) {
+    throw new HttpError("This website has expired. The owner needs to renew their subscription.", 402);
   }
   if (business.status !== "PUBLISHED" || !business.website) {
-    // Owner preview: session user must own this business
+    // Owner preview: session user must own this business. Platform admins can
+    // also open it, which is what the admin console's "view site" action needs.
     const session = await getSessionUser(req);
-    if (!session || session.id !== business.userId) {
-      return fail("This website is not published yet. Please check back soon!", 404);
-    }
+    const allowed = session && (session.id === business.userId || session.role === "ADMIN");
+    if (!allowed) throw new HttpError("This website is not published yet. Please check back soon!", 404);
   }
 
   const published = business.status === "PUBLISHED" && !!business.website?.publishedAt;
+  const serialized = serializeBusiness(business);
+
+  // GSTIN is a compliance identifier, not site content: it is dropped from the
+  // public payload and only returned to the owner/admin preview.
+  const publicBusiness = published ? { ...serialized, gstin: "" } : serialized;
 
   return ok({
-    business: serializeBusiness(business),
+    business: publicBusiness,
     website: business.website
       ? serializeWebsite(business.website)
-      : { seoTitle: "", seoDescription: "", keywords: "", ogImage: "", theme: {}, sections: [], version: 0, publishedAt: null },
+      : {
+          seoTitle: "", seoDescription: "", keywords: "", ogImage: "",
+          theme: {}, sections: [], version: 0, publishedAt: null,
+        },
     services: business.services,
     products: business.products,
     gallery: business.gallery,
@@ -60,4 +71,4 @@ export async function GET(req: Request, { params }: { params: Promise<{ slug: st
     trialMode: business.subscription?.status === "TRIALING",
     published,
   });
-}
+});

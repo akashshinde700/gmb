@@ -32,6 +32,7 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
 
 # vercel
 .vercel
@@ -52,3 +53,46 @@ prompt
 server.log
 # Skills directory
 /skills/
+# local audit scratch (not part of the app)
+.tmpaudit/
+.tmpaudit2/
+.tmpadmin/
+.tmpsite/
+.tmpfinish/
+.tmpplans/
+.tmpai/
+
+# Deployment credentials — SSH, admin and provider API keys live in these.
+# They must never reach the repository.
+deploy.py
+deploy_config.json
+.tmpkeys/
+.tmpk2/
+.tmpgen/
+.tmpgq/
+.tmplim/
+.tmpdeploy/
+.tmpchk/
+.tmptrial/
+.tmpbug/
+.tmpdep2/
+
+# Playwright
+/e2e/.auth/
+/test-results/
+/playwright-report/
+
+# The local SQLite database. It was tracked, which put real users, scrypt
+# password hashes, leads and payment rows into every clone of this repo — and
+# made a binary merge conflict out of every commit. Production's database lives
+# outside the repo entirely (persistent/websetu.db on the server).
+/db/
+*.db
+*.db-journal
+
+# Stitch design keys — design-time only, never deployed
+stitch-keys.local.json
+
+# Customer-uploaded images live in UPLOADS_DIR on the server, not in git
+public/uploads/
+__pycache__/

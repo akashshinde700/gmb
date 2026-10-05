@@ -58,7 +58,7 @@ export interface Business {
 
 export type SectionType =
   | "hero" | "about" | "stats" | "services" | "products" | "whyUs"
-  | "gallery" | "testimonials" | "faq" | "cta" | "payment" | "contact" | "hours";
+  | "gallery" | "testimonials" | "faq" | "blog" | "cta" | "payment" | "contact" | "hours";
 
 export interface SiteSection {
   id: string;
@@ -73,6 +73,10 @@ export interface SiteTheme {
   heroStyle: "image" | "gradient" | "split";
   cardStyle: "flat" | "shadow" | "outline";
   containerWidth: "normal" | "wide";
+  /** Industry hero animation; absent means "auto". */
+  motif?: "auto" | "none";
+  /** Industry preset key that drives look & animation; absent means "from category". */
+  industry?: string;
 }
 
 export interface WebsiteData {
@@ -113,13 +117,29 @@ export interface Lead {
 export interface Plan {
   id: string; name: string; slug: string; tagline: string;
   priceMonthly: number; priceYearly: number; features: string[];
-  maxPages: number; aiCredits: number; popular: boolean; active: boolean; sortOrder: number;
+  maxPages: number; aiCredits: number;
+  /** How many brand palettes this plan may choose from; -1 = the whole library. */
+  maxPalettes: number;
+  popular: boolean; active: boolean; sortOrder: number;
+  /** Set when the plan is dedicated to one customer (hidden from public pricing). */
+  customForBusinessId?: string | null;
 }
 
 export interface Subscription {
   id: string; planId: string; cycle: "MONTHLY" | "YEARLY"; status: SubscriptionStatus;
   amount: number; startedAt: string; renewsAt: string | null; trialEndsAt: string | null;
   plan?: Plan;
+}
+
+/** How many times the customer may still restyle their website. */
+export interface AppearanceAllowance {
+  used: number;
+  /** Total allowed; -1 means unlimited. */
+  limit: number;
+  canChange: boolean;
+  unlimited: boolean;
+  /** Changes left; -1 when unlimited. */
+  remaining: number;
 }
 
 export interface TemplateDef {
@@ -146,6 +166,8 @@ export interface SitePayload {
   testimonials: Testimonial[];
   faqs: Faq[];
   blogPosts: Pick<BlogPost, "id" | "title" | "slug" | "excerpt" | "cover" | "publishedAt">[];
+  /** Canonical custom hostname, or null when the site lives under /s/<slug>. */
+  primaryDomain: string | null;
   subscriptionStatus: string;
   trialMode: boolean;
   published?: boolean;

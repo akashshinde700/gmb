@@ -1,93 +1,122 @@
 import { db } from "@/lib/db";
-import { fail, getSessionBusiness, getSessionUser, ok } from "@/lib/auth";
 import { serializeSub } from "@/lib/serialize";
-
-/** GET /api/subscription — current tenant subscription + payment history */
-export async function GET(req: Request) {
-  const session = await getSessionUser(req);
-  if (!session) return fail("Unauthorized", 401);
-  const business = await getSessionBusiness(session.id);
-  if (!business) return fail("No business found", 404);
-
-  const payments = await db.payment.findMany({
-    where: { businessId: business.id },
-    orderBy: { createdAt: "desc" },
-    take: 50,
-  });
-  const sub = business.subscription ? serializeSub(business.subscription) : null;
-  return ok({ subscription: sub, payments });
-}
+import { activateSubscription, GST_RATE, invoiceNumber, quote } from "@/lib/billing";
+import { isTestMode, razorpayConfigured } from "@/lib/razorpay";
+import {
+  audit, HttpError, limitSubjectOrThrow, ok, pageParams, readJson, requireBusiness, requireUser, route,
+} from "@/lib/api";
 
 /**
- * POST /api/subscription — subscribe / upgrade (mock gateway, Razorpay-ready architecture).
- * In production this route creates a Razorpay order and the webhook confirms payment.
+ * Payments are simulated: this route marks the invoice paid without a gateway.
+ * That is fine for demos, but on a real deployment it lets any signed-in
+ * customer activate a paid plan for free, so it must be switched on
+ * deliberately via ALLOW_MOCK_PAYMENTS=true.
  */
-export async function POST(req: Request) {
-  const session = await getSessionUser(req);
-  if (!session) return fail("Unauthorized", 401);
-  const business = await getSessionBusiness(session.id);
-  if (!business) return fail("No business found", 404);
+const MOCK_PAYMENTS =
+  process.env.ALLOW_MOCK_PAYMENTS === "true" || process.env.NODE_ENV !== "production";
 
-  const body = (await req.json()) as { planId?: string; cycle?: string; couponCode?: string; method?: string };
-  const plan = await db.plan.findUnique({ where: { id: body.planId || "" } });
-  if (!plan || !plan.active) return fail("Invalid plan selected");
+/** GET /api/subscription — current tenant subscription + payment history */
+export const GET = route(async (req: Request) => {
+  const session = await requireUser(req);
+  const business = await requireBusiness(session);
+  const { take, skip } = pageParams(req, 50, 200);
 
-  const cycle = body.cycle === "YEARLY" ? "YEARLY" : "MONTHLY";
-  let amount = cycle === "YEARLY" ? plan.priceYearly : plan.priceMonthly;
-  let appliedCoupon = "";
+  const [payments, total] = await Promise.all([
+    db.payment.findMany({
+      where: { businessId: business.id },
+      orderBy: { createdAt: "desc" },
+      take,
+      skip,
+    }),
+    db.payment.count({ where: { businessId: business.id } }),
+  ]);
 
-  // Apply coupon
-  const code = (body.couponCode || "").trim().toUpperCase();
-  if (code) {
-    const coupon = await db.coupon.findUnique({ where: { code } });
-    if (!coupon || !coupon.active) return fail("Invalid or expired coupon code");
-    if (coupon.expiresAt && coupon.expiresAt < new Date()) return fail("This coupon has expired");
-    if (coupon.usedCount >= coupon.maxUses) return fail("This coupon has reached its usage limit");
-    const discount = coupon.type === "PERCENT"
-      ? Math.round(amount * (coupon.value / 100))
-      : Math.min(coupon.value, amount);
-    amount = Math.max(0, amount - discount);
-    appliedCoupon = coupon.code;
-    await db.coupon.update({ where: { id: coupon.id }, data: { usedCount: { increment: 1 } } });
+  return ok({
+    subscription: business.subscription ? serializeSub(business.subscription) : null,
+    payments,
+    total,
+    // The dashboard needs to know which checkout to show, and that GST is
+    // added on top of the listed plan price.
+    mockPayments: MOCK_PAYMENTS && !razorpayConfigured(),
+    gateway: razorpayConfigured() ? "razorpay" : null,
+    testMode: isTestMode(),
+    gstRate: GST_RATE,
+  });
+});
+
+/**
+ * POST /api/subscription — simulated activation, for development only.
+ *
+ * Real checkout is /api/subscription/order + /api/subscription/verify, which go
+ * through Razorpay. This route bypasses payment entirely, so on a production
+ * deployment it lets any signed-in customer activate a paid plan for free — it
+ * stays behind ALLOW_MOCK_PAYMENTS, and is refused outright once a real gateway
+ * is configured.
+ */
+export const POST = route(async (req: Request) => {
+  const session = await requireUser(req);
+  const business = await requireBusiness(session);
+
+  if (razorpayConfigured()) {
+    throw new HttpError(
+      "This deployment takes real payments. Use the checkout on the Subscription page.",
+      409,
+    );
+  }
+  if (!MOCK_PAYMENTS) {
+    throw new HttpError(
+      "Online payments are not enabled on this deployment. Contact support to activate a plan.",
+      503,
+    );
   }
 
-  const renewsAt = new Date(Date.now() + (cycle === "YEARLY" ? 365 : 30) * 24 * 60 * 60 * 1000);
-  const invoiceNo = `WS-${new Date().getFullYear()}-${Math.floor(100000 + Math.random() * 900000)}`;
+  limitSubjectOrThrow(`subscribe:${business.id}`, 3, 60 * 1000);
 
-  // Upsert subscription
-  const data = {
-    planId: plan.id,
-    cycle,
-    status: "ACTIVE" as const,
-    amount,
-    startedAt: new Date(),
-    renewsAt,
-    trialEndsAt: null,
-  };
-  const subscription = business.subscription
-    ? await db.subscription.update({ where: { businessId: business.id }, data })
-    : await db.subscription.create({ data: { ...data, businessId: business.id } });
+  const body = await readJson<{ planId?: string; cycle?: string; couponCode?: string; method?: string }>(req);
+  const priced = await quote({
+    planId: String(body.planId || ""),
+    cycle: body.cycle,
+    couponCode: String(body.couponCode || ""),
+  });
 
-  const payment = await db.payment.create({
-    data: {
-      businessId: business.id,
-      subscriptionId: subscription.id,
-      amount,
-      method: body.method === "CARD" ? "CARD" : body.method === "NETBANKING" ? "NETBANKING" : "UPI",
-      status: "SUCCESS",
-      invoiceNo,
-      couponCode: appliedCoupon,
-      description: `${plan.name} plan — ${cycle === "YEARLY" ? "Annual" : "Monthly"} subscription`,
+  const method =
+    body.method === "CARD" ? "CARD" : body.method === "NETBANKING" ? "NETBANKING" : "UPI";
+
+  const result = await activateSubscription({
+    businessId: business.id,
+    userId: session.id,
+    planId: priced.plan.id,
+    planName: priced.plan.name,
+    cycle: priced.cycle,
+    amount: priced.amount,
+    taxableAmount: priced.taxableAmount,
+    taxRate: priced.taxRate,
+    taxAmount: priced.taxAmount,
+    couponCode: priced.couponCode,
+    method,
+    invoiceNo: invoiceNumber(),
+  });
+
+  await audit({
+    actor: session.id,
+    action: "SUBSCRIPTION_ACTIVATED",
+    entity: "subscription",
+    entityId: result.subscription?.id ?? business.id,
+    meta: {
+      plan: priced.plan.slug,
+      cycle: priced.cycle,
+      amount: priced.amount,
+      invoiceNo: result.payment.invoiceNo,
+      simulated: true,
     },
   });
 
-  await db.notification.create({
-    data: {
-      userId: session.id,
-      title: "Subscription activated ✅",
-      body: `Your ${plan.name} plan is now active. Invoice ${invoiceNo}. Next renewal: ${renewsAt.toLocaleDateString("en-IN")}.`,
+  return ok(
+    {
+      subscription: result.subscription ? serializeSub(result.subscription) : null,
+      payment: result.payment,
+      simulated: true,
     },
-  });
-
-  return ok({ subscription: serializeSub(subscription), payment }, 201);
-}
+    201,
+  );
+});

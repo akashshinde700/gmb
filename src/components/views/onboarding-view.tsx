@@ -1,13 +1,16 @@
 "use client";
-// WebSetu — Onboarding Wizard (Task 6-b)
-// 7 steps: Business → Branding → Services → Contact → Template → Preview → Publish
-// Draft persists to localStorage("websetu_onboarding_draft"); cleared after success.
-import { useEffect, useRef, useState } from "react";
-import type { ChangeEvent, CSSProperties } from "react";
+// WebSetu — Onboarding Wizard
+// 3 steps: Business → Contact → Create. Nothing is chosen up front: design,
+// colours, services, photos and copy are generated for the business type and
+// edited later from the dashboard.
+// Draft persists to localStorage (DRAFT_KEY); cleared after success.
+import { useEffect, useState } from "react";
+import { useUnsavedChanges } from "@/hooks/use-unsaved-changes";
+import { useRouter } from "next/navigation";
+import { TRIAL_LABEL } from "@/lib/trial";
 import {
-  AlertCircle, ArrowLeft, ArrowRight, Briefcase, Building2, Check, Globe, ImagePlus,
-  LayoutTemplate, Loader2, Lock, MapPin, Palette, Phone, Plus, Rocket, Search,
-  Sparkles, Upload, X,
+  AlertCircle, ArrowLeft, ArrowRight, Building2, Check, Globe, Loader2, LogOut, MapPin, Phone,
+  Rocket, Search,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,168 +19,94 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Card, CardContent } from "@/components/ui/card";
-import {
-  Accordion, AccordionContent, AccordionItem, AccordionTrigger,
-} from "@/components/ui/accordion";
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { api, ApiError } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
-import { SECTION_LIBRARY } from "@/lib/sections";
 import type { AiSiteContent } from "@/lib/sections";
 import { isValidUpiId } from "@/lib/site-utils";
-import { BRAND_PALETTES } from "@/lib/palettes";
-import type { Plan, TemplateDef } from "@/lib/types";
+import { fallbackServices, industryByKey, industryFor, isPresetCategory } from "@/lib/industries";
 import { useApp } from "@/store/app-store";
 import type { BusinessWithMeta } from "@/store/app-store";
 
 // ---------------------------------------------------------------- constants
 
-const DRAFT_KEY = "websetu_onboarding_draft";
-const TOTAL_STEPS = 7;
-const STEP_LABELS = ["Business", "Branding", "Services", "Contact", "Template", "Preview", "Publish"];
+// v2: the wizard shrank from 7 steps to 3, so older drafts are not restored.
+const DRAFT_KEY = "websetu_onboarding_draft_v2";
+const TOTAL_STEPS = 3;
+const STEP_LABELS = ["Business", "Contact", "Create"];
 
 const CATEGORIES = [
-  "Manufacturer", "Distributor", "Wholesaler", "Retailer", "Restaurant", "Hotel",
-  "Clinic", "Hospital", "Doctor", "Dentist", "Salon", "Beauty Parlour", "Gym",
-  "Fitness Center", "Consultant", "Lawyer", "CA", "Architect", "Contractor",
-  "Real Estate", "Construction", "Automobile", "Garage", "Education", "Coaching",
-  "School", "College", "Travel Agency", "Logistics", "Transport", "IT Company",
-  "Software Company", "Digital Marketing", "Freelancer", "Photographer",
-  "Event Management", "Interior Designer", "Electrical", "Plumbing", "Hardware",
-  "Agriculture", "Trading", "Service Provider", "Local Shop", "Other",
+  "Manufacturer", "Distributor", "Wholesaler", "Retailer", "Trading",
+  "Importer", "Exporter", "Packaging", "Printing Press", "Textile",
+  "Garment Manufacturer", "Plastic Products", "Chemical Supplier", "Engineering Works", "Fabrication",
+  "Foundry", "Machine Tools", "Hardware", "Cement Dealer", "Steel & TMT Dealer",
+  "Tiles & Sanitaryware", "Paint Dealer", "Plywood & Timber", "Glass & Aluminium", "Sand & Aggregates",
+  "Contractor", "Construction", "Civil Contractor", "Architect", "Structural Engineer",
+  "Borewell Services", "Waterproofing", "Scaffolding", "Earthmoving & JCB", "Electrical",
+  "Plumbing", "Carpenter", "Painter", "AC Repair", "Appliance Repair",
+  "Pest Control", "Cleaning Services", "Packers & Movers", "Solar Installer", "CCTV & Security",
+  "RO & Water Purifier", "Interior Designer", "Modular Kitchen", "Furniture", "Curtains & Blinds",
+  "Welding Services", "Borewell & Pump Repair", "Restaurant", "Cafe", "Bakery",
+  "Sweet Shop", "Catering", "Cloud Kitchen", "Tiffin Service", "Ice Cream Parlour",
+  "Juice Centre", "Dairy & Milk", "Food Products", "Namkeen & Snacks", "Spices & Masala",
+  "Grocery Store", "Supermarket", "Fruits & Vegetables", "Meat & Poultry", "Mineral Water",
+  "Water Supplier", "Beverages", "Soft Drinks", "Clinic", "Hospital",
+  "Doctor", "Dentist", "Physiotherapist", "Ayurvedic Clinic", "Homeopathy Clinic",
+  "Eye Clinic", "Child Specialist", "Gynecologist", "Orthopedic", "Skin Clinic",
+  "Veterinary Clinic", "Pathology Lab", "Diagnostic Centre", "Pharmacy", "Medical Store",
+  "Optical Store", "Hearing Care", "Nursing Home", "Salon", "Beauty Parlour",
+  "Unisex Salon", "Spa", "Makeup Artist", "Mehndi Artist", "Nail Studio",
+  "Tattoo Studio", "Gym", "Fitness Center", "Yoga Studio", "Dance Classes",
+  "Martial Arts", "Sports Academy", "Swimming Pool", "Consultant", "Lawyer",
+  "CA", "Company Secretary", "Tax Consultant", "GST Consultant", "Insurance Agent",
+  "Financial Advisor", "Loan Agent", "Accountant", "Audit Firm", "HR & Recruitment",
+  "Placement Agency", "Immigration Consultant", "Visa Services", "Notary Services", "Property Lawyer",
+  "Labour Contractor", "Education", "Coaching", "School", "College",
+  "Play School", "Day Care", "Computer Training", "Spoken English", "Music Classes",
+  "Art Classes", "Driving School", "Competitive Exam Coaching", "Tuition Classes", "Library",
+  "Skill Training", "IT Company", "Software Company", "Web Development", "Mobile App Development",
+  "Digital Marketing", "SEO Agency", "Graphic Designer", "Video Editing", "Animation Studio",
+  "Freelancer", "Computer Repair", "Mobile Repair", "Mobile Shop", "Electronics Store",
+  "Cyber Cafe", "Printing & Xerox", "Call Center", "BPO", "Automobile",
+  "Garage", "Car Dealer", "Bike Dealer", "Car Wash", "Tyre Shop",
+  "Auto Parts", "Battery Shop", "Car Rental", "Driving Services", "Towing Services",
+  "Vehicle Insurance", "Transport", "Logistics", "Courier Service", "Tempo Service",
+  "Taxi Service", "Bus Service", "Warehouse", "Cold Storage", "Freight Forwarder",
+  "Photographer", "Videographer", "Event Management", "Wedding Planner", "Decorator",
+  "DJ & Sound", "Tent House", "Banquet Hall", "Marriage Hall", "Catering Services",
+  "Real Estate", "Property Dealer", "Builder & Developer", "Rental Services", "Hotel",
+  "Lodge", "Resort", "Guest House", "Homestay", "PG & Hostel",
+  "Travel Agency", "Tour Operator", "Ticket Booking", "Pilgrimage Tours", "Agriculture",
+  "Seeds & Fertilizer", "Nursery & Plants", "Dairy Farm", "Poultry Farm", "Farm Equipment",
+  "Organic Products", "Agri Consultant", "Clothing Store", "Footwear Store", "Jewellery Store",
+  "Gift Shop", "Toy Store", "Book Store", "Stationery Shop", "Sports Shop",
+  "Pet Shop", "Flower Shop", "Kirana Store", "General Store", "Hardware Store",
+  "Watch Shop", "Bag Store", "Cosmetics Store", "Mobile Accessories", "Furniture Store",
+  "Laundry & Dry Cleaning", "Tailor", "Boutique", "Xerox & Lamination", "Security Services",
+  "Manpower Supply", "Housekeeping", "Astrologer", "Priest Services", "Funeral Services",
+  "NGO", "Trust & Foundation", "Service Provider", "Local Shop", "Other",
 ];
-
-const SERVICE_SUGGESTIONS: Record<string, string[]> = {
-  Electrical: ["House Wiring", "Emergency Repairs", "Panel Upgrade", "Solar Setup"],
-  Plumbing: ["Leak Repair", "Bathroom Fitting", "Drain Cleaning", "Water Tank Setup"],
-  Restaurant: ["Dine-in", "Takeaway", "Catering", "Home Delivery"],
-  Hotel: ["AC Rooms", "Banquet Hall", "Restaurant", "Airport Pickup"],
-  Salon: ["Haircut & Styling", "Bridal Makeup", "Facial & Cleanup", "Hair Spa"],
-  "Beauty Parlour": ["Bridal Makeup", "Facials", "Mehndi", "Waxing"],
-  Gym: ["Personal Training", "Weight Training", "Yoga Classes", "Diet Plans"],
-  "Fitness Center": ["Personal Training", "Cardio Zone", "Strength Training", "Diet Plans"],
-  Lawyer: ["Legal Consultation", "Property Cases", "Corporate Law", "Family Law"],
-  CA: ["GST Filing", "Income Tax Return", "Company Registration", "Audit & Assurance"],
-  Doctor: ["General Consultation", "Health Checkup", "Vaccination", "Follow-up Care"],
-  Clinic: ["General Consultation", "Lab Tests", "Health Checkup", "Vaccination"],
-  Dentist: ["Root Canal", "Teeth Cleaning", "Braces & Aligners", "Teeth Whitening"],
-  "Real Estate": ["Property Buying", "Property Selling", "Rental Assistance", "Site Visits"],
-  "Travel Agency": ["Domestic Tours", "International Packages", "Flight Booking", "Hotel Booking"],
-  "IT Company": ["Web Development", "Mobile Apps", "Cloud Solutions", "IT Support"],
-  "Software Company": ["Custom Software", "Web Development", "Mobile Apps", "Maintenance"],
-  "Digital Marketing": ["SEO Services", "Social Media Marketing", "Google Ads", "Content Marketing"],
-  Photographer: ["Wedding Photography", "Pre-wedding Shoots", "Product Photography", "Event Coverage"],
-  "Event Management": ["Wedding Planning", "Corporate Events", "Birthday Parties", "Decorations"],
-  "Interior Designer": ["Full Home Interiors", "Modular Kitchen", "Office Design", "Space Planning"],
-  Coaching: ["Foundation Courses", "Crash Courses", "Doubt Sessions", "Test Series"],
-  Automobile: ["Car Servicing", "Denting & Painting", "AC Repair", "Insurance Renewal"],
-  Garage: ["Car Servicing", "Denting & Painting", "AC Repair", "Engine Diagnostics"],
-  Hardware: ["Cement & Bricks", "Paints & Tools", "Sanitaryware", "Electrical Supplies"],
-  Contractor: ["New Construction", "Renovation", "Estimation", "Labour Supply"],
-  Construction: ["New Construction", "Renovation", "Estimation", "Labour Supply"],
-  School: ["Admissions", "Smart Classrooms", "Sports & Arts", "Transport"],
-  College: ["Admissions", "Placement Cell", "Scholarships", "Hostel"],
-  Hospital: ["Emergency Care", "OPD", "Diagnostics", "Pharmacy"],
-};
-const GENERIC_SUGGESTIONS = ["Consultation", "Installation", "Maintenance", "Support"];
-
-const COVER_PRESETS = [
-  { id: "gradient-emerald", label: "Emerald Flow", css: "linear-gradient(135deg, #059669, #0f766e)" },
-  { id: "gradient-amber", label: "Amber Glow", css: "linear-gradient(135deg, #f59e0b, #ea580c)" },
-  { id: "gradient-rose", label: "Sunset Rose", css: "linear-gradient(135deg, #f43f5e, #f97316)" },
-];
-
-const TONES = [
-  { value: "professional", label: "Professional" },
-  { value: "friendly", label: "Friendly & Warm" },
-  { value: "premium", label: "Premium & Bold" },
-];
-
-// Tailwind gradient classes come from the API (not in source), so we render them
-// with an equivalent inline linear-gradient — robust for any template.
-const TW_HEX: Record<string, string> = {
-  emerald: "#10b981", teal: "#14b8a6", cyan: "#06b6d4", sky: "#0ea5e9",
-  amber: "#f59e0b", yellow: "#eab308", orange: "#f97316", red: "#ef4444",
-  rose: "#f43f5e", pink: "#ec4899", fuchsia: "#d946ef", purple: "#a855f7",
-  violet: "#8b5cf6", indigo: "#6366f1", blue: "#3b82f6", lime: "#84cc16",
-  green: "#22c55e", stone: "#78716c", zinc: "#71717a", slate: "#64748b",
-  gray: "#6b7280", neutral: "#737373",
-};
-
-function twShade(hexColor: string, shade: number): string {
-  const delta = shade - 500; // 500 is the base shade
-  if (delta === 0) return hexColor;
-  const pct = Math.min(70, Math.round(Math.abs(delta) / 5));
-  const mixWith = delta < 0 ? "white" : "black";
-  return `color-mix(in srgb, ${hexColor} ${100 - pct}%, ${mixWith} ${pct}%)`;
-}
-
-function gradientCss(gradient: string): string {
-  const from = /from-([a-z]+)-(\d{2,3})/.exec(gradient || "");
-  const to = /to-([a-z]+)-(\d{2,3})/.exec(gradient || "");
-  const pick = (m: RegExpExecArray | null) =>
-    m ? twShade(TW_HEX[m[1]] || "#71717a", Number(m[2])) : "#10b981";
-  return `linear-gradient(135deg, ${pick(from)}, ${pick(to)})`;
-}
-
-/** Max bytes accepted by POST /api/upload (server enforces the same limit). */
-const UPLOAD_MAX_BYTES = 4 * 1024 * 1024;
-/** Files at or under this size are uploaded as-is; bigger ones are downscaled first. */
-const UPLOAD_DIRECT_LIMIT = 400 * 1024;
-
-/** Downscale an image file via canvas and return a JPEG File (never dataURLs). */
-async function downscaleToJpegFile(file: File, maxWidth: number): Promise<File> {
-  const objUrl = URL.createObjectURL(file);
-  try {
-    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const im = new Image();
-      im.onload = () => resolve(im);
-      im.onerror = () => reject(new Error("Could not read that image. Please try another one."));
-      im.src = objUrl;
-    });
-    const scale = Math.min(1, maxWidth / (img.width || maxWidth));
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round((img.width || maxWidth) * scale));
-    canvas.height = Math.max(1, Math.round((img.height || maxWidth) * scale));
-    const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("Could not process this image — try a different one.");
-    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.85));
-    if (!blob) throw new Error("Could not process this image — try a different one.");
-    return new File([blob], `${file.name.replace(/\.[^.]+$/, "") || "image"}.jpg`, { type: "image/jpeg" });
-  } finally {
-    URL.revokeObjectURL(objUrl);
-  }
-}
 
 // ---------------------------------------------------------------- state
 
 interface ServiceDraft { id: string; name: string; description: string; }
 
 interface OnboardingForm {
-  // Step 1
+  // Step 1 — business
   category: string;
   customCategory: string;
   name: string;
   tagline: string;
   description: string;
   establishedYear: string;
-  // Step 2
-  logoUrl: string;
-  coverUrl: string;
-  coverPreset: string;
+  // Generated for the business type (editable later in the dashboard)
   brandPrimary: string;
   brandSecondary: string;
   brandAccent: string;
-  // Step 3
   services: ServiceDraft[];
-  // Step 4
+  // Step 2 — contact
   phone: string;
   whatsappSame: boolean;
   whatsapp: string;
@@ -190,13 +119,10 @@ interface OnboardingForm {
   upiId: string;
   gmbUrl: string;
   mapsUrl: string;
-  // Step 5
-  templateId: string;
-  // Step 6
   tone: string;
   ai: AiSiteContent | null;
-  // Step 7
-  selectedPlanId: string;
+  /** Which business type the generated fields above belong to. */
+  industryKey: string;
 }
 
 const DEFAULT_FORM: OnboardingForm = {
@@ -206,9 +132,6 @@ const DEFAULT_FORM: OnboardingForm = {
   tagline: "",
   description: "",
   establishedYear: "",
-  logoUrl: "",
-  coverUrl: "",
-  coverPreset: "",
   brandPrimary: "#059669",
   brandSecondary: "#0f766e",
   brandAccent: "#f59e0b",
@@ -225,10 +148,9 @@ const DEFAULT_FORM: OnboardingForm = {
   upiId: "",
   gmbUrl: "",
   mapsUrl: "",
-  templateId: "",
   tone: "professional",
   ai: null,
-  selectedPlanId: "",
+  industryKey: "",
 };
 
 const WIZARD_STYLES = `
@@ -241,36 +163,30 @@ const WIZARD_STYLES = `
 // ---------------------------------------------------------------- component
 
 export default function OnboardingView() {
+  const router = useRouter();
   const { toast } = useToast();
   const user = useApp((s) => s.user);
-  const storePlans = useApp((s) => s.plans);
   const setBusiness = useApp((s) => s.setBusiness);
   const openSite = useApp((s) => s.openSite);
+  const logout = useApp((s) => s.logout);
 
   const [step, setStep] = useState(1);
   const [form, setForm] = useState<OnboardingForm>(DEFAULT_FORM);
   const [draftReady, setDraftReady] = useState(false);
+
+  // The wizard persists a draft to localStorage, so a reload recovers — but
+  // only up to the last change that was written. Warning on the way out is what
+  // stops someone losing the step they are mid-way through typing.
+  useUnsavedChanges(draftReady && step > 1);
   const [error, setError] = useState("");
   const [shaking, setShaking] = useState(false);
   const [catSearch, setCatSearch] = useState("");
-  const [svcName, setSvcName] = useState("");
-  const [svcDesc, setSvcDesc] = useState("");
-  const [aiLoading, setAiLoading] = useState(false);
+  const [industryLoading, setIndustryLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [uploading, setUploading] = useState<"logo" | "cover" | null>(null);
   const [success, setSuccess] = useState<BusinessWithMeta | null>(null);
-  const [plans, setPlans] = useState<Plan[]>([]);
-  const [templates, setTemplates] = useState<TemplateDef[]>([]);
-  const [catalogLoading, setCatalogLoading] = useState(false);
-  const [catalogRetry, setCatalogRetry] = useState(0);
-  const catalogFetched = useRef(false);
-
-  const logoInputRef = useRef<HTMLInputElement>(null);
-  const coverInputRef = useRef<HTMLInputElement>(null);
 
   const finalCategory = form.category === "Other" ? form.customCategory.trim() : form.category;
   const pct = Math.round((step / TOTAL_STEPS) * 100);
-  const slugGuess = form.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "your-business";
 
   // ---- draft: restore on mount, persist on change, clear after success
   useEffect(() => {
@@ -278,6 +194,10 @@ export default function OnboardingView() {
       const raw = localStorage.getItem(DRAFT_KEY);
       if (raw) {
         const parsed = JSON.parse(raw) as { step?: number; form?: Partial<OnboardingForm> };
+        // Restoring the saved draft from localStorage — an external store that
+        // cannot be read during render without breaking hydration, so the read
+        // and the state it produces both belong in this effect.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         if (parsed.form) setForm((f) => ({ ...f, ...parsed.form }));
         if (parsed.step && parsed.step >= 1 && parsed.step <= TOTAL_STEPS) setStep(parsed.step);
       }
@@ -296,31 +216,6 @@ export default function OnboardingView() {
     }
   }, [step, form, draftReady]);
 
-  // ---- fetch templates + plans when reaching step 5
-  useEffect(() => {
-    if (step < 5 || catalogFetched.current) return;
-    catalogFetched.current = true;
-    setCatalogLoading(true);
-    api.get<{ plans: Plan[]; templates: TemplateDef[] }>("/api/plans")
-      .then((d) => {
-        setPlans(d.plans);
-        setTemplates(d.templates);
-        setForm((f) => ({
-          ...f,
-          templateId: f.templateId || d.templates[0]?.id || "",
-          selectedPlanId:
-            f.selectedPlanId || d.plans.find((p) => p.popular)?.id || d.plans[0]?.id || "",
-        }));
-      })
-      .catch(() => {
-        catalogFetched.current = false;
-        const fallback = useApp.getState().plans;
-        if (fallback.length) setPlans(fallback);
-        setError("Could not load templates & plans. Tap Retry — you can still review earlier steps.");
-      })
-      .finally(() => setCatalogLoading(false));
-  }, [step, catalogRetry]);
-
   // ---- helpers ----------------------------------------------------------
 
   function fail(msg: string) {
@@ -334,15 +229,14 @@ export default function OnboardingView() {
       if (form.name.trim().length < 2) return "Please enter your business name.";
       if (!finalCategory) return "Please choose a business category.";
     }
-    if (n === 3 && form.services.length === 0)
-      return "Add at least one service — it powers your website content.";
-    if (n === 4) {
+    if (n === 2) {
       if (!form.phone.trim()) return "Phone number is required.";
       if (!form.city.trim()) return "City is required.";
+      if (form.address.trim().length < 5)
+        return "Full business address is required — it appears on your website and Google.";
       if (form.upiId.trim() && !isValidUpiId(form.upiId.trim()))
         return "Please enter a valid UPI ID (like name@okicici) — or leave it empty.";
     }
-    if (n === 5 && !form.templateId) return "Please pick a website template to continue.";
     return "";
   }
 
@@ -358,7 +252,54 @@ export default function OnboardingView() {
       fail(msg);
       return;
     }
+    if (step === 1) void applyIndustry(finalCategory);
     goToStep(Math.min(TOTAL_STEPS, step + 1));
+  }
+
+  /**
+   * Generate services and colours for the chosen business type. A trade the
+   * presets do not know is written by the AI instead.
+   */
+  async function applyIndustry(cat: string) {
+    const preset = industryFor(cat);
+    const listed = isPresetCategory(cat);
+    const key = listed ? preset.key : `custom:${cat.toLowerCase()}`;
+    if (form.industryKey === key) return;
+    const vars = { name: form.name.trim(), city: form.city.trim(), category: cat };
+
+    let services = fallbackServices(cat, vars);
+    let look = preset;
+    let ai: AiSiteContent | null = form.ai;
+    if (!listed) {
+      setIndustryLoading(true);
+      try {
+        const res = await api.post<{ content: AiSiteContent }>("/api/ai/generate", {
+          name: vars.name, category: cat, city: vars.city, services: [],
+          description: form.description.trim(), tone: form.tone,
+        });
+        ai = res.content;
+        if (ai.services?.length) services = ai.services.map((x) => ({ name: x.name, description: x.description, icon: x.icon || "sparkles" }));
+        look = industryByKey(ai.industry) ?? preset;
+      } catch {
+        // Generic services are still a usable start; the customer can edit them.
+      } finally {
+        setIndustryLoading(false);
+      }
+    }
+
+    setForm((f) => ({
+      ...f,
+      industryKey: key,
+      ai,
+      services: services.map((x, i) => ({ id: `auto_${look.key}_${i}`, name: x.name, description: x.description })),
+      brandPrimary: look.palette[0],
+      brandSecondary: look.palette[1],
+      brandAccent: look.palette[2],
+    }));
+    toast({
+      title: listed ? `Set up for ${preset.label}` : `Website content created for ${cat}`,
+      description: "Services, colours, photos and content are tailored to your business — change anything you like.",
+    });
   }
 
   function back() {
@@ -369,123 +310,11 @@ export default function OnboardingView() {
     setForm((f) => ({ ...f, [key]: value }));
   }
 
-  function setAiField<K extends keyof AiSiteContent>(key: K, value: AiSiteContent[K]) {
-    setForm((f) => ({ ...f, ai: { ...(f.ai || {}), [key]: value } }));
-  }
-
-  // ---- image upload (logo / cover) --------------------------------------
-
-  function applyImage(kind: "logo" | "cover", url: string) {
-    setForm((f) =>
-      kind === "logo"
-        ? { ...f, logoUrl: url }
-        : { ...f, coverUrl: url, coverPreset: "" },
-    );
-  }
-
-  async function onPickImage(e: ChangeEvent<HTMLInputElement>, kind: "logo" | "cover") {
-    const file = e.target.files?.[0];
-    e.target.value = ""; // allow re-picking the same file
-    if (!file) return;
-    if (!file.type.startsWith("image/")) {
-      toast({ title: "Please choose an image file", variant: "destructive" });
-      return;
-    }
-    if (file.size > UPLOAD_MAX_BYTES) {
-      toast({
-        title: "Image too large",
-        description: "Keep it under 4 MB — larger photos are optimised automatically.",
-        variant: "destructive",
-      });
-      return;
-    }
-    setUploading(kind);
-    try {
-      // Small files upload untouched; bigger ones are downscaled via canvas first.
-      const toUpload =
-        file.size > UPLOAD_DIRECT_LIMIT
-          ? await downscaleToJpegFile(file, kind === "logo" ? 480 : 1400)
-          : file;
-      const res = await api.upload<{ url: string }>("/api/upload", toUpload);
-      applyImage(kind, res.url);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Upload failed — please try again.";
-      toast({ title: "Upload failed", description: msg, variant: "destructive" });
-    } finally {
-      setUploading(null);
-    }
-  }
-
-  // ---- services ----------------------------------------------------------
-
-  function addService(name: string, description = "") {
-    const n = name.trim();
-    if (!n) {
-      toast({ title: "Enter a service name first", variant: "destructive" });
-      return;
-    }
-    if (form.services.some((s) => s.name.toLowerCase() === n.toLowerCase())) {
-      toast({ title: "Already added", description: `"${n}" is in your services list.` });
-      return;
-    }
-    const item: ServiceDraft = {
-      id: `svc_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      name: n,
-      description: description.trim(),
-    };
-    setForm((f) => ({ ...f, services: [...f.services, item] }));
-  }
-
-  function addSvcFromForm() {
-    addService(svcName, svcDesc);
-    setSvcName("");
-    setSvcDesc("");
-  }
-
-  function removeService(id: string) {
-    setForm((f) => ({ ...f, services: f.services.filter((s) => s.id !== id) }));
-  }
-
-  const suggestions = SERVICE_SUGGESTIONS[finalCategory] || GENERIC_SUGGESTIONS;
-  const suggestionList = suggestions.filter(
-    (s) => !form.services.some((x) => x.name.toLowerCase() === s.toLowerCase()),
-  );
-
-  // ---- AI generation ------------------------------------------------------
-
-  async function generateAi() {
-    if (aiLoading) return;
-    setAiLoading(true);
-    setError("");
-    try {
-      const res = await api.post<{ content: AiSiteContent }>("/api/ai/generate", {
-        name: form.name.trim(),
-        category: finalCategory,
-        city: form.city.trim(),
-        services: form.services.map((s) => s.name),
-        description: form.description.trim(),
-        tone: form.tone,
-      });
-      setForm((f) => ({ ...f, ai: res.content }));
-      toast({ title: "✨ Content ready!", description: "Review and edit it below — regenerate anytime." });
-    } catch (e) {
-      const msg = e instanceof ApiError ? e.message : "AI service is unavailable right now.";
-      setError(`${msg} — no problem, you can still continue. Standard content will be used.`);
-      toast({
-        title: "AI generation failed",
-        description: "You can still continue — smart fallback content will be used.",
-        variant: "destructive",
-      });
-    } finally {
-      setAiLoading(false);
-    }
-  }
-
   // ---- final submit -------------------------------------------------------
 
   async function submitOnboarding() {
     if (submitting) return;
-    const msg = validateStep(1) || validateStep(3) || validateStep(4) || validateStep(5);
+    const msg = validateStep(1) || validateStep(2);
     if (msg) {
       fail(msg);
       return;
@@ -493,6 +322,23 @@ export default function OnboardingView() {
     setSubmitting(true);
     setError("");
     const whatsapp = form.whatsappSame ? form.phone.trim() : form.whatsapp.trim();
+    // Content is written for them, not chosen: generate it now if the
+    // business-type step did not already. A failure just means template copy.
+    let ai = form.ai;
+    if (!ai) {
+      try {
+        ai = (await api.post<{ content: AiSiteContent }>("/api/ai/generate", {
+          name: form.name.trim(),
+          category: finalCategory,
+          city: form.city.trim(),
+          services: form.services.map((s) => s.name),
+          description: form.description.trim(),
+          tone: form.tone,
+        })).content;
+      } catch {
+        ai = null;
+      }
+    }
     try {
       const res = await api.post<{ business: BusinessWithMeta }>("/api/onboarding", {
         name: form.name.trim(),
@@ -510,17 +356,12 @@ export default function OnboardingView() {
         pincode: form.pincode.trim(),
         gstin: form.gstin.trim(),
         upiId: form.upiId.trim(),
-        logoUrl: form.logoUrl,
-        coverUrl: form.coverUrl,
-        coverPreset: form.coverPreset,
         brandPrimary: form.brandPrimary,
         brandSecondary: form.brandSecondary,
         brandAccent: form.brandAccent,
-        templateId: form.templateId,
         gmbUrl: form.gmbUrl.trim(),
         mapsUrl: form.mapsUrl.trim(),
-        ai: form.ai,
-        selectedPlanId: form.selectedPlanId,
+        ai,
         services: form.services.map((s) => ({ name: s.name, description: s.description })),
       });
       const biz = res.business;
@@ -532,7 +373,7 @@ export default function OnboardingView() {
       }
       toast({
         title: "🎉 Your website is ready!",
-        description: `${biz.name} was created — 14-day free trial started.`,
+        description: `${biz.name} was created — ${TRIAL_LABEL} started.`,
       });
       setSuccess(biz);
       window.scrollTo({ top: 0 });
@@ -549,29 +390,29 @@ export default function OnboardingView() {
 
   if (success) {
     return (
-      <div className="flex min-h-screen flex-col bg-[#fafaf9]">
+      <div className="flex min-h-screen flex-col bg-background">
         <style>{WIZARD_STYLES}</style>
         <main className="flex flex-1 items-center justify-center px-4 py-12">
-          <Card className="w-full max-w-md rounded-2xl border-zinc-200 text-center shadow-sm">
+          <Card className="w-full max-w-md rounded-2xl border-border text-center shadow-sm">
             <CardContent className="p-8">
               <div className="ws-pop mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-emerald-600 shadow-lg shadow-emerald-600/30">
                 <Check className="h-10 w-10 text-white" strokeWidth={3} aria-hidden="true" />
               </div>
-              <h1 className="mt-6 text-2xl font-bold text-zinc-900">Your website is ready! 🎉</h1>
-              <p className="mt-2 text-sm text-zinc-500">
-                <span className="font-semibold text-zinc-800">{success.name}</span> is live on your
-                14-day free trial at{" "}
+              <h1 className="mt-6 text-2xl font-bold text-foreground">Your website is ready! 🎉</h1>
+              <p className="mt-2 text-sm text-muted-foreground">
+                <span className="font-semibold text-foreground">{success.name}</span> is live on your
+                {TRIAL_LABEL} at{" "}
                 <span className="font-mono text-xs text-emerald-700">websetu.in/{success.slug}</span>
               </p>
               <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
                 <Badge className="rounded-full bg-emerald-100 text-emerald-800 hover:bg-emerald-100">
-                  14-day free trial
+                  {TRIAL_LABEL}
                 </Badge>
-                <Badge variant="outline" className="rounded-full border-zinc-300 text-zinc-600">
+                <Badge variant="outline" className="rounded-full border-input text-muted-foreground">
                   {success.category}
                 </Badge>
                 {success.templateId && (
-                  <Badge variant="outline" className="rounded-full border-zinc-300 text-zinc-600">
+                  <Badge variant="outline" className="rounded-full border-input text-muted-foreground">
                     Template applied
                   </Badge>
                 )}
@@ -580,7 +421,7 @@ export default function OnboardingView() {
                 <Button
                   className="h-11 rounded-xl bg-emerald-600 text-white hover:bg-emerald-700"
                   onClick={() => {
-                    window.location.hash = "#/dashboard";
+                    router.push("/dashboard");
                     useApp.getState().setView("dashboard");
                   }}
                 >
@@ -594,13 +435,13 @@ export default function OnboardingView() {
                   <Globe className="h-4 w-4" aria-hidden="true" /> Preview Website
                 </Button>
               </div>
-              <p className="mt-5 text-xs text-zinc-400">
+              <p className="mt-5 text-xs text-muted-foreground">
                 Tip: add photos, products & testimonials from the dashboard to boost your health score.
               </p>
             </CardContent>
           </Card>
         </main>
-        <footer className="mt-auto border-t border-zinc-200 bg-white py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] text-center text-xs text-zinc-500">
+        <footer className="mt-auto border-t border-border bg-card py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] text-center text-xs text-muted-foreground">
           © WebSetu — Setup wizard
         </footer>
       </div>
@@ -612,18 +453,13 @@ export default function OnboardingView() {
   const filteredCats = CATEGORIES.filter((c) =>
     c.toLowerCase().includes(catSearch.trim().toLowerCase()),
   );
-  const selectedTemplate = templates.find((t) => t.id === form.templateId) || null;
-
-  const coverPreviewStyle: CSSProperties = form.coverPreset
-    ? { backgroundImage: COVER_PRESETS.find((p) => p.id === form.coverPreset)?.css }
-    : {};
 
   return (
-    <div className="flex min-h-screen flex-col bg-[#fafaf9]">
+    <div className="flex min-h-screen flex-col bg-background">
       <style>{WIZARD_STYLES}</style>
 
       {/* ---------------- header ---------------- */}
-      <header className="sticky top-0 z-20 border-b border-zinc-200 bg-white/85 backdrop-blur">
+      <header className="sticky top-0 z-20 border-b border-border bg-card/85 backdrop-blur">
         <div className="mx-auto w-full max-w-5xl px-4 py-3 sm:px-6">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2.5">
@@ -631,15 +467,28 @@ export default function OnboardingView() {
                 W
               </div>
               <div className="leading-tight">
-                <p className="text-sm font-bold text-zinc-900">WebSetu</p>
-                <p className="text-[11px] font-medium text-zinc-500">Website Setup</p>
+                <p className="text-sm font-bold text-foreground">WebSetu</p>
+                <p className="text-[11px] font-medium text-muted-foreground">Website Setup</p>
               </div>
             </div>
-            <div className="text-right">
-              <p className="text-xs font-semibold text-zinc-700 sm:text-sm">
-                Website Setup {pct}% Complete
-              </p>
-              <p className="text-[11px] text-zinc-500 sm:hidden">Step {step} of {TOTAL_STEPS}</p>
+            <div className="flex items-center gap-3">
+              <div className="text-right">
+                <p className="text-xs font-semibold text-foreground sm:text-sm">
+                  Website Setup {pct}% Complete
+                </p>
+                <p className="text-[11px] text-muted-foreground sm:hidden">Step {step} of {TOTAL_STEPS}</p>
+              </div>
+              {/* Someone who registers and stops here used to be stuck: no way
+                  to sign out and no way to reach another account. */}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={logout}
+                className="h-9 shrink-0 rounded-lg px-2 text-muted-foreground hover:bg-red-50 hover:text-red-700 sm:px-3"
+              >
+                <LogOut className="h-4 w-4" aria-hidden="true" />
+                <span className="hidden sm:inline">Log out</span>
+              </Button>
             </div>
           </div>
 
@@ -661,15 +510,15 @@ export default function OnboardingView() {
                       done
                         ? "bg-emerald-600 text-white"
                         : current
-                          ? "border-2 border-emerald-600 bg-white text-emerald-700"
-                          : "bg-zinc-100 text-zinc-400"
+                          ? "border-2 border-emerald-600 bg-card text-emerald-700"
+                          : "bg-muted text-muted-foreground"
                     }`}
                   >
                     {done ? <Check className="h-3.5 w-3.5" aria-hidden="true" /> : n}
                   </span>
                   <span
                     className={`text-xs font-medium ${
-                      current ? "text-zinc-900" : done ? "text-zinc-600" : "text-zinc-400"
+                      current ? "text-foreground" : done ? "text-muted-foreground" : "text-muted-foreground"
                     }`}
                   >
                     {label}
@@ -693,23 +542,12 @@ export default function OnboardingView() {
             <AlertTitle>Hold on</AlertTitle>
             <AlertDescription className="flex flex-wrap items-center gap-2">
               <span>{error}</span>
-              {step >= 5 && !templates.length && (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="h-7 rounded-lg border-red-300 bg-white text-red-700 hover:bg-red-50"
-                  onClick={() => setCatalogRetry((r) => r + 1)}
-                >
-                  Retry
-                </Button>
-              )}
             </AlertDescription>
           </Alert>
         )}
 
         <div
-          className={`overflow-visible rounded-2xl border border-zinc-200 bg-white shadow-sm ${
+          className={`overflow-visible rounded-2xl border border-border bg-card shadow-sm ${
             shaking ? "ws-shake" : ""
           }`}
           onAnimationEnd={() => setShaking(false)}
@@ -728,7 +566,7 @@ export default function OnboardingView() {
                   <Label htmlFor="cat-search">Business category *</Label>
                   <div className="relative">
                     <Search
-                      className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400"
+                      className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
                       aria-hidden="true"
                     />
                     <Input
@@ -743,7 +581,7 @@ export default function OnboardingView() {
                   <div
                     role="radiogroup"
                     aria-label="Business category"
-                    className="max-h-56 overflow-y-auto rounded-xl border border-zinc-200 bg-zinc-50/60 p-3 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-zinc-300 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar]:w-1.5"
+                    className="max-h-56 overflow-y-auto rounded-xl border border-border bg-muted/60 p-3 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-zinc-300 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar]:w-1.5"
                   >
                     <div className="flex flex-wrap gap-2">
                       {filteredCats.map((c) => {
@@ -758,7 +596,7 @@ export default function OnboardingView() {
                             className={`inline-flex items-center gap-1 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 ${
                               active
                                 ? "border-emerald-600 bg-emerald-600 text-white shadow-sm"
-                                : "border-zinc-200 bg-white text-zinc-700 hover:border-emerald-300 hover:bg-emerald-50"
+                                : "border-border bg-card text-foreground hover:border-emerald-300 hover:bg-emerald-50"
                             }`}
                           >
                             {c}
@@ -767,7 +605,7 @@ export default function OnboardingView() {
                         );
                       })}
                       {filteredCats.length === 0 && (
-                        <p className="px-1 py-2 text-sm text-zinc-500">
+                        <p className="px-1 py-2 text-sm text-muted-foreground">
                           No match — scroll down and pick &quot;Other&quot; to type your own.
                         </p>
                       )}
@@ -808,14 +646,19 @@ export default function OnboardingView() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="biz-tagline">Tagline</Label>
+                    <Label htmlFor="biz-tagline">
+                      One line about your business <span className="text-muted-foreground">(optional)</span>
+                    </Label>
                     <Input
                       id="biz-tagline"
-                      placeholder="e.g. Wiring trust since 1995"
+                      placeholder="e.g. Fresh cakes baked every morning"
                       value={form.tagline}
                       onChange={(e) => setField("tagline", e.target.value)}
                       className="rounded-xl"
                     />
+                    <p className="text-xs text-muted-foreground">
+                      Shown under your name and on Google. Not a year — there is a year box below.
+                    </p>
                   </div>
                 </div>
 
@@ -829,14 +672,14 @@ export default function OnboardingView() {
                     onChange={(e) => setField("description", e.target.value)}
                     className="rounded-xl"
                   />
-                  <p className="text-xs text-zinc-500">
-                    Optional — the AI in Step 6 can write this better for you.
+                  <p className="text-xs text-muted-foreground">
+                    Optional — leave it blank and we will write it for you.
                   </p>
                 </div>
 
                 <div className="space-y-2 sm:max-w-[220px]">
                   <Label htmlFor="biz-year">
-                    Established year <span className="text-zinc-400">(optional)</span>
+                    Established year <span className="text-muted-foreground">(optional)</span>
                   </Label>
                   <Input
                     id="biz-year"
@@ -851,374 +694,8 @@ export default function OnboardingView() {
               </div>
             )}
 
-            {/* ============================ STEP 2 — BRANDING */}
+            {/* ============================ STEP 2 — CONTACT */}
             {step === 2 && (
-              <div className="space-y-6">
-                <StepHeader
-                  icon={<Palette className="h-5 w-5 text-emerald-600" aria-hidden="true" />}
-                  title="Branding — make it yours"
-                  sub="Logo, cover and colors. You can change these anytime in the dashboard."
-                />
-
-                {/* Logo */}
-                <div className="space-y-4 rounded-2xl border border-zinc-200 p-4 sm:p-5">
-                  <p className="text-sm font-semibold text-zinc-800">
-                    Logo <span className="font-normal text-zinc-500">for {form.name || "your business"}</span>
-                  </p>
-                  <div className="flex flex-wrap items-center gap-4">
-                    <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-full border-2 border-emerald-600/25 bg-emerald-50 text-xl font-bold text-emerald-700">
-                      {form.logoUrl ? (
-                        <img
-                          src={form.logoUrl}
-                          alt="Business logo preview"
-                          className="h-full w-full object-cover"
-                        />
-                      ) : (
-                        (form.name.trim()[0] || "B").toUpperCase()
-                      )}
-                    </div>
-                    <div className="space-y-1.5">
-                      <input
-                        ref={logoInputRef}
-                        id="logo-upload"
-                        type="file"
-                        accept="image/*"
-                        className="sr-only"
-                        aria-label="Upload logo image"
-                        onChange={(e) => onPickImage(e, "logo")}
-                      />
-                      <div className="flex flex-wrap gap-2">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="rounded-lg"
-                          disabled={uploading !== null}
-                          onClick={() => logoInputRef.current?.click()}
-                        >
-                          {uploading === "logo" ? (
-                            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                          ) : (
-                            <Upload className="h-4 w-4" aria-hidden="true" />
-                          )}
-                          {uploading === "logo" ? "Uploading…" : "Upload logo"}
-                        </Button>
-                        {form.logoUrl && (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="rounded-lg text-red-600 hover:bg-red-50 hover:text-red-700"
-                            disabled={uploading !== null}
-                            onClick={() => setField("logoUrl", "")}
-                          >
-                            <X className="h-4 w-4" aria-hidden="true" /> Remove
-                          </Button>
-                        )}
-                      </div>
-                      <p className="text-xs text-zinc-500">
-                        PNG/JPG up to 4 MB — big images are optimised automatically. No logo?
-                        We&apos;ll use your initial automatically.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Cover */}
-                <div className="space-y-4 rounded-2xl border border-zinc-200 p-4 sm:p-5">
-                  <p className="text-sm font-semibold text-zinc-800">Cover image</p>
-                  <div
-                    className="aspect-video w-full overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100"
-                    style={coverPreviewStyle}
-                  >
-                    {form.coverUrl ? (
-                      <img
-                        src={form.coverUrl}
-                        alt="Cover image preview"
-                        className="h-full w-full object-cover"
-                      />
-                    ) : form.coverPreset ? (
-                      <div className="flex h-full w-full items-center justify-center">
-                        <ImagePlus className="h-8 w-8 text-white/80" aria-hidden="true" />
-                      </div>
-                    ) : (
-                      <div className="flex h-full w-full items-center justify-center bg-[repeating-linear-gradient(45deg,#f4f4f5_0px,#f4f4f5_12px,#fafafa_12px,#fafafa_24px)]">
-                        <p className="px-4 text-center text-xs text-zinc-400">
-                          No cover yet — upload one or pick a gradient below
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                  <input
-                    ref={coverInputRef}
-                    id="cover-upload"
-                    type="file"
-                    accept="image/*"
-                    className="sr-only"
-                    aria-label="Upload cover image"
-                    onChange={(e) => onPickImage(e, "cover")}
-                  />
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="rounded-lg"
-                      disabled={uploading !== null}
-                      onClick={() => coverInputRef.current?.click()}
-                    >
-                      {uploading === "cover" ? (
-                        <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                      ) : (
-                        <Upload className="h-4 w-4" aria-hidden="true" />
-                      )}
-                      {uploading === "cover" ? "Uploading…" : "Upload cover"}
-                    </Button>
-                    {(form.coverUrl || form.coverPreset) && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="rounded-lg text-red-600 hover:bg-red-50 hover:text-red-700"
-                        disabled={uploading !== null}
-                        onClick={() => setForm((f) => ({ ...f, coverUrl: "", coverPreset: "" }))}
-                      >
-                        <X className="h-4 w-4" aria-hidden="true" /> Clear
-                      </Button>
-                    )}
-                  </div>
-                  <div className="space-y-2">
-                    <p className="text-xs font-medium text-zinc-600">
-                      …or pick a ready-made gradient:
-                    </p>
-                    <div className="grid grid-cols-3 gap-2">
-                      {COVER_PRESETS.map((p) => {
-                        const active = form.coverPreset === p.id;
-                        return (
-                          <button
-                            key={p.id}
-                            type="button"
-                            aria-pressed={active}
-                            disabled={uploading !== null}
-                            onClick={() =>
-                              setForm((f) => ({ ...f, coverUrl: "", coverPreset: p.id }))
-                            }
-                            className={`relative h-14 overflow-hidden rounded-xl text-white transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 ${
-                              active ? "ring-2 ring-emerald-600 ring-offset-2" : "hover:opacity-90"
-                            }`}
-                            style={{ backgroundImage: p.css }}
-                          >
-                            <span className="absolute inset-x-0 bottom-0 bg-black/25 py-0.5 text-[10px] font-semibold">
-                              {p.label}
-                            </span>
-                            {active && (
-                              <Check
-                                className="absolute left-1/2 top-1.5 h-4 w-4 -translate-x-1/2"
-                                aria-hidden="true"
-                              />
-                            )}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Brand colors */}
-                <div className="space-y-4 rounded-2xl border border-zinc-200 p-4 sm:p-5">
-                  <p className="flex items-center gap-1.5 text-sm font-semibold text-zinc-800">
-                    <Palette className="h-4 w-4 text-amber-500" aria-hidden="true" /> Color palette
-                  </p>
-                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                    {BRAND_PALETTES.map((p) => {
-                      const active =
-                        p.colors[0].toLowerCase() === form.brandPrimary.toLowerCase() &&
-                        p.colors[1].toLowerCase() === form.brandSecondary.toLowerCase() &&
-                        p.colors[2].toLowerCase() === form.brandAccent.toLowerCase();
-                      return (
-                        <button
-                          key={p.name}
-                          type="button"
-                          aria-pressed={active}
-                          aria-label={`Use ${p.name} palette`}
-                          onClick={() => {
-                            setField("brandPrimary", p.colors[0]);
-                            setField("brandSecondary", p.colors[1]);
-                            setField("brandAccent", p.colors[2]);
-                          }}
-                          className={`flex items-center gap-2 rounded-xl border bg-white p-2 text-left transition hover:border-emerald-400 hover:shadow-sm ${
-                            active ? "border-emerald-500 ring-1 ring-emerald-500" : "border-zinc-200"
-                          }`}
-                        >
-                          <span className="flex h-7 w-9 shrink-0 overflow-hidden rounded-md border border-zinc-100">
-                            <span className="h-full flex-1" style={{ background: p.colors[0] }} />
-                            <span className="h-full flex-1" style={{ background: p.colors[1] }} />
-                            <span className="h-full flex-1" style={{ background: p.colors[2] }} />
-                          </span>
-                          <span className="min-w-0">
-                            <span className="block truncate text-[11px] font-semibold text-zinc-800">{p.name}</span>
-                            <span className="block truncate text-[10px] text-zinc-400">{p.mood}</span>
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <p className="text-xs text-zinc-400">Pick a ready palette — or fine-tune each color below.</p>
-                  <div className="grid gap-4 sm:grid-cols-3">
-                    <ColorField
-                      id="brand-primary"
-                      label="Primary"
-                      value={form.brandPrimary}
-                      onChange={(v) => setField("brandPrimary", v)}
-                    />
-                    <ColorField
-                      id="brand-secondary"
-                      label="Secondary"
-                      value={form.brandSecondary}
-                      onChange={(v) => setField("brandSecondary", v)}
-                    />
-                    <ColorField
-                      id="brand-accent"
-                      label="Accent"
-                      value={form.brandAccent}
-                      onChange={(v) => setField("brandAccent", v)}
-                    />
-                  </div>
-                  <div>
-                    <p className="mb-1.5 text-xs font-medium text-zinc-600">Live preview</p>
-                    <div className="flex overflow-hidden rounded-xl border border-zinc-200">
-                      <div className="h-10 flex-[3]" style={{ background: form.brandPrimary }} />
-                      <div className="h-10 flex-[2]" style={{ background: form.brandSecondary }} />
-                      <div className="h-10 flex-1" style={{ background: form.brandAccent }} />
-                      <div
-                        className="flex h-10 flex-[3] items-center justify-center gap-2 text-xs font-semibold text-white"
-                        style={{
-                          background: `linear-gradient(135deg, ${form.brandPrimary}, ${form.brandSecondary})`,
-                        }}
-                      >
-                        <span className="rounded-md bg-white/95 px-2 py-1" style={{ color: form.brandPrimary }}>
-                          Get a Quote
-                        </span>
-                        <span className="rounded-md px-2 py-1" style={{ background: form.brandAccent }}>
-                          Call
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* ============================ STEP 3 — SERVICES */}
-            {step === 3 && (
-              <div className="space-y-6">
-                <StepHeader
-                  icon={<Briefcase className="h-5 w-5 text-emerald-600" aria-hidden="true" />}
-                  title="Your services"
-                  sub="What do you offer? Add at least one — the AI uses these to write your copy."
-                />
-
-                <div className="space-y-3 rounded-2xl border border-zinc-200 p-4 sm:p-5">
-                  <div className="space-y-2">
-                    <Label htmlFor="svc-name">Add a service</Label>
-                    <Input
-                      id="svc-name"
-                      placeholder="e.g. House Wiring"
-                      value={svcName}
-                      onChange={(e) => setSvcName(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          addSvcFromForm();
-                        }
-                      }}
-                      className="rounded-xl"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="svc-desc">
-                      Short description <span className="text-zinc-400">(optional)</span>
-                    </Label>
-                    <Textarea
-                      id="svc-desc"
-                      rows={2}
-                      placeholder="One line about this service…"
-                      value={svcDesc}
-                      onChange={(e) => setSvcDesc(e.target.value)}
-                      className="rounded-xl"
-                    />
-                  </div>
-                  <Button
-                    type="button"
-                    onClick={addSvcFromForm}
-                    className="rounded-xl bg-emerald-600 text-white hover:bg-emerald-700"
-                  >
-                    <Plus className="h-4 w-4" aria-hidden="true" /> Add service
-                  </Button>
-                </div>
-
-                {suggestionList.length > 0 && (
-                  <div className="space-y-2">
-                    <p className="flex items-center gap-1.5 text-xs font-medium text-zinc-600">
-                      <Sparkles className="h-3.5 w-3.5 text-amber-500" aria-hidden="true" />
-                      Quick add for {finalCategory || "your business"}:
-                    </p>
-                    <div className="flex flex-wrap gap-2">
-                      {suggestionList.map((s) => (
-                        <button
-                          key={s}
-                          type="button"
-                          onClick={() => addService(s)}
-                          className="inline-flex items-center gap-1 rounded-full border border-dashed border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-800 transition-colors hover:bg-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
-                        >
-                          <Plus className="h-3 w-3" aria-hidden="true" /> {s}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {form.services.length > 0 ? (
-                  <ul className="space-y-2">
-                    {form.services.map((s, i) => (
-                      <li
-                        key={s.id}
-                        className="flex items-start justify-between gap-3 rounded-xl border border-zinc-200 bg-white p-3.5"
-                      >
-                        <div className="flex items-start gap-3">
-                          <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-[11px] font-bold text-emerald-700">
-                            {i + 1}
-                          </span>
-                          <div>
-                            <p className="text-sm font-semibold text-zinc-900">{s.name}</p>
-                            {s.description && (
-                              <p className="mt-0.5 text-xs text-zinc-500">{s.description}</p>
-                            )}
-                          </div>
-                        </div>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          aria-label={`Remove service ${s.name}`}
-                          className="h-8 w-8 shrink-0 rounded-lg text-zinc-400 hover:bg-red-50 hover:text-red-600"
-                          onClick={() => removeService(s.id)}
-                        >
-                          <X className="h-4 w-4" aria-hidden="true" />
-                        </Button>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="rounded-xl border border-dashed border-zinc-300 bg-zinc-50 p-4 text-center text-sm text-zinc-500">
-                    No services yet — add your first above or tap a quick-add chip.
-                  </p>
-                )}
-              </div>
-            )}
-
-            {/* ============================ STEP 4 — CONTACT */}
-            {step === 4 && (
               <div className="space-y-6">
                 <StepHeader
                   icon={<Phone className="h-5 w-5 text-emerald-600" aria-hidden="true" />}
@@ -1232,14 +709,13 @@ export default function OnboardingView() {
                       Phone <span className="text-emerald-600">*</span>
                     </Label>
                     <Input
-                      id="ct-phone"
+                      id="ct-phone" inputMode="tel" autoComplete="tel"
                       type="tel"
                       required
                       placeholder="+91 98765 43210"
                       value={form.phone}
                       onChange={(e) => setField("phone", e.target.value)}
                       className="rounded-xl"
-                      autoComplete="tel"
                     />
                   </div>
                   <div className="space-y-2">
@@ -1249,12 +725,12 @@ export default function OnboardingView() {
                         checked={form.whatsappSame}
                         onCheckedChange={(c) => setField("whatsappSame", c === true)}
                       />
-                      <Label htmlFor="wa-same" className="text-xs font-normal text-zinc-600">
+                      <Label htmlFor="wa-same" className="text-xs font-normal text-muted-foreground">
                         WhatsApp is the same number
                       </Label>
                     </div>
                     {form.whatsappSame ? (
-                      <p className="text-xs text-zinc-400">
+                      <p className="text-xs text-muted-foreground">
                         A WhatsApp button will open chats on {form.phone || "your phone number"}.
                       </p>
                     ) : (
@@ -1322,9 +798,13 @@ export default function OnboardingView() {
                     />
                   </div>
                   <div className="space-y-2 sm:col-span-2">
-                    <Label htmlFor="ct-address">Full address</Label>
+                    <Label htmlFor="ct-address">
+                      Full address <span className="text-emerald-600">*</span>
+                    </Label>
                     <Textarea
                       id="ct-address"
+                      required
+                      aria-required="true"
                       rows={2}
                       placeholder="Shop no, street, landmark, area…"
                       value={form.address}
@@ -1335,10 +815,10 @@ export default function OnboardingView() {
                   </div>
                   <div className="space-y-2 sm:col-span-2">
                     <Label htmlFor="ct-gstin">
-                      GSTIN <span className="text-zinc-400">(optional)</span>
+                      GSTIN <span className="text-muted-foreground">(optional)</span>
                     </Label>
                     <Input
-                      id="ct-gstin"
+                      id="ct-gstin" autoCapitalize="characters" autoComplete="off"
                       placeholder="e.g. 27ABCDE1234F1Z5"
                       value={form.gstin}
                       onChange={(e) => setField("gstin", e.target.value.toUpperCase())}
@@ -1347,10 +827,10 @@ export default function OnboardingView() {
                   </div>
                   <div className="space-y-2 sm:col-span-2">
                     <Label htmlFor="ct-upi">
-                      UPI ID (for payments) <span className="text-zinc-400">(optional)</span>
+                      UPI ID (for payments) <span className="text-muted-foreground">(optional)</span>
                     </Label>
                     <Input
-                      id="ct-upi"
+                      id="ct-upi" inputMode="email" autoCapitalize="none" autoComplete="off"
                       placeholder="name@okicici"
                       value={form.upiId}
                       onChange={(e) => setField("upiId", e.target.value.trim())}
@@ -1366,7 +846,7 @@ export default function OnboardingView() {
                         name@okicici or shop@paytm.
                       </p>
                     ) : (
-                      <p className="text-xs text-zinc-500">
+                      <p className="text-xs text-muted-foreground">
                         Visitors get a Scan &amp; Pay QR on your website automatically. Example:
                         name@okicici
                       </p>
@@ -1374,8 +854,8 @@ export default function OnboardingView() {
                   </div>
                 </div>
 
-                <div className="space-y-4 rounded-2xl border border-zinc-200 p-4 sm:p-5">
-                  <p className="flex items-center gap-2 text-sm font-semibold text-zinc-800">
+                <div className="space-y-4 rounded-2xl border border-border p-4 sm:p-5">
+                  <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
                     <MapPin className="h-4 w-4 text-emerald-600" aria-hidden="true" />
                     Google presence
                   </p>
@@ -1389,7 +869,7 @@ export default function OnboardingView() {
                       onChange={(e) => setField("gmbUrl", e.target.value)}
                       className="rounded-xl"
                     />
-                    <p className="text-xs text-zinc-500">
+                    <p className="text-xs text-muted-foreground">
                       Paste your Google Business Profile or Maps link — helps customers find you.
                     </p>
                   </div>
@@ -1408,545 +888,60 @@ export default function OnboardingView() {
               </div>
             )}
 
-            {/* ============================ STEP 5 — TEMPLATE */}
-            {step === 5 && (
-              <div className="space-y-6">
-                <StepHeader
-                  icon={<LayoutTemplate className="h-5 w-5 text-emerald-600" aria-hidden="true" />}
-                  title="Pick your template"
-                  sub="Every template is mobile-ready and SEO-friendly. You can switch later."
-                />
-
-                {catalogLoading ? (
-                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                    {[0, 1, 2, 3, 4, 5].map((i) => (
-                      <div key={i} className="space-y-2">
-                        <Skeleton className="h-24 w-full rounded-2xl" />
-                        <Skeleton className="h-4 w-2/3" />
-                        <Skeleton className="h-3 w-full" />
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div
-                    role="radiogroup"
-                    aria-label="Website template"
-                    className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"
-                  >
-                    {templates.map((t) => {
-                      const active = form.templateId === t.id;
-                      return (
-                        <button
-                          key={t.id}
-                          type="button"
-                          role="radio"
-                          aria-checked={active}
-                          onClick={() => setField("templateId", t.id)}
-                          className={`group overflow-hidden rounded-2xl border bg-white text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 ${
-                            active
-                              ? "border-emerald-600 ring-2 ring-emerald-600"
-                              : "border-zinc-200 hover:border-emerald-300 hover:shadow-md"
-                          }`}
-                        >
-                          <div
-                            className="relative h-24"
-                            style={{ backgroundImage: gradientCss(t.gradient) }}
-                          >
-                            <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 p-3">
-                              <div className="h-2 w-16 rounded-full bg-white/85" />
-                              <div className="h-1.5 w-24 rounded-full bg-white/50" />
-                              <div className="mt-1.5 flex gap-1">
-                                <div className="h-4 w-10 rounded bg-white/90" />
-                                <div className="h-4 w-10 rounded bg-white/40" />
-                              </div>
-                            </div>
-                            {t.premium && (
-                              <Badge className="absolute right-2 top-2 rounded-full bg-amber-500 text-white hover:bg-amber-500">
-                                Premium
-                              </Badge>
-                            )}
-                          </div>
-                          <div className="space-y-1.5 p-4">
-                            <div className="flex items-center justify-between gap-2">
-                              <p className="text-sm font-semibold text-zinc-900">{t.name}</p>
-                              {active && (
-                                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-600">
-                                  <Check className="h-3 w-3 text-white" aria-hidden="true" />
-                                </span>
-                              )}
-                            </div>
-                            <p className="text-xs text-zinc-500">
-                              <span className="font-medium text-zinc-600">{t.category}</span>
-                              {" · "}
-                              {t.description}
-                            </p>
-                            {active && (
-                              <div className="mt-2 flex items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 p-2">
-                                <span
-                                  className="h-5 w-5 shrink-0 rounded-full border border-white shadow"
-                                  style={{ background: form.brandPrimary }}
-                                  aria-hidden="true"
-                                />
-                                <span
-                                  className="h-5 w-5 shrink-0 rounded-full border border-white shadow"
-                                  style={{ background: form.brandSecondary }}
-                                  aria-hidden="true"
-                                />
-                                <span
-                                  className="h-5 w-5 shrink-0 rounded-full border border-white shadow"
-                                  style={{ background: form.brandAccent }}
-                                  aria-hidden="true"
-                                />
-                                <span
-                                  className="h-5 flex-1 rounded"
-                                  style={{
-                                    background: `linear-gradient(90deg, ${form.brandPrimary}, ${form.brandSecondary})`,
-                                  }}
-                                  aria-hidden="true"
-                                />
-                                <span className="text-[10px] font-medium text-zinc-500">
-                                  Your colors
-                                </span>
-                              </div>
-                            )}
-                          </div>
-                        </button>
-                      );
-                    })}
-                    {!templates.length && (
-                      <p className="col-span-full rounded-xl border border-dashed border-zinc-300 bg-zinc-50 p-6 text-center text-sm text-zinc-500">
-                        Templates could not be loaded. Use the Retry button above.
-                      </p>
-                    )}
-                  </div>
-                )}
-
-                {selectedTemplate && (
-                  <p className="text-xs text-zinc-500">
-                    Selected: <span className="font-semibold text-zinc-800">{selectedTemplate.name}</span>
-                    {selectedTemplate.premium && " — included free during early access."}
-                  </p>
-                )}
-              </div>
-            )}
-
-            {/* ============================ STEP 6 — AI + PREVIEW */}
-            {step === 6 && (
-              <div className="space-y-6">
-                <StepHeader
-                  icon={<Sparkles className="h-5 w-5 text-emerald-600" aria-hidden="true" />}
-                  title="AI content + live preview"
-                  sub="Let AI write your headline, about and FAQs — then tweak anything you like."
-                />
-
-                {/* AI generator */}
-                <div className="space-y-4 rounded-2xl border border-emerald-200 bg-emerald-50/50 p-4 sm:p-5">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-semibold text-zinc-900">
-                        ✨ Generate my website content with AI
-                      </p>
-                      <p className="text-xs text-zinc-500">
-                        Uses your business info from the previous steps.
-                      </p>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Select value={form.tone} onValueChange={(v) => setField("tone", v)}>
-                        <SelectTrigger
-                          className="w-[160px] rounded-xl border-zinc-300 bg-white"
-                          aria-label="Content tone"
-                        >
-                          <SelectValue placeholder="Tone" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {TONES.map((t) => (
-                            <SelectItem key={t.value} value={t.value}>
-                              {t.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <Button
-                        type="button"
-                        onClick={generateAi}
-                        disabled={aiLoading}
-                        className="rounded-xl bg-emerald-600 text-white hover:bg-emerald-700"
-                      >
-                        {aiLoading ? (
-                          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                        ) : (
-                          <Sparkles className="h-4 w-4" aria-hidden="true" />
-                        )}
-                        {form.ai ? "Regenerate" : "Generate content"}
-                      </Button>
-                    </div>
-                  </div>
-
-                  {aiLoading && (
-                    <div
-                      className="space-y-3 rounded-xl border border-emerald-200 bg-white p-4"
-                      role="status"
-                      aria-live="polite"
-                    >
-                      <div className="flex items-center gap-3">
-                        <Loader2 className="h-5 w-5 animate-spin text-emerald-600" aria-hidden="true" />
-                        <div>
-                          <p className="text-sm font-medium text-zinc-800">Writing your content…</p>
-                          <p className="text-xs text-zinc-500">
-                            Headline, about, FAQs & SEO — usually 10–20 seconds.
-                          </p>
-                        </div>
-                      </div>
-                      <div className="space-y-2 pt-1">
-                        <Skeleton className="h-4 w-3/4" />
-                        <Skeleton className="h-4 w-full" />
-                        <Skeleton className="h-4 w-2/3" />
-                      </div>
-                    </div>
-                  )}
-
-                  {form.ai && !aiLoading && (
-                    <div className="space-y-4">
-                      {/* generated hero preview */}
-                      <div
-                        className="overflow-hidden rounded-xl text-white"
-                        style={{
-                          background: `linear-gradient(135deg, ${form.brandPrimary}, ${form.brandSecondary})`,
-                        }}
-                      >
-                        <div className="p-5 sm:p-6">
-                          {form.ai.heroBadge && (
-                            <span className="inline-block rounded-full bg-amber-500 px-2.5 py-0.5 text-[11px] font-semibold">
-                              {form.ai.heroBadge}
-                            </span>
-                          )}
-                          <p className="mt-2 text-xl font-bold leading-snug sm:text-2xl">
-                            {form.ai.heroHeading}
-                          </p>
-                          <p className="mt-1.5 text-sm text-white/85">{form.ai.heroSubheading}</p>
-                          <div className="mt-3 flex flex-wrap gap-2">
-                            <span
-                              className="rounded-lg bg-white px-3 py-1.5 text-xs font-semibold"
-                              style={{ color: form.brandPrimary }}
-                            >
-                              {form.ai.ctaPrimary || "Get a Free Quote"}
-                            </span>
-                            <span className="rounded-lg border border-white/40 px-3 py-1.5 text-xs font-semibold text-white">
-                              {form.ai.ctaSecondary || "Call Now"}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* editable content */}
-                      <div className="space-y-3">
-                        <div className="space-y-1.5">
-                          <Label htmlFor="ai-heading">Headline</Label>
-                          <Input
-                            id="ai-heading"
-                            value={form.ai.heroHeading || ""}
-                            onChange={(e) => setAiField("heroHeading", e.target.value)}
-                            className="rounded-xl"
-                          />
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label htmlFor="ai-subheading">Subheading</Label>
-                          <Textarea
-                            id="ai-subheading"
-                            rows={2}
-                            value={form.ai.heroSubheading || ""}
-                            onChange={(e) => setAiField("heroSubheading", e.target.value)}
-                            className="rounded-xl"
-                          />
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label htmlFor="ai-about">About your business</Label>
-                          <Textarea
-                            id="ai-about"
-                            rows={4}
-                            value={form.ai.about || ""}
-                            onChange={(e) => setAiField("about", e.target.value)}
-                            className="rounded-xl"
-                          />
-                        </div>
-                      </div>
-
-                      {/* stats */}
-                      {form.ai.stats && form.ai.stats.length > 0 && (
-                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                          {form.ai.stats.slice(0, 4).map((s, i) => (
-                            <div
-                              key={i}
-                              className="rounded-xl border border-zinc-200 bg-white p-3 text-center"
-                            >
-                              <p className="text-lg font-bold text-emerald-700">{s.value}</p>
-                              <p className="text-[11px] text-zinc-500">{s.label}</p>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                      {/* FAQs collapsed */}
-                      {form.ai.faqs && form.ai.faqs.length > 0 && (
-                        <Accordion
-                          type="single"
-                          collapsible
-                          className="rounded-xl border border-zinc-200 bg-white px-4"
-                        >
-                          {form.ai.faqs.map((f, i) => (
-                            <AccordionItem key={i} value={`faq-${i}`}>
-                              <AccordionTrigger className="text-left text-sm font-medium text-zinc-800">
-                                {f.question}
-                              </AccordionTrigger>
-                              <AccordionContent className="text-sm text-zinc-600">
-                                {f.answer}
-                              </AccordionContent>
-                            </AccordionItem>
-                          ))}
-                        </Accordion>
-                      )}
-
-                      {(form.ai.seoTitle || form.ai.seoDescription) && (
-                        <p className="text-xs text-zinc-500">
-                          <span className="font-semibold text-zinc-700">SEO:</span>{" "}
-                          {form.ai.seoTitle}
-                          {form.ai.seoDescription ? ` — ${form.ai.seoDescription}` : ""}
-                        </p>
-                      )}
-                    </div>
-                  )}
-
-                  {!form.ai && !aiLoading && (
-                    <p className="rounded-xl border border-dashed border-emerald-300 bg-white p-4 text-center text-sm text-zinc-500">
-                      No content yet — hit <span className="font-semibold text-emerald-700">Generate content</span>{" "}
-                      above, or continue and our smart fallback will fill it in.
-                    </p>
-                  )}
-                </div>
-
-                {/* Full mock preview in browser chrome */}
-                <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm">
-                  <div className="flex items-center gap-2 border-b border-zinc-200 bg-zinc-50 px-4 py-2.5">
-                    <span className="h-2.5 w-2.5 rounded-full bg-red-400" aria-hidden="true" />
-                    <span className="h-2.5 w-2.5 rounded-full bg-amber-400" aria-hidden="true" />
-                    <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" aria-hidden="true" />
-                    <span className="mx-auto flex items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 py-1 text-[11px] text-zinc-500">
-                      <Lock className="h-3 w-3" aria-hidden="true" />
-                      websetu.in/{slugGuess}
-                    </span>
-                    <span className="w-10" aria-hidden="true" />
-                  </div>
-
-                  <div className="max-h-[520px] overflow-y-auto [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-zinc-300 [&::-webkit-scrollbar]:w-1.5">
-                    {/* mini hero */}
-                    <div
-                      className="p-6 text-white sm:p-8"
-                      style={{
-                        background: `linear-gradient(135deg, ${form.brandPrimary}, ${form.brandSecondary})`,
-                      }}
-                    >
-                      <span className="inline-block rounded-full bg-amber-500 px-2.5 py-0.5 text-[11px] font-semibold">
-                        {form.ai?.heroBadge || `★ Trusted in ${form.city || "India"}`}
-                      </span>
-                      <h3 className="mt-2 text-xl font-bold leading-snug sm:text-2xl">
-                        {form.ai?.heroHeading || form.name || "Your Business Name"}
-                      </h3>
-                      <p className="mt-1.5 max-w-lg text-sm text-white/85">
-                        {form.ai?.heroSubheading ||
-                          form.tagline ||
-                          `Trusted ${finalCategory || "business"} in ${form.city || "your city"}`}
-                      </p>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        <span
-                          className="rounded-lg bg-white px-3 py-1.5 text-xs font-semibold"
-                          style={{ color: form.brandPrimary }}
-                        >
-                          {form.ai?.ctaPrimary || "Get a Free Quote"}
-                        </span>
-                        <span className="rounded-lg border border-white/40 px-3 py-1.5 text-xs font-semibold">
-                          {form.ai?.ctaSecondary || "Call Now"}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* stats strip */}
-                    {form.ai?.stats && form.ai.stats.length > 0 && (
-                      <div className="grid grid-cols-2 gap-px bg-zinc-200 sm:grid-cols-4">
-                        {form.ai.stats.slice(0, 4).map((s, i) => (
-                          <div key={i} className="bg-white p-3 text-center">
-                            <p className="text-base font-bold" style={{ color: form.brandPrimary }}>
-                              {s.value}
-                            </p>
-                            <p className="text-[10px] uppercase tracking-wide text-zinc-500">{s.label}</p>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* about wireframe */}
-                    {(form.ai?.about || form.description) && (
-                      <div className="border-t border-zinc-100 p-5 sm:p-6">
-                        <p className="text-sm font-bold text-zinc-900">
-                          About {form.name || "Us"}
-                        </p>
-                        <p className="mt-1.5 line-clamp-4 text-xs leading-relaxed text-zinc-600">
-                          {form.ai?.about || form.description}
-                        </p>
-                      </div>
-                    )}
-
-                    {/* services wireframe */}
-                    {form.services.length > 0 && (
-                      <div className="border-t border-zinc-100 p-5 sm:p-6">
-                        <p className="text-sm font-bold text-zinc-900">Our Services</p>
-                        <p className="text-xs text-zinc-500">
-                          What we offer in {form.city || "your area"}
-                        </p>
-                        <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                          {form.services.slice(0, 6).map((s) => (
-                            <div
-                              key={s.id}
-                              className="rounded-xl border border-zinc-200 p-3"
-                              style={{ borderTopColor: form.brandAccent, borderTopWidth: 2 }}
-                            >
-                              <p className="text-xs font-semibold text-zinc-900">{s.name}</p>
-                              {s.description && (
-                                <p className="mt-0.5 line-clamp-2 text-[11px] text-zinc-500">
-                                  {s.description}
-                                </p>
-                              )}
-                              <p
-                                className="mt-1.5 text-[10px] font-semibold"
-                                style={{ color: form.brandPrimary }}
-                              >
-                                Enquire →
-                              </p>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* contact strip */}
-                    <div className="p-5 text-white sm:p-6" style={{ background: "#18181b" }}>
-                      <p className="text-sm font-bold">Ready to work with {form.name || "us"}?</p>
-                      <p className="mt-1 text-xs text-zinc-400">
-                        Call, WhatsApp or send an enquiry — we respond fast.
-                      </p>
-                      <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
-                        <span className="rounded-lg px-3 py-1.5 font-semibold" style={{ background: form.brandAccent }}>
-                          📞 {form.phone || "Your Phone"}
-                        </span>
-                        <span className="rounded-lg bg-emerald-600 px-3 py-1.5 font-semibold">
-                          WhatsApp Us
-                        </span>
-                        {form.email && <span className="text-zinc-400">✉ {form.email}</span>}
-                      </div>
-                    </div>
-
-                    {/* mini footer */}
-                    <div className="bg-zinc-100 p-3 text-center text-[10px] text-zinc-500">
-                      © {form.name || "Your Business"} · {form.city || "India"} — Powered by WebSetu
-                    </div>
-                  </div>
-                </div>
-
-                <div className="space-y-1.5">
-                  <p className="text-xs font-medium text-zinc-500">Your site will include:</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {SECTION_LIBRARY.map((s) => (
-                      <Badge
-                        key={s.type}
-                        variant="outline"
-                        className="rounded-full border-zinc-200 text-[11px] font-normal text-zinc-600"
-                      >
-                        {s.name}
-                      </Badge>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* ============================ STEP 7 — PUBLISH */}
-            {step === 7 && (
+            {/* ============================ STEP 3 — CREATE */}
+            {step === 3 && (
               <div className="space-y-6">
                 <StepHeader
                   icon={<Rocket className="h-5 w-5 text-emerald-600" aria-hidden="true" />}
-                  title="Choose your plan"
-                  sub="Start free — pick a plan anytime during or after your trial."
+                  title="Ready to create your website"
+                  sub="We design everything for your business — you can change any of it later from your dashboard."
                 />
 
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4" role="radiogroup" aria-label="Plan">
-                  {plans.map((p) => {
-                    const active = form.selectedPlanId === p.id;
-                    return (
-                      <Card
-                        key={p.id}
-                        role="radio"
-                        aria-checked={active}
-                        onClick={() => setField("selectedPlanId", p.id)}
-                        className={`relative flex cursor-pointer flex-col rounded-2xl transition-all ${
-                          active
-                            ? "border-emerald-600 ring-2 ring-emerald-600"
-                            : "border-zinc-200 hover:border-emerald-300"
-                        } ${p.popular ? "shadow-md" : ""}`}
-                      >
-                        {p.popular && (
-                          <Badge className="absolute -top-2.5 left-1/2 -translate-x-1/2 rounded-full bg-amber-500 text-white hover:bg-amber-500">
-                            Most Popular
-                          </Badge>
-                        )}
-                        <CardContent className="flex flex-1 flex-col p-5">
-                          <div className="flex items-center justify-between gap-2">
-                            <p className="text-sm font-bold text-zinc-900">{p.name}</p>
-                            {active && (
-                              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-600">
-                                <Check className="h-3 w-3 text-white" aria-hidden="true" />
-                              </span>
-                            )}
-                          </div>
-                          <p className="mt-0.5 text-xs text-zinc-500">{p.tagline}</p>
-                          <p className="mt-3">
-                            <span className="text-2xl font-extrabold text-zinc-900">₹{p.priceMonthly}</span>
-                            <span className="text-xs text-zinc-500">/mo</span>
-                          </p>
-                          <ul className="mt-3 flex-1 space-y-1.5">
-                            {p.features.map((f) => (
-                              <li key={f} className="flex items-start gap-1.5 text-xs text-zinc-600">
-                                <Check
-                                  className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600"
-                                  aria-hidden="true"
-                                />
-                                {f}
-                              </li>
-                            ))}
-                          </ul>
-                          <Button
-                            type="button"
-                            variant={active ? "default" : "outline"}
-                            className={`mt-4 w-full rounded-xl ${
-                              active ? "bg-emerald-600 text-white hover:bg-emerald-700" : ""
-                            }`}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setField("selectedPlanId", p.id);
-                            }}
-                          >
-                            {active && <Check className="h-4 w-4" aria-hidden="true" />}
-                            Choose {p.name} — ₹{p.priceMonthly}/mo
-                          </Button>
-                        </CardContent>
-                      </Card>
-                    );
-                  })}
-                  {!plans.length && !catalogLoading && (
-                    <p className="col-span-full rounded-xl border border-dashed border-zinc-300 bg-zinc-50 p-6 text-center text-sm text-zinc-500">
-                      Plans could not be loaded — don&apos;t worry, your free trial starts regardless.
+                <div className="overflow-hidden rounded-2xl border border-border">
+                  <div
+                    className="px-5 py-6 text-white"
+                    style={{ background: `linear-gradient(135deg, ${form.brandSecondary}, ${form.brandPrimary})` }}
+                  >
+                    <p className="text-xs font-semibold uppercase tracking-wider text-white/75">
+                      {industryFor(finalCategory).label} design
                     </p>
+                    <p className="mt-1 text-2xl font-bold">{form.name || "Your business"}</p>
+                    <p className="mt-1 text-sm text-white/80">
+                      {finalCategory}
+                      {form.city ? ` · ${form.city}` : ""}
+                    </p>
+                  </div>
+                  <ul className="grid gap-3 p-5 sm:grid-cols-2">
+                    {[
+                      `Design, colours & animation made for ${finalCategory || "your business"}`,
+                      "Services written for your trade",
+                      "Cover photo & gallery added for you",
+                      "About, Why-us & FAQs written for you",
+                      "SEO, Google Maps & WhatsApp button set up",
+                      "Live on your own link right away",
+                    ].map((line) => (
+                      <li key={line} className="flex items-start gap-2 text-sm text-foreground">
+                        <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" aria-hidden="true" />
+                        {line}
+                      </li>
+                    ))}
+                  </ul>
+                  {form.services.length > 0 && (
+                    <div className="border-t border-border px-5 py-4">
+                      <p className="text-xs font-semibold text-muted-foreground">Services on your website</p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {form.services.map((s) => (
+                          <span key={s.id} className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800">
+                            {s.name}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
                   )}
-                  {catalogLoading && (
-                    <p className="col-span-full text-center text-sm text-zinc-500">Loading plans…</p>
+                  {industryLoading && (
+                    <p className="flex items-center gap-2 border-t border-border px-5 py-3 text-xs text-muted-foreground" role="status">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> Writing services for {finalCategory}…
+                    </p>
                   )}
                 </div>
 
@@ -1955,7 +950,7 @@ export default function OnboardingView() {
                     type="button"
                     size="lg"
                     onClick={submitOnboarding}
-                    disabled={submitting}
+                    disabled={submitting || industryLoading}
                     className="h-12 w-full rounded-xl bg-emerald-600 px-6 text-base font-semibold text-white shadow-lg shadow-emerald-600/25 hover:bg-emerald-700 sm:w-auto"
                   >
                     {submitting ? (
@@ -1963,10 +958,11 @@ export default function OnboardingView() {
                     ) : (
                       <Rocket className="h-5 w-5" aria-hidden="true" />
                     )}
-                    Start 14-day free trial
+                    {submitting ? "Creating your website…" : "Create My Website"}
                   </Button>
-                  <p className="text-xs text-zinc-500">
-                    You can pick a plan anytime — your trial starts today, no payment now.
+                  <p className="text-xs text-muted-foreground">
+                    {TRIAL_LABEL} starts today — no payment now. Colours, photos, services and text can all be
+                    changed anytime.
                   </p>
                 </div>
               </div>
@@ -1974,18 +970,18 @@ export default function OnboardingView() {
           </div>
 
           {/* ---------------- sticky bottom nav ---------------- */}
-          <div className="sticky bottom-0 z-10 flex items-center justify-between gap-3 rounded-b-2xl border-t border-zinc-200 bg-white/95 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur sm:px-8">
+          <div className="sticky bottom-0 z-10 flex items-center justify-between gap-3 rounded-b-2xl border-t border-border bg-card/95 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur sm:px-8">
             <Button
               type="button"
               variant="ghost"
               onClick={back}
               disabled={step === 1 || submitting}
-              className={`rounded-xl text-zinc-600 hover:bg-zinc-100 ${step === 1 ? "invisible" : ""}`}
+              className={`rounded-xl text-muted-foreground hover:bg-muted ${step === 1 ? "invisible" : ""}`}
             >
               <ArrowLeft className="h-4 w-4" aria-hidden="true" /> Back
             </Button>
             <div className="flex items-center gap-3">
-              <span className="hidden text-xs text-zinc-400 sm:inline">
+              <span className="hidden text-xs text-muted-foreground sm:inline">
                 Step {step} of {TOTAL_STEPS}
               </span>
               {step < TOTAL_STEPS ? (
@@ -2016,7 +1012,7 @@ export default function OnboardingView() {
         </div>
       </main>
 
-      <footer className="mt-auto border-t border-zinc-200 bg-white py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] text-center text-xs text-zinc-500">
+      <footer className="mt-auto border-t border-border bg-card py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] text-center text-xs text-muted-foreground">
         © WebSetu — Setup wizard
       </footer>
     </div>
@@ -2032,30 +1028,9 @@ function StepHeader({ icon, title, sub }: { icon: React.ReactNode; title: string
         {icon}
       </div>
       <div>
-        <h2 className="text-lg font-bold text-zinc-900 sm:text-xl">{title}</h2>
-        <p className="mt-0.5 text-sm text-zinc-500">{sub}</p>
+        <h2 className="text-lg font-bold text-foreground sm:text-xl">{title}</h2>
+        <p className="mt-0.5 text-sm text-muted-foreground">{sub}</p>
       </div>
-    </div>
-  );
-}
-
-function ColorField({
-  id, label, value, onChange,
-}: {
-  id: string; label: string; value: string; onChange: (v: string) => void;
-}) {
-  return (
-    <div className="space-y-1.5">
-      <Label htmlFor={id}>{label}</Label>
-      <input
-        type="color"
-        id={id}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="h-10 w-full cursor-pointer rounded-lg border border-zinc-200 bg-white p-1"
-        aria-label={`${label} brand color`}
-      />
-      <p className="font-mono text-[11px] text-zinc-400">{value}</p>
     </div>
   );
 }

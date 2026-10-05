@@ -1,62 +1,63 @@
 import { db } from "@/lib/db";
-import { fail, getSessionUser, ok } from "@/lib/auth";
 import { serializeTemplate } from "@/lib/serialize";
+import { audit, HttpError, ok, readJson, requireAdmin, route, str } from "@/lib/api";
 
-async function requireAdmin(req: Request) {
-  const session = await getSessionUser(req);
-  if (!session) return { error: fail("Unauthorized", 401) as Response };
-  if (session.role !== "ADMIN") return { error: fail("Admin access required", 403) as Response };
-  return { session };
-}
+type Params = { params: Promise<{ id: string }> };
 
 /** PUT /api/admin/templates/[id] — edit template fields */
-export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const { error } = await requireAdmin(req);
-  if (error) return error;
+export const PUT = route(async (req: Request, { params }: Params) => {
+  const admin = await requireAdmin(req);
   const { id } = await params;
 
   const template = await db.template.findUnique({ where: { id } });
-  if (!template) return fail("Template not found", 404);
+  if (!template) throw new HttpError("Template not found", 404);
 
-  const body = (await req.json()) as {
+  const body = await readJson<{
     name?: string; category?: string; description?: string; premium?: boolean;
     gradient?: string; active?: boolean; sortOrder?: number;
-  };
-
-  if (body.name !== undefined && (typeof body.name !== "string" || body.name.trim().length < 2)) {
-    return fail("Template name must be at least 2 characters");
-  }
-  if (body.gradient !== undefined && (typeof body.gradient !== "string" || !body.gradient.trim())) {
-    return fail("Gradient must be a non-empty string");
-  }
+  }>(req);
 
   const data: Record<string, unknown> = {};
-  if (body.name !== undefined) data.name = body.name.trim();
-  if (body.category !== undefined) data.category = body.category;
-  if (body.description !== undefined) data.description = body.description;
+  if (body.name !== undefined) {
+    const name = str(body.name, 80);
+    if (name.length < 2) throw new HttpError("Template name must be at least 2 characters");
+    data.name = name;
+  }
+  if (body.gradient !== undefined) {
+    const gradient = str(body.gradient, 120);
+    if (!gradient) throw new HttpError("Gradient must be a non-empty string");
+    data.gradient = gradient;
+  }
+  if (body.category !== undefined) data.category = str(body.category, 60);
+  if (body.description !== undefined) data.description = str(body.description, 300);
   if (body.premium !== undefined) data.premium = Boolean(body.premium);
-  if (body.gradient !== undefined) data.gradient = body.gradient;
   if (body.active !== undefined) data.active = Boolean(body.active);
-  if (body.sortOrder !== undefined) data.sortOrder = Number(body.sortOrder);
+  if (body.sortOrder !== undefined) {
+    const value = Number(body.sortOrder);
+    if (!Number.isFinite(value)) throw new HttpError("sortOrder must be a number");
+    data.sortOrder = Math.trunc(value);
+  }
+  if (!Object.keys(data).length) throw new HttpError("Nothing to update");
 
   const updated = await db.template.update({ where: { id }, data });
+  await audit({ actor: admin.id, action: "TEMPLATE_UPDATE", entity: "template", entityId: id, meta: { fields: Object.keys(data) } });
   return ok(serializeTemplate(updated));
-}
+});
 
 /** DELETE /api/admin/templates/[id] — blocked while businesses still reference it */
-export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const { error } = await requireAdmin(req);
-  if (error) return error;
+export const DELETE = route(async (req: Request, { params }: Params) => {
+  const admin = await requireAdmin(req);
   const { id } = await params;
 
   const template = await db.template.findUnique({ where: { id } });
-  if (!template) return fail("Template not found", 404);
+  if (!template) throw new HttpError("Template not found", 404);
 
   const inUseCount = await db.business.count({ where: { templateId: id } });
   if (inUseCount > 0) {
-    return fail(`${inUseCount} businesses are using this template — set another one first`);
+    throw new HttpError(`${inUseCount} businesses are using this template — set another one first`, 409);
   }
 
   await db.template.delete({ where: { id } });
+  await audit({ actor: admin.id, action: "TEMPLATE_DELETE", entity: "template", entityId: id, meta: { slug: template.slug } });
   return ok({ deleted: true });
-}
+});

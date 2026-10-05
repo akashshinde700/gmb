@@ -1,32 +1,21 @@
 import { readFile } from "node:fs/promises";
-import path from "node:path";
 import { fail } from "@/lib/auth";
+import { mimeForExtension, resolveStoredFile } from "@/lib/uploads";
 
-const UPLOAD_DIR = path.resolve(process.cwd(), "public", "uploads");
-
-const MIME: Record<string, string> = {
-  jpg: "image/jpeg",
-  jpeg: "image/jpeg",
-  png: "image/png",
-  webp: "image/webp",
-  gif: "image/gif",
-  svg: "image/svg+xml",
-};
+export const runtime = "nodejs";
 
 /** GET /api/uploads/[file] — serve an uploaded image with immutable caching */
 export async function GET(_req: Request, { params }: { params: Promise<{ file: string }> }) {
   const { file } = await params;
 
-  // Only plain generated filenames allowed — blocks path traversal ("..", slashes, etc.)
-  if (!/^[A-Za-z0-9._-]+$/.test(file) || file.includes("..")) return fail("Not found", 404);
+  // Only plain generated filenames resolve; anything else (traversal, slashes,
+  // encoded segments) is refused before it reaches the filesystem.
+  const target = resolveStoredFile(file);
+  if (!target) return fail("Not found", 404);
 
   const ext = file.split(".").pop()?.toLowerCase() || "";
-  const contentType = MIME[ext];
+  const contentType = mimeForExtension(ext);
   if (!contentType) return fail("Not found", 404);
-
-  // Defense in depth: resolved path must stay inside the uploads directory
-  const target = path.resolve(UPLOAD_DIR, file);
-  if (!target.startsWith(UPLOAD_DIR + path.sep)) return fail("Not found", 404);
 
   try {
     const buffer = await readFile(target);
@@ -34,6 +23,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ file: s
       headers: {
         "Content-Type": contentType,
         "Cache-Control": "public, max-age=31536000, immutable",
+        // Stored bytes are sniffed as images on upload; stop browsers from
+        // re-interpreting an old file as anything else.
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox",
       },
     });
   } catch {

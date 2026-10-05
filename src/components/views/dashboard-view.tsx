@@ -5,11 +5,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle, ArrowLeft, BarChart3, Bell, Briefcase, Building2, Check, CheckCircle2,
-  ChevronDown, ChevronUp, Clock, Copy, CreditCard, Download, ExternalLink, Eye, EyeOff,
+  ChevronDown, ChevronUp, Clock, Copy, CreditCard, ExternalLink, Eye, EyeOff,
   Globe, GripVertical, HelpCircle, Image as ImageIcon, ImagePlus, Inbox, Info, LayoutDashboard,
   LayoutTemplate, Link2, Loader2, LogOut, Mail, MapPin, Menu, MessageCircle, Monitor,
-  Newspaper, Package, Palette, Pencil, Phone, Play, Plus, QrCode, Quote, Rocket, Save, Search, Settings,
-  ShieldCheck, Smartphone, Sparkles, Star, Tablet, Trash2, TrendingUp, Upload, Users, XCircle,
+  Newspaper, Package, Palette, Pencil, Phone, Plus, QrCode, Quote, Rocket, Save, Search, Settings,
+  ShieldCheck, Smartphone, Sparkles, Star, Tablet, Trash2, TrendingUp, Users, XCircle,
   Youtube,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -21,15 +21,27 @@ import { useApp } from "@/store/app-store";
 import type { BusinessWithMeta, DashboardTab } from "@/store/app-store";
 import { computeHealth } from "@/lib/health";
 import { DEFAULT_THEME, SECTION_LIBRARY } from "@/lib/sections";
-import { BRAND_PALETTES } from "@/lib/palettes";
+import { INDUSTRY_PRESETS, industryByKey, resolveIndustry } from "@/lib/industries";
+import { usePalettes } from "@/hooks/use-palettes";
+import { openCheckout } from "@/lib/checkout";
+import LeadsTab from "@/components/views/leads-tab";
+import { FormError } from "@/components/views/console-ui";
+import ConsoleBreadcrumb from "@/components/views/console-breadcrumb";
+import SupportVisitBanner from "@/components/views/support-visit-banner";
+import { tabTitle } from "@/lib/console-tabs";
+import { useUnsavedChanges } from "@/hooks/use-unsaved-changes";
+import { gstFor } from "@/lib/gst";
+import DomainsCard from "@/components/views/domains-card";
 import { isValidUpiId, upiDeepLink, youtubeId } from "@/lib/site-utils";
+import { isQuoteOnlyPlan } from "@/lib/trial";
 import QRCode from "react-qr-code";
 import type {
-  AnalyticsSummary, BlogPost, Business, Faq, GalleryItem, Lead,
-  LeadStatus, Plan, Product, Service, SitePayload, SiteSection, SiteTheme, Testimonial, WebsiteData,
+  AnalyticsSummary, AppearanceAllowance, BlogPost, Business, Faq, GalleryItem,
+  Plan, Product, Service, SitePayload, SiteSection, SiteTheme, Testimonial, WebsiteData,
 } from "@/lib/types";
 import SiteRenderer from "@/components/site/site-renderer";
 import { toast } from "@/hooks/use-toast";
+import { ToastAction } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
@@ -39,7 +51,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import {
   Collapsible, CollapsibleContent, CollapsibleTrigger,
 } from "@/components/ui/collapsible";
@@ -64,7 +76,6 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 
 /* ---------------------------------- style ---------------------------------- */
@@ -80,6 +91,101 @@ const SCROLL_CSS = `
 /* --------------------------------- helpers --------------------------------- */
 
 type Rec = Record<string, unknown>;
+
+/**
+ * The public address of a tenant site. `/s/<slug>` is the server-rendered route
+ * search engines actually index — the dashboard preview behind `#/site/<slug>`
+ * is client-only and invisible to crawlers.
+ */
+/**
+ * The address an owner can actually send to somebody.
+ *
+ * Absolute, not the `/s/<slug>` path this used to return. A relative path is
+ * fine for a link on the page and useless the moment it is copied — and copying
+ * it is the whole point. The publish toast said "your site is live at /s/..."
+ * and left the owner with nothing to paste.
+ *
+ * Always the platform address, even for a business on its own domain: this URL
+ * serves the site either way, so it is never wrong. A custom domain is the
+ * nicer thing to share and the Domains card is where it is shown.
+ */
+function liveSiteUrl(slug: string): string {
+  // The host the owner is actually looking at, not a configured one. Both the
+  // repo's .env and .env.example ship NEXT_PUBLIC_APP_URL pointing at
+  // production, so preferring that would hand somebody running this locally a
+  // "public link" to a different deployment's copy of their site. The env value
+  // stays as the server-render fallback, where there is no window.
+  const origin =
+    typeof window !== "undefined" ? window.location.origin : process.env.NEXT_PUBLIC_APP_URL || "";
+  return `${origin.replace(/\/$/, "")}/s/${slug}`;
+}
+
+/**
+ * The owner's public link, with a button that copies it.
+ *
+ * This exists because a customer published their site, clicked the big green
+ * "View Website" button, copied what was in the address bar and sent it to
+ * people — and every one of them got a login screen. The button opened
+ * /preview/<slug>, which is the owner-only view of unpublished work. The real
+ * address was in eight-point text in the footer.
+ *
+ * The thing an owner needs most from this dashboard, after the site itself, is
+ * the address to send people. So it is written out, in full, next to a button
+ * that puts it on the clipboard.
+ */
+function PublicLink({ slug, domain }: { slug: string; domain?: string | null }) {
+  const [copied, setCopied] = useState(false);
+  // Once a custom domain is live it IS the address to hand out; the WebSetu
+  // one keeps working but is no longer what the owner should be sharing.
+  const url = domain ? `https://${domain}` : liveSiteUrl(slug);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      // Clipboard access can be refused (insecure origin, permissions). The URL
+      // is on screen either way, so this degrades to "select it yourself".
+      return;
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1800);
+  }
+
+  return (
+    <div className="rounded-xl border bg-card p-2.5">
+      <p className="mb-1 text-[11px] font-medium text-muted-foreground">
+        {domain ? "Your website address" : "Your public link"}
+      </p>
+      <div className="flex items-start gap-1.5">
+        {/* Wrapped, not truncated: the whole point of this panel is that the
+            owner can read the address they are about to send someone. */}
+        <a
+          href={url}
+          target="_blank"
+          rel="noreferrer"
+          className="min-w-0 flex-1 break-all text-[11px] leading-snug text-foreground hover:text-emerald-700 hover:underline"
+        >
+          {url.replace(/^https?:\/\//, "")}
+        </a>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-7 shrink-0 rounded-lg px-2"
+          title="Copy link"
+          onClick={() => void copy()}
+          aria-label={copied ? "Link copied" : "Copy your public link"}
+        >
+          {copied ? (
+            <Check className="h-3.5 w-3.5 text-emerald-600" aria-hidden="true" />
+          ) : (
+            <Copy className="h-3.5 w-3.5" aria-hidden="true" />
+          )}
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : "Something went wrong. Please try again.";
@@ -135,6 +241,8 @@ function useFetch<T>(fn: () => Promise<T>, deps: unknown[] = []) {
     } finally {
       setLoading(false);
     }
+    // `deps` is supplied by the caller, which the lint rule cannot verify.
+    // eslint-disable-next-line react-hooks/use-memo
   }, deps);
   useEffect(() => {
     void run();
@@ -144,13 +252,21 @@ function useFetch<T>(fn: () => Promise<T>, deps: unknown[] = []) {
 
 /* ------------------------------ shared widgets ------------------------------ */
 
+/**
+ * A labelled form field.
+ *
+ * The label wraps the control so the two are associated implicitly: every field
+ * in the dashboard used to render a <Label> with no htmlFor beside an input with
+ * no id, which left the whole dashboard's forms unlabelled for screen readers
+ * and made clicking a label do nothing.
+ */
 function Labeled({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
   return (
-    <div className="space-y-1.5">
-      <Label className="text-xs font-medium text-zinc-600">{label}</Label>
+    <label className="block space-y-1.5">
+      <span className="block text-xs font-medium leading-none text-muted-foreground">{label}</span>
       {children}
-      {hint ? <p className="text-[11px] text-zinc-400">{hint}</p> : null}
-    </div>
+      {hint ? <span className="block text-[11px] text-muted-foreground">{hint}</span> : null}
+    </label>
   );
 }
 
@@ -158,8 +274,8 @@ function PageHeader({ title, subtitle, action }: { title: string; subtitle?: str
   return (
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div>
-        <h1 className="text-xl font-bold tracking-tight text-zinc-900 md:text-2xl">{title}</h1>
-        {subtitle ? <p className="mt-0.5 text-sm text-zinc-500">{subtitle}</p> : null}
+        <h1 className="text-xl font-bold tracking-tight text-foreground md:text-2xl">{title}</h1>
+        {subtitle ? <p className="mt-0.5 text-sm text-muted-foreground">{subtitle}</p> : null}
       </div>
       {action}
     </div>
@@ -172,7 +288,7 @@ function StatCard({ icon: Icon, label, value, tint = "emerald" }: {
   const tints: Record<string, string> = {
     emerald: "bg-emerald-50 text-emerald-600",
     amber: "bg-amber-50 text-amber-600",
-    zinc: "bg-zinc-100 text-zinc-600",
+    zinc: "bg-muted text-muted-foreground",
   };
   return (
     <Card className="rounded-2xl p-4">
@@ -181,8 +297,8 @@ function StatCard({ icon: Icon, label, value, tint = "emerald" }: {
           <Icon className="h-5 w-5" />
         </span>
         <div className="min-w-0">
-          <p className="truncate text-xs font-medium text-zinc-500">{label}</p>
-          <p className="text-lg font-bold text-zinc-900">{value}</p>
+          <p className="truncate text-xs font-medium text-muted-foreground">{label}</p>
+          <p className="text-lg font-bold text-foreground">{value}</p>
         </div>
       </div>
     </Card>
@@ -193,12 +309,12 @@ function EmptyState({ icon: Icon, title, hint, action }: {
   icon: LucideIcon; title: string; hint?: string; action?: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-col items-center justify-center gap-2 rounded-2xl border border-dashed bg-zinc-50/60 px-6 py-12 text-center">
-      <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-zinc-400 shadow-sm">
+    <div className="flex flex-col items-center justify-center gap-2 rounded-2xl border border-dashed bg-muted/60 px-6 py-12 text-center">
+      <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-card text-muted-foreground shadow-sm">
         <Icon className="h-6 w-6" />
       </span>
-      <p className="text-sm font-semibold text-zinc-700">{title}</p>
-      {hint ? <p className="max-w-sm text-xs text-zinc-500">{hint}</p> : null}
+      <p className="text-sm font-semibold text-foreground">{title}</p>
+      {hint ? <p className="max-w-sm text-xs text-muted-foreground">{hint}</p> : null}
       {action ? <div className="mt-2">{action}</div> : null}
     </div>
   );
@@ -230,18 +346,29 @@ function ScoreRing({ score }: { score: number }) {
         />
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className="text-3xl font-bold text-zinc-900">{score}</span>
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">/ 100</span>
+        <span className="text-3xl font-bold text-foreground">{score}</span>
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">/ 100</span>
       </div>
     </div>
   );
 }
 
-function DeleteConfirm({ onConfirm, label, disabled }: { onConfirm: () => void; label: string; disabled?: boolean }) {
+function DeleteConfirm({ onConfirm, label, disabled, name }: {
+  onConfirm: () => void; label: string; disabled?: boolean;
+  /** What is being deleted — a screen reader hears "Delete" ten times over. */
+  name?: string;
+}) {
   return (
     <AlertDialog>
       <AlertDialogTrigger asChild>
-        <Button variant="ghost" size="icon" className="h-8 w-8 text-zinc-400 hover:text-red-600" disabled={disabled} aria-label="Delete">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 text-muted-foreground hover:text-red-600"
+          disabled={disabled}
+          aria-label={name ? `Delete ${name}` : "Delete"}
+          title={name ? `Delete ${name}` : "Delete"}
+        >
           <Trash2 className="h-4 w-4" />
         </Button>
       </AlertDialogTrigger>
@@ -260,16 +387,6 @@ function DeleteConfirm({ onConfirm, label, disabled }: { onConfirm: () => void; 
     </AlertDialog>
   );
 }
-
-const LEAD_STATUS_STYLE: Record<string, string> = {
-  NEW: "bg-emerald-100 text-emerald-700 border-emerald-200",
-  CONTACTED: "bg-zinc-100 text-zinc-700 border-zinc-200",
-  FOLLOW_UP: "bg-amber-100 text-amber-800 border-amber-200",
-  QUALIFIED: "bg-amber-100 text-amber-800 border-amber-200",
-  CONVERTED: "bg-emerald-100 text-emerald-700 border-emerald-200",
-  CLOSED: "bg-zinc-100 text-zinc-500 border-zinc-200",
-  SPAM: "bg-red-100 text-red-700 border-red-200",
-};
 
 function SubStatusBadge({ status }: { status: string }) {
   if (status === "ACTIVE") {
@@ -334,7 +451,11 @@ const SECTION_ICONS: Record<string, LucideIcon> = {
   image: ImageIcon,
   quote: Quote,
   "help-circle": HelpCircle,
+  newspaper: Newspaper,
   phone: Phone,
+  // The payment section has always declared this icon; the map never had it, so
+  // it fell through to the placeholder.
+  "qr-code": QrCode,
   clock: Clock,
   "map-pin": MapPin,
 };
@@ -357,7 +478,7 @@ function NavList({
     <nav aria-label="Dashboard navigation" className="flex-1 space-y-4 overflow-y-auto px-3 py-3 ws-scroll">
       {NAV.map((group) => (
         <div key={group.section}>
-          <p className="px-2 pb-1 text-[10px] font-bold uppercase tracking-widest text-zinc-400">{group.section}</p>
+          <p className="px-2 pb-1 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">{group.section}</p>
           <div className="space-y-0.5">
             {group.items.map((item) => {
               const active = tab === item.tab;
@@ -374,16 +495,16 @@ function NavList({
                     "flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-sm font-medium transition",
                     active
                       ? "bg-emerald-600 text-white shadow-sm"
-                      : "text-zinc-600 hover:bg-zinc-200/60 hover:text-zinc-900",
+                      : "text-muted-foreground hover:bg-zinc-200/60 hover:text-foreground",
                   )}
                 >
-                  <item.icon className={cn("h-4 w-4 shrink-0", active ? "text-white" : "text-zinc-400")} />
+                  <item.icon className={cn("h-4 w-4 shrink-0", active ? "text-white" : "text-muted-foreground")} />
                   <span className="flex-1 text-left">{item.label}</span>
                   {item.tab === "leads" && newLeads > 0 ? (
                     <span
                       className={cn(
                         "flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[10px] font-bold",
-                        active ? "bg-white/20 text-white" : "bg-emerald-600 text-white",
+                        active ? "bg-card/20 text-white" : "bg-emerald-600 text-white",
                       )}
                     >
                       {newLeads}
@@ -427,6 +548,8 @@ function NotificationBell({ className }: { className?: string }) {
   }, [setUnreadStore]);
 
   useEffect(() => {
+    // Fetch on mount; the loading flag is set once before the first await.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [load]);
 
@@ -447,7 +570,7 @@ function NotificationBell({ className }: { className?: string }) {
           type="button"
           aria-label={`Notifications${unread ? `, ${unread} unread` : ""}`}
           className={cn(
-            "relative flex h-9 w-9 items-center justify-center rounded-xl text-zinc-500 transition hover:bg-zinc-200/60 hover:text-zinc-800",
+            "relative flex h-9 w-9 items-center justify-center rounded-xl text-muted-foreground transition hover:bg-zinc-200/60 hover:text-foreground",
             className,
           )}
         >
@@ -461,7 +584,7 @@ function NotificationBell({ className }: { className?: string }) {
       </PopoverTrigger>
       <PopoverContent align="end" className="w-80 rounded-2xl p-0">
         <div className="flex items-center justify-between border-b px-4 py-3">
-          <p className="text-sm font-semibold text-zinc-900">Notifications</p>
+          <p className="text-sm font-semibold text-foreground">Notifications</p>
           {unread > 0 ? (
             <Button variant="ghost" size="sm" className="h-7 text-xs text-emerald-700 hover:text-emerald-800" onClick={markAllRead}>
               Mark all read
@@ -476,15 +599,15 @@ function NotificationBell({ className }: { className?: string }) {
               ))}
             </div>
           ) : items.length === 0 ? (
-            <p className="px-4 py-10 text-center text-sm text-zinc-400">No notifications yet</p>
+            <p className="px-4 py-10 text-center text-sm text-muted-foreground">No notifications yet</p>
           ) : (
             items.map((n) => (
               <div key={n.id} className={cn("flex gap-3 border-b px-4 py-3 last:border-b-0", !n.read && "bg-emerald-50/50")}>
                 <span className={cn("mt-1.5 h-2 w-2 shrink-0 rounded-full", n.read ? "bg-zinc-200" : "bg-emerald-500")} />
                 <div className="min-w-0">
-                  <p className="text-sm font-medium leading-snug text-zinc-800">{n.title}</p>
-                  {n.body ? <p className="mt-0.5 text-xs leading-snug text-zinc-500">{n.body}</p> : null}
-                  <p className="mt-1 text-[10px] text-zinc-400">{timeAgo(n.createdAt)}</p>
+                  <p className="text-sm font-medium leading-snug text-foreground">{n.title}</p>
+                  {n.body ? <p className="mt-0.5 text-xs leading-snug text-muted-foreground">{n.body}</p> : null}
+                  <p className="mt-1 text-[10px] text-muted-foreground">{timeAgo(n.createdAt)}</p>
                 </div>
               </div>
             ))
@@ -515,86 +638,113 @@ export default function DashboardView() {
 
   const [content, setContent] = useState<ContentState>(EMPTY_CONTENT);
   const [contentLoading, setContentLoading] = useState(true);
-  const [leads, setLeads] = useState<Lead[]>([]);
-  const [leadsLoading, setLeadsLoading] = useState(true);
+  // Only the badge count, not the rows: the leads screen fetches its own page.
+  const [newLeads, setNewLeads] = useState(0);
 
+  const CONTENT_ENDPOINT: Record<keyof ContentState, string> = useMemo(() => ({
+    services: "/api/content/services",
+    products: "/api/content/products",
+    gallery: "/api/content/gallery",
+    testimonials: "/api/content/testimonials",
+    faqs: "/api/content/faqs",
+    blog: "/api/content/blog",
+  }), []);
+
+  /**
+   * Refresh one content type.
+   *
+   * This used to build an object literal that awaited all six endpoints and
+   * then picked one out of it — six sequential round-trips to refresh a single
+   * list, every time a service was edited.
+   */
   const refetchContent = useCallback(async (type: keyof ContentState) => {
     try {
-      const map: Record<keyof ContentState, unknown> = {
-        services: await api.get<Service[]>(`/api/content/services`),
-        products: await api.get<Product[]>(`/api/content/products`),
-        gallery: await api.get<GalleryItem[]>(`/api/content/gallery`),
-        testimonials: await api.get<Testimonial[]>(`/api/content/testimonials`),
-        faqs: await api.get<Faq[]>(`/api/content/faqs`),
-        blog: await api.get<BlogPost[]>(`/api/content/blog`),
-      };
-      setContent((c) => ({ ...c, [type]: map[type] }) as ContentState);
+      const rows = await api.get<unknown[]>(CONTENT_ENDPOINT[type]);
+      setContent((c) => ({ ...c, [type]: rows }) as ContentState);
     } catch (e) {
       toast({ title: "Could not refresh content", description: errMsg(e), variant: "destructive" });
     }
-  }, []);
+  }, [CONTENT_ENDPOINT]);
 
-  const refetchLeads = useCallback(async () => {
-    setLeadsLoading(true);
-    try {
-      setLeads(await api.get<Lead[]>("/api/leads"));
-    } catch {
-      /* silent — tab shows empty state */
-    } finally {
-      setLeadsLoading(false);
-    }
-  }, []);
+  // Which content types have been fetched, so opening a tab twice does not
+  // re-fetch and so the six lists are not all loaded to show one.
+  const loadedTypes = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    void (async () => {
-      setContentLoading(true);
-      try {
-        const [services, products, gallery, testimonials, faqs, blog] = await Promise.all([
-          api.get<Service[]>("/api/content/services").catch(() => []),
-          api.get<Product[]>("/api/content/products").catch(() => []),
-          api.get<GalleryItem[]>("/api/content/gallery").catch(() => []),
-          api.get<Testimonial[]>("/api/content/testimonials").catch(() => []),
-          api.get<Faq[]>("/api/content/faqs").catch(() => []),
-          api.get<BlogPost[]>("/api/content/blog").catch(() => []),
-        ]);
-        setContent({ services, products, gallery, testimonials, faqs, blog });
-      } finally {
-        setContentLoading(false);
-      }
-    })();
-    void refetchLeads();
-  }, [refetchLeads]);
+    // Content is loaded when its tab is opened, not on mount. A cold dashboard
+    // used to fire eleven requests — six of them for lists behind tabs the
+    // visitor had not clicked.
+    const type = tab as keyof ContentState;
+    if (!CONTENT_ENDPOINT[type] || loadedTypes.current.has(type)) return;
+    loadedTypes.current.add(type);
 
-  const newLeads = useMemo(() => leads.filter((l) => l.status === "NEW").length, [leads]);
+    let cancelled = false;
+    setContentLoading(true);
+    void api
+      .get<unknown[]>(CONTENT_ENDPOINT[type])
+      .then((rows) => {
+        if (!cancelled) setContent((c) => ({ ...c, [type]: rows }) as ContentState);
+      })
+      .catch(() => {
+        // Let the tab show its own empty state rather than a toast for a list
+        // the visitor may not even be looking at yet.
+        loadedTypes.current.delete(type);
+      })
+      .finally(() => {
+        if (!cancelled) setContentLoading(false);
+      });
 
-  function applyLeadUpdate(updated: Lead) {
-    setLeads((ls) => ls.map((l) => (l.id === updated.id ? updated : l)));
-  }
-  function applyLeadDelete(id: string) {
-    setLeads((ls) => ls.filter((l) => l.id !== id));
-  }
+    return () => { cancelled = true; };
+  }, [tab, CONTENT_ENDPOINT]);
+
+  // The sidebar badge needs a number, not a dataset. One cheap request rather
+  // than every lead the business has ever received.
+  useEffect(() => {
+    void api
+      .raw<unknown[], { newCount?: number }>("/api/leads?take=1")
+      .then((res) => setNewLeads(res.meta.newCount ?? 0))
+      .catch(() => {});
+  }, []);
 
   if (!business) return null;
 
   return (
-    <div className="flex min-h-screen flex-col bg-zinc-100/70">
+    <div className="flex min-h-screen flex-col bg-muted/70 text-foreground">
+      {/* Shown only during a support visit: this is the customer's dashboard,
+          opened by an admin, and the way back belongs on screen. */}
+      <SupportVisitBanner />
       <style>{SCROLL_CSS}</style>
       <div className="flex flex-1">
         {/* ---------- Desktop sidebar ---------- */}
-        <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r bg-zinc-50 lg:flex">
-          <a href="#/" className="flex items-center gap-2 px-5 pb-2 pt-5" aria-label="WebSetu home">
+        <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r bg-muted lg:flex">
+          <a href="/" className="flex items-center gap-2 px-5 pb-2 pt-5" aria-label="WebSetu home">
             <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-emerald-600 text-base font-bold text-white">W</span>
-            <span className="text-lg font-bold tracking-tight text-zinc-900">WebSetu</span>
+            <span className="text-lg font-bold tracking-tight text-foreground">WebSetu</span>
           </a>
           <BusinessCard business={business} />
           <NavList tab={tab} newLeads={newLeads} />
-          <div className="space-y-2 border-t bg-zinc-50 p-3">
-            <Button
-              className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-700"
-              onClick={() => openSite(business.slug, "dashboard")}
-            >
-              <ExternalLink className="h-4 w-4" /> View Website
-            </Button>
+          <div className="space-y-2 border-t bg-muted p-3">
+            {/* A published site opens at its real address, in a new tab, exactly
+                as a visitor would see it. Only a draft opens the owner-only
+                preview -- and then it says so, because "View Website" on a
+                private URL is how an owner ends up sharing a login screen. */}
+            {business.status === "PUBLISHED" ? (
+              <a href={liveSiteUrl(business.slug)} target="_blank" rel="noreferrer" className="block">
+                <Button className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-700">
+                  <ExternalLink className="h-4 w-4" /> View Website
+                </Button>
+              </a>
+            ) : (
+              <Button
+                className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-700"
+                onClick={() => openSite(business.slug, "dashboard")}
+              >
+                <Eye className="h-4 w-4" /> Preview draft
+              </Button>
+            )}
+            {business.status === "PUBLISHED" && (
+              <PublicLink slug={business.slug} domain={business.primaryDomain} />
+            )}
             <div className="flex items-center justify-between pt-1">
               <NotificationBell />
               <DropdownMenu>
@@ -608,14 +758,14 @@ export default function DashboardView() {
                       {(user?.name || "U").charAt(0).toUpperCase()}
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-xs font-semibold text-zinc-800">{user?.name}</span>
-                      <span className="block truncate text-[10px] text-zinc-400">{user?.email}</span>
+                      <span className="block truncate text-xs font-semibold text-foreground">{user?.name}</span>
+                      <span className="block truncate text-[10px] text-muted-foreground">{user?.email}</span>
                     </span>
-                    <ChevronDown className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
+                    <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start" className="w-52">
-                  <DropdownMenuLabel className="text-xs text-zinc-500">{user?.email}</DropdownMenuLabel>
+                  <DropdownMenuLabel className="text-xs text-muted-foreground">{user?.email}</DropdownMenuLabel>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={() => useApp.getState().setDashboardTab("settings")}>
                     <Settings className="h-4 w-4" /> Settings
@@ -632,7 +782,7 @@ export default function DashboardView() {
         {/* ---------- Main column ---------- */}
         <div className="flex min-w-0 flex-1 flex-col">
           {/* Mobile topbar */}
-          <header className="sticky top-0 z-40 flex h-14 items-center gap-2 border-b bg-white px-3 lg:hidden">
+          <header className="sticky top-0 z-40 flex h-14 items-center gap-2 border-b bg-card px-3 lg:hidden">
             <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
               <SheetTrigger asChild>
                 <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" aria-label="Open menu">
@@ -642,7 +792,7 @@ export default function DashboardView() {
               <SheetContent side="left" className="w-72 p-0">
                 <SheetHeader className="border-b p-4 text-left">
                   <SheetTitle>
-                    <a href="#/" className="flex items-center gap-2">
+                    <a href="/" className="flex items-center gap-2">
                       <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-600 text-sm font-bold text-white">W</span>
                       WebSetu
                     </a>
@@ -653,9 +803,14 @@ export default function DashboardView() {
                   <div className="space-y-2 border-t p-3">
                     <Button
                       className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-700"
-                      onClick={() => { setSheetOpen(false); openSite(business.slug, "dashboard"); }}
+                      onClick={() => {
+                        setSheetOpen(false);
+                        if (business.status === "PUBLISHED") window.open(liveSiteUrl(business.slug), "_blank");
+                        else openSite(business.slug, "dashboard");
+                      }}
                     >
-                      <ExternalLink className="h-4 w-4" /> View Website
+                      <ExternalLink className="h-4 w-4" />{" "}
+                      {business.status === "PUBLISHED" ? "View Website" : "Preview draft"}
                     </Button>
                     <Button variant="outline" className="w-full rounded-xl text-red-600 hover:text-red-700" onClick={logout}>
                       <LogOut className="h-4 w-4" /> Log out
@@ -664,16 +819,16 @@ export default function DashboardView() {
                 </div>
               </SheetContent>
             </Sheet>
-            <a href="#/" className="flex items-center gap-2" aria-label="WebSetu home">
+            <a href="/" className="flex items-center gap-2" aria-label="WebSetu home">
               <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-600 text-sm font-bold text-white">W</span>
-              <span className="font-bold tracking-tight text-zinc-900">WebSetu</span>
+              <span className="font-bold tracking-tight text-foreground">WebSetu</span>
             </a>
             <span className="flex-1" />
             <NotificationBell />
           </header>
 
           {/* Mobile horizontal tab strip */}
-          <div className="ws-scroll sticky top-14 z-30 flex gap-1 overflow-x-auto border-b bg-white px-3 py-2 lg:hidden">
+          <div className="ws-scroll sticky top-14 z-30 flex gap-1 overflow-x-auto border-b bg-card px-3 py-2 lg:hidden">
             {NAV.flatMap((g) => g.items).map((item) => (
               <button
                 key={item.tab}
@@ -681,13 +836,13 @@ export default function DashboardView() {
                 onClick={() => useApp.getState().setDashboardTab(item.tab)}
                 className={cn(
                   "flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition",
-                  tab === item.tab ? "bg-emerald-600 text-white" : "bg-zinc-100 text-zinc-600",
+                  tab === item.tab ? "bg-emerald-600 text-white" : "bg-muted text-muted-foreground",
                 )}
               >
                 <item.icon className="h-3.5 w-3.5" />
                 {item.label}
                 {item.tab === "leads" && newLeads > 0 ? (
-                  <span className={cn("rounded-full px-1.5 text-[10px] font-bold", tab === item.tab ? "bg-white/20" : "bg-emerald-600 text-white")}>
+                  <span className={cn("rounded-full px-1.5 text-[10px] font-bold", tab === item.tab ? "bg-card/20" : "bg-emerald-600 text-white")}>
                     {newLeads}
                   </span>
                 ) : null}
@@ -697,6 +852,10 @@ export default function DashboardView() {
 
           {/* Tab content */}
           <main className="mx-auto w-full max-w-[1400px] flex-1 p-4 md:p-6">
+            <ConsoleBreadcrumb root="Dashboard" rootHref="/dashboard" current={tabTitle(tab)} />
+            {/* Keyed on the tab so switching sections replays the entrance; without
+                the key React reuses the node and nothing animates. */}
+            <div key={tab} className="ws-enter">
             {tab === "overview" && <OverviewTab business={business} content={content} contentLoading={contentLoading} />}
             {tab === "builder" && <BuilderTab business={business} content={content} />}
             {tab === "business" && <BusinessTab business={business} />}
@@ -708,23 +867,37 @@ export default function DashboardView() {
             {tab === "faqs" && <ContentTab type="faqs" rows={content.faqs as unknown as Rec[]} loading={contentLoading} refetch={() => refetchContent("faqs")} />}
             {tab === "blog" && <ContentTab type="blog" rows={content.blog as unknown as Rec[]} loading={contentLoading} refetch={() => refetchContent("blog")} />}
             {tab === "leads" && (
-              <LeadsTab leads={leads} loading={leadsLoading} refetch={refetchLeads} onApply={applyLeadUpdate} onDelete={applyLeadDelete} />
+              <LeadsTab onCountChange={setNewLeads} />
             )}
             {tab === "analytics" && <AnalyticsTab />}
             {tab === "subscription" && <SubscriptionTab business={business} servicesCount={content.services.length} />}
             {tab === "settings" && <SettingsTab />}
+            </div>
           </main>
 
           {/* Footer strip */}
-          <footer className="mt-auto border-t bg-white px-4 py-3">
-            <div className="mx-auto flex max-w-[1400px] flex-wrap items-center justify-between gap-2 text-xs text-zinc-500">
+          <footer className="mt-auto border-t bg-card px-4 py-3">
+            <div className="mx-auto flex max-w-[1400px] flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
               <p>© {new Date().getFullYear()} WebSetu — your business, online in minutes.</p>
               <p className="flex items-center gap-1.5">
                 <span className={cn("h-1.5 w-1.5 rounded-full", business.status === "PUBLISHED" ? "bg-emerald-500" : "bg-amber-500")} />
                 {business.status === "PUBLISHED" ? "Site live" : "Site is a draft"} ·
                 <button type="button" className="font-medium text-emerald-700 hover:underline" onClick={() => openSite(business.slug, "dashboard")}>
-                  {business.slug}.websetu.in
+                  Preview
                 </button>
+                {business.status === "PUBLISHED" && (
+                  <>
+                    ·
+                    <a
+                      href={liveSiteUrl(business.slug)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 font-medium text-emerald-700 hover:underline"
+                    >
+                      Open live site <ExternalLink className="h-3 w-3" aria-hidden="true" />
+                    </a>
+                  </>
+                )}
               </p>
             </div>
           </footer>
@@ -737,7 +910,7 @@ export default function DashboardView() {
 function BusinessCard({ business }: { business: BusinessWithMeta }) {
   const sub = business.subscription;
   return (
-    <div className="mx-3 mt-2 flex items-center gap-3 rounded-2xl border bg-white p-3 shadow-sm">
+    <div className="mx-3 mt-2 flex items-center gap-3 rounded-2xl border bg-card p-3 shadow-sm">
       {business.logoUrl ? (
         <img src={business.logoUrl} alt={`${business.name} logo`} className="h-10 w-10 rounded-xl object-cover" />
       ) : (
@@ -749,7 +922,7 @@ function BusinessCard({ business }: { business: BusinessWithMeta }) {
         </span>
       )}
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-bold text-zinc-900">{business.name}</p>
+        <p className="truncate text-sm font-bold text-foreground">{business.name}</p>
         <div className="mt-1 flex flex-wrap items-center gap-1">
           <BizStatusBadge status={business.status} />
           {sub?.status === "TRIALING" ? (
@@ -790,7 +963,7 @@ function OverviewTab({ business, content, contentLoading }: {
     { label: "Add Product", icon: Package, tab: "products" },
     { label: "View Leads", icon: Inbox, tab: "leads" },
     { label: "Edit SEO", icon: Search, tab: "seo" },
-    { label: "View Website", icon: ExternalLink, tab: "site" },
+    { label: business.status === "PUBLISHED" ? "View Website" : "Preview draft", icon: ExternalLink, tab: "site" },
   ];
 
   return (
@@ -811,11 +984,11 @@ function OverviewTab({ business, content, contentLoading }: {
               </p>
             </div>
             <div className="min-w-0 flex-1">
-              <h2 className="text-base font-bold text-zinc-900">Website Health</h2>
-              <p className="text-xs text-zinc-500">Scored across content, contactability, SEO &amp; trust signals.</p>
+              <h2 className="text-base font-bold text-foreground">Website Health</h2>
+              <p className="text-xs text-muted-foreground">Scored across content, contactability, SEO &amp; trust signals.</p>
               <ul className="ws-scroll mt-3 max-h-40 space-y-2 overflow-y-auto pr-1">
                 {health.recommendations.map((r, i) => (
-                  <li key={i} className="flex items-start gap-2 text-sm text-zinc-700">
+                  <li key={i} className="flex items-start gap-2 text-sm text-foreground">
                     {health.score >= 80 && i === 0 ? (
                       <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
                     ) : (
@@ -835,18 +1008,18 @@ function OverviewTab({ business, content, contentLoading }: {
         {/* Subscription mini-card */}
         <Card className="rounded-2xl p-6">
           <div className="flex items-center justify-between">
-            <h2 className="text-base font-bold text-zinc-900">Subscription</h2>
+            <h2 className="text-base font-bold text-foreground">Subscription</h2>
             {sub ? <SubStatusBadge status={sub.status} /> : <Badge variant="outline">No plan</Badge>}
           </div>
-          <p className="mt-3 text-2xl font-bold text-zinc-900">{planName}</p>
+          <p className="mt-3 text-2xl font-bold text-foreground">{planName}</p>
           {sub?.status === "TRIALING" ? (
             <p className="mt-1 text-sm text-amber-700">
               Trial ends in <span className="font-bold">{daysUntil(sub.trialEndsAt)} days</span> ({fmtDate(sub.trialEndsAt)})
             </p>
           ) : sub?.status === "ACTIVE" ? (
-            <p className="mt-1 text-sm text-zinc-500">Renews on {fmtDate(sub.renewsAt)} · {rupee(sub.amount)}/{sub.cycle === "YEARLY" ? "yr" : "mo"}</p>
+            <p className="mt-1 text-sm text-muted-foreground">Renews on {fmtDate(sub.renewsAt)} · {rupee(sub.amount)}/{sub.cycle === "YEARLY" ? "yr" : "mo"}</p>
           ) : (
-            <p className="mt-1 text-sm text-zinc-500">Choose a plan to keep your site live.</p>
+            <p className="mt-1 text-sm text-muted-foreground">Choose a plan to keep your site live.</p>
           )}
           <Button
             className="mt-4 w-full rounded-xl bg-amber-500 text-white hover:bg-amber-600"
@@ -867,19 +1040,24 @@ function OverviewTab({ business, content, contentLoading }: {
 
       {/* Quick actions */}
       <div>
-        <h2 className="mb-3 text-sm font-bold uppercase tracking-wider text-zinc-400">Quick actions</h2>
+        <h2 className="mb-3 text-sm font-bold uppercase tracking-wider text-muted-foreground">Quick actions</h2>
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
           {quickActions.map((a) => (
             <button
               key={a.label}
               type="button"
-              onClick={() => (a.tab === "site" ? openSite(business.slug, "dashboard") : setDashboardTab(a.tab as DashboardTab))}
-              className="flex flex-col items-center gap-2 rounded-2xl border bg-white p-4 text-center shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-300 hover:shadow-md"
+              onClick={() => {
+                if (a.tab !== "site") return setDashboardTab(a.tab as DashboardTab);
+                // "View Website" means the website, not the owner-only preview.
+                if (business.status === "PUBLISHED") window.open(liveSiteUrl(business.slug), "_blank");
+                else openSite(business.slug, "dashboard");
+              }}
+              className="flex flex-col items-center gap-2 rounded-2xl border bg-card p-4 text-center shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-300 hover:shadow-md"
             >
               <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600">
                 <a.icon className="h-5 w-5" />
               </span>
-              <span className="text-xs font-semibold text-zinc-700">{a.label}</span>
+              <span className="text-xs font-semibold text-foreground">{a.label}</span>
             </button>
           ))}
         </div>
@@ -935,7 +1113,8 @@ function defaultSectionContent(type: string, name: string): Rec {
 function BuilderTab({ business, content }: { business: BusinessWithMeta; content: ContentState }) {
   const patchBusiness = useApp((s) => s.patchBusiness);
   const setBusiness = useApp((s) => s.setBusiness);
-  const openSite = useApp((s) => s.openSite);
+  // Used to send the owner to the screen that fixes a failed publish.
+  const setDashboardTab = useApp((s) => s.setDashboardTab);
   const website = business.website;
 
   const [sections, setSections] = useState<SiteSection[]>(website?.sections ?? []);
@@ -946,6 +1125,11 @@ function BuilderTab({ business, content }: { business: BusinessWithMeta; content
     keywords: website?.keywords ?? "",
   });
   const [dirty, setDirty] = useState(false);
+
+  // The builder already tracked unsaved edits to drive its "Publish changes"
+  // label; nothing acted on it. Dragging sections around and then closing the
+  // tab discarded the lot without a word.
+  useUnsavedChanges(dirty);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [device, setDevice] = useState<"desktop" | "tablet" | "mobile">("desktop");
   const [saving, setSaving] = useState(false);
@@ -955,6 +1139,10 @@ function BuilderTab({ business, content }: { business: BusinessWithMeta; content
   // re-sync when store website object is replaced (after save / publish / me refresh)
   useEffect(() => {
     if (!website) return;
+    // Builder state is re-seeded from the store's website object after a
+    // save, publish or session refresh — the store is the external system
+    // this effect exists to follow.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setSections(website.sections || []);
     setTheme({ ...DEFAULT_THEME, ...(website.theme ?? {}) });
     setSeo({
@@ -992,9 +1180,18 @@ function BuilderTab({ business, content }: { business: BusinessWithMeta; content
     if (editingId === id) setEditingId(null);
   }
   function saveSectionContent(id: string, c: Rec) {
-    mutate((prev) => prev.map((s) => (s.id === id ? { ...s, content: c } : s)));
+    const next = sections.map((s) => (s.id === id ? { ...s, content: c } : s));
+    setSections(next);
+    setDirty(true);
     setEditingId(null);
-    toast({ title: "Section updated", description: "Remember to Save Draft, then Publish." });
+    // Persist right away with the array we just built.
+    void saveDraft(true, { sections: next }).then((saved) => {
+      toast(
+        saved
+          ? { title: "Section saved", description: published ? "Publish to push it to your live site." : "Publish when you are ready." }
+          : { title: "Section not saved", description: "Check your connection and try again.", variant: "destructive" },
+      );
+    });
   }
   function addSection(type: string, name: string) {
     const id = `s_${Math.random().toString(36).slice(2, 10)}`;
@@ -1002,14 +1199,20 @@ function BuilderTab({ business, content }: { business: BusinessWithMeta; content
     toast({ title: `${name} section added`, description: "Edit it to add your content, then Save Draft." });
   }
 
-  async function saveDraft(silent = false): Promise<boolean> {
+  async function saveDraft(silent = false, override?: { sections?: SiteSection[] }): Promise<boolean> {
     setSaving(true);
     try {
-      const w = await api.put<WebsiteData>("/api/website", {
-        sections, theme,
-        seoTitle: seo.seoTitle, seoDescription: seo.seoDescription, keywords: seo.keywords,
-      });
-      patchBusiness({ website: w });
+      const { appearance, ...w } = await api.put<WebsiteData & { appearance?: AppearanceAllowance }>(
+        "/api/website",
+        {
+          sections: override?.sections ?? sections,
+          theme,
+          seoTitle: seo.seoTitle, seoDescription: seo.seoDescription, keywords: seo.keywords,
+        },
+      );
+      // The server answers with the design allowance it just charged, so the
+      // "changes left" counter stays honest without another round trip.
+      patchBusiness({ website: w, ...(appearance ? { appearance } : {}) });
       setDirty(false);
       if (!silent) {
         toast({ title: "Draft saved", description: "Changes are saved. Publish to make them live." });
@@ -1038,11 +1241,45 @@ function BuilderTab({ business, content }: { business: BusinessWithMeta; content
       const saved = await saveDraft(true);
       if (!saved) return;
       await api.post("/api/website/publish");
-      toast({ title: "Website published 🎉", description: `Your site is live at ${business.slug}.websetu.in — share it with customers!` });
+      toast({
+        title: "Website published 🎉",
+        description: `Your site is live at ${liveSiteUrl(business.slug)} — share it with customers!`,
+      });
       setPublishOpen(false);
       await refreshMe();
     } catch (e) {
-      toast({ title: "Cannot publish yet", description: errMsg(e), variant: "destructive" });
+      // Every one of these blockers is fixed on a DIFFERENT screen, and the
+      // message used to name the problem without saying where to go: a customer
+      // was left in the builder reading "Business address & city are required"
+      // with no idea that the answer was in Business Profile. Say the screen,
+      // and put them on it.
+      const message = errMsg(e);
+      const inProfile = /address|city|phone|business name/i.test(message);
+      const inSeo = /seo title/i.test(message);
+      toast({
+        title: "Cannot publish yet",
+        description: inProfile
+          ? `${message}. Open Business Profile to add them.`
+          : inSeo
+          ? `${message}. Open the SEO tab to add it.`
+          : message,
+        variant: "destructive",
+        ...(inProfile || inSeo
+          ? {
+              action: (
+                <ToastAction
+                  altText={inProfile ? "Open Business Profile" : "Open SEO"}
+                  onClick={() => {
+                    setPublishOpen(false);
+                    setDashboardTab(inProfile ? "business" : "seo");
+                  }}
+                >
+                  {inProfile ? "Open profile" : "Open SEO"}
+                </ToastAction>
+              ),
+            }
+          : {}),
+      });
     } finally {
       setPublishing(false);
     }
@@ -1067,8 +1304,17 @@ function BuilderTab({ business, content }: { business: BusinessWithMeta; content
       const b = useApp.getState().business;
       if (!b) return;
       api.put("/api/business", { brandPrimary: b.brandPrimary, brandSecondary: b.brandSecondary, brandAccent: b.brandAccent })
-        .then(() => toast({ title: "Brand colors saved" }))
-        .catch(() => {});
+        .then(() => {
+          toast({ title: "Brand colors saved" });
+          // Picking colours spends a design change, so re-read the count.
+          void refreshMe();
+        })
+        .catch((e) => {
+          // Used to fail silently, which left the preview showing colours that
+          // were never stored — including when the allowance runs out.
+          toast({ title: "Colors not saved", description: errMsg(e), variant: "destructive" });
+          void refreshMe();
+        });
     }, 800);
   }
 
@@ -1093,6 +1339,9 @@ function BuilderTab({ business, content }: { business: BusinessWithMeta; content
       .filter((p) => p.published)
       .map(({ id, title, slug, excerpt, cover, publishedAt }) => ({ id, title, slug, excerpt, cover, publishedAt })),
     subscriptionStatus: business.subscription?.status ?? "TRIALING",
+    // The builder preview never renders canonical tags, so the live domain is
+    // irrelevant here — the published page is what carries them.
+    primaryDomain: null,
     trialMode: business.subscription?.status === "TRIALING",
   }), [business, website, seo, theme, sections, content]);
 
@@ -1112,8 +1361,8 @@ function BuilderTab({ business, content }: { business: BusinessWithMeta; content
   return (
     <div className="space-y-4">
       {/* Builder top bar */}
-      <div className="flex flex-wrap items-center gap-2 rounded-2xl border bg-white p-3 shadow-sm">
-        <div className="flex items-center gap-1 rounded-xl bg-zinc-100 p-1">
+      <div className="flex flex-wrap items-center gap-2 rounded-2xl border bg-card p-3 shadow-sm">
+        <div className="flex items-center gap-1 rounded-xl bg-muted p-1">
           {([
             { d: "desktop" as const, icon: Monitor, label: "Desktop preview" },
             { d: "tablet" as const, icon: Tablet, label: "Tablet preview" },
@@ -1127,7 +1376,7 @@ function BuilderTab({ business, content }: { business: BusinessWithMeta; content
               onClick={() => setDevice(x.d)}
               className={cn(
                 "flex h-8 w-8 items-center justify-center rounded-lg transition",
-                device === x.d ? "bg-white text-emerald-700 shadow-sm" : "text-zinc-500 hover:text-zinc-800",
+                device === x.d ? "bg-card text-emerald-700 shadow-sm" : "text-muted-foreground hover:text-foreground",
               )}
             >
               <x.icon className="h-4 w-4" />
@@ -1155,7 +1404,7 @@ function BuilderTab({ business, content }: { business: BusinessWithMeta; content
               <DropdownMenuItem onClick={() => void publish()} disabled={publishing}>
                 <Rocket className="h-4 w-4" /> {dirty ? "Publish changes" : "Re-publish"}
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => openSite(business.slug, "dashboard")}>
+              <DropdownMenuItem onClick={() => window.open(liveSiteUrl(business.slug), "_blank")}>
                 <ExternalLink className="h-4 w-4" /> View live site
               </DropdownMenuItem>
               <DropdownMenuItem onClick={unpublish} className="text-red-600 focus:text-red-700">
@@ -1175,7 +1424,7 @@ function BuilderTab({ business, content }: { business: BusinessWithMeta; content
                 <AlertDialogTitle>Publish your website?</AlertDialogTitle>
                 <AlertDialogDescription>
                   We will run quick checks (phone, address, SEO title, sections) and make your site live at{" "}
-                  <span className="font-semibold text-zinc-800">{business.slug}.websetu.in</span>. Unsaved edits are saved first.
+                  <span className="font-semibold text-foreground">{liveSiteUrl(business.slug)}</span>. Unsaved edits are saved first.
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
@@ -1207,10 +1456,16 @@ function BuilderTab({ business, content }: { business: BusinessWithMeta; content
             />
           ) : (
             <>
-              <ThemePanel theme={theme} setTheme={(t) => { setTheme(t); setDirty(true); }} onUpdateBrand={updateBrand} business={business} />
+              <ThemePanel
+                theme={theme}
+                setTheme={(t) => { setTheme(t); setDirty(true); }}
+                onUpdateBrand={updateBrand}
+                business={business}
+                onUpgrade={() => useApp.getState().setDashboardTab("subscription")}
+              />
               <Card className="rounded-2xl p-4">
                 <div className="mb-3 flex items-center justify-between">
-                  <h2 className="text-sm font-bold text-zinc-900">Sections</h2>
+                  <h2 className="text-sm font-bold text-foreground">Sections</h2>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button size="sm" className="rounded-lg bg-emerald-600 hover:bg-emerald-700" disabled={addable.length === 0}>
@@ -1223,7 +1478,7 @@ function BuilderTab({ business, content }: { business: BusinessWithMeta; content
                           <Plus className="h-4 w-4" />
                           <div>
                             <p className="text-sm font-medium">{l.name}</p>
-                            <p className="text-xs text-zinc-400">{l.description}</p>
+                            <p className="text-xs text-muted-foreground">{l.description}</p>
                           </div>
                         </DropdownMenuItem>
                       ))}
@@ -1238,17 +1493,17 @@ function BuilderTab({ business, content }: { business: BusinessWithMeta; content
                       <div
                         key={s.id}
                         className={cn(
-                          "flex items-center gap-2 rounded-xl border bg-white p-2.5 transition",
-                          s.visible ? "border-zinc-200" : "border-dashed border-zinc-300 opacity-70",
+                          "flex items-center gap-2 rounded-xl border bg-card p-2.5 transition",
+                          s.visible ? "border-border" : "border-dashed border-input opacity-70",
                         )}
                       >
                         <GripVertical className="h-4 w-4 shrink-0 text-zinc-300" />
-                        <span className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-lg", s.visible ? "bg-emerald-50 text-emerald-600" : "bg-zinc-100 text-zinc-400")}>
+                        <span className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-lg", s.visible ? "bg-emerald-50 text-emerald-600" : "bg-muted text-muted-foreground")}>
                           <Icon className="h-4 w-4" />
                         </span>
                         <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-medium text-zinc-800">{lib?.name ?? s.type}</p>
-                          <p className="truncate text-[11px] text-zinc-400">{lib?.description ?? ""}</p>
+                          <p className="truncate text-sm font-medium text-foreground">{lib?.name ?? s.type}</p>
+                          <p className="truncate text-[11px] text-muted-foreground">{lib?.description ?? ""}</p>
                         </div>
                         <Switch
                           checked={s.visible}
@@ -1259,19 +1514,19 @@ function BuilderTab({ business, content }: { business: BusinessWithMeta; content
                           <button
                             type="button" aria-label="Move up" disabled={idx === 0}
                             onClick={() => move(s.id, -1)}
-                            className="flex h-4 w-5 items-center justify-center rounded text-zinc-400 hover:text-zinc-700 disabled:opacity-30"
+                            className="flex h-4 w-5 items-center justify-center rounded text-muted-foreground hover:text-foreground disabled:opacity-30"
                           >
                             <ChevronUp className="h-3.5 w-3.5" />
                           </button>
                           <button
                             type="button" aria-label="Move down" disabled={idx === sections.length - 1}
                             onClick={() => move(s.id, 1)}
-                            className="flex h-4 w-5 items-center justify-center rounded text-zinc-400 hover:text-zinc-700 disabled:opacity-30"
+                            className="flex h-4 w-5 items-center justify-center rounded text-muted-foreground hover:text-foreground disabled:opacity-30"
                           >
                             <ChevronDown className="h-3.5 w-3.5" />
                           </button>
                         </div>
-                        <Button variant="ghost" size="icon" className="h-8 w-8 text-zinc-500 hover:text-emerald-700" onClick={() => setEditingId(s.id)} aria-label={`Edit ${lib?.name ?? s.type}`}>
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-emerald-700" onClick={() => setEditingId(s.id)} aria-label={`Edit ${lib?.name ?? s.type}`}>
                           <Pencil className="h-4 w-4" />
                         </Button>
                         {s.type !== "hero" ? (
@@ -1293,14 +1548,14 @@ function BuilderTab({ business, content }: { business: BusinessWithMeta; content
         </div>
 
         {/* Preview pane */}
-        <div className="rounded-2xl border bg-zinc-100 p-3 md:p-4">
+        <div className="rounded-2xl border bg-muted p-3 md:p-4">
           <div className="mb-2 flex items-center justify-between px-1">
-            <p className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Live preview</p>
-            <Badge variant="outline" className="bg-white text-zinc-500">{device}</Badge>
+            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Live preview</p>
+            <Badge variant="outline" className="bg-card text-muted-foreground">{device}</Badge>
           </div>
           <div
             className={cn(
-              "mx-auto overflow-hidden rounded-xl border bg-white shadow-sm",
+              "mx-auto overflow-hidden rounded-xl border bg-card shadow-sm",
               device === "mobile" ? "max-w-[420px]" : device === "tablet" ? "max-w-[820px]" : "w-full",
             )}
           >
@@ -1316,17 +1571,30 @@ function BuilderTab({ business, content }: { business: BusinessWithMeta; content
 
 /* ------------------------------- theme panel -------------------------------- */
 
-function ThemePanel({ theme, setTheme, onUpdateBrand, business }: {
+function ThemePanel({ theme, setTheme, onUpdateBrand, business, onUpgrade }: {
   theme: SiteTheme;
   setTheme: (t: SiteTheme) => void;
   onUpdateBrand: (key: "brandPrimary" | "brandSecondary" | "brandAccent", value: string) => void;
   business: BusinessWithMeta;
+  onUpgrade: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const set = (k: keyof SiteTheme, v: string) => setTheme({ ...theme, [k]: v } as SiteTheme);
+  // Restyling is metered on free/trial plans. The server is what enforces it;
+  // these controls only stop the customer from spending a change they do not
+  // have and being refused after the fact.
+  const design = business.appearance ?? null;
+  const metered = !!design && !design.unlimited;
+  const locked = !!design && metered && !design.canChange;
+  const set = (k: keyof SiteTheme, v: string) => {
+    if (locked) return;
+    setTheme({ ...theme, [k]: v } as SiteTheme);
+  };
+  // Palettes come from the admin-managed library, with the built-in list as a
+  // fallback while it loads (or if the request fails).
+  const { palettes, allowance } = usePalettes("BUSINESS");
 
   // active palette = one whose colors match the current brand colors exactly
-  const activePalette = BRAND_PALETTES.find(
+  const activePalette = palettes.find(
     (p) =>
       p.colors[0].toLowerCase() === (business.brandPrimary || "").toLowerCase() &&
       p.colors[1].toLowerCase() === (business.brandSecondary || "").toLowerCase() &&
@@ -1338,16 +1606,49 @@ function ThemePanel({ theme, setTheme, onUpdateBrand, business }: {
       <Card className="rounded-2xl p-4">
         <CollapsibleTrigger asChild>
           <button type="button" className="flex w-full items-center justify-between" aria-expanded={open}>
-            <span className="flex items-center gap-2 text-sm font-bold text-zinc-900">
+            <span className="flex items-center gap-2 text-sm font-bold text-foreground">
               <Sparkles className="h-4 w-4 text-amber-500" /> Theme &amp; Branding
             </span>
-            <ChevronDown className={cn("h-4 w-4 text-zinc-400 transition-transform", open && "rotate-180")} />
+            {design && metered && (
+              <span
+                className={cn(
+                  "ml-auto mr-2 rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                  locked ? "bg-red-50 text-red-600" : "bg-muted text-muted-foreground",
+                )}
+              >
+                {locked ? "No changes left" : `${design.remaining} of ${design.limit} left`}
+              </span>
+            )}
+            <ChevronDown className={cn("h-4 w-4 text-muted-foreground transition-transform", open && "rotate-180")} />
           </button>
         </CollapsibleTrigger>
         <CollapsibleContent className="mt-4 space-y-4">
+          {design && metered && (
+            <div
+              className={cn(
+                "rounded-xl border px-3 py-2 text-[11px]",
+                locked ? "border-red-200 bg-red-50 text-red-700" : "border-amber-200 bg-amber-50 text-amber-800",
+              )}
+            >
+              {locked ? (
+                <>
+                  You have used all {design.limit} free design changes.{" "}
+                  <button type="button" onClick={onUpgrade} className="font-semibold underline underline-offset-2">
+                    Upgrade your plan
+                  </button>{" "}
+                  to keep restyling. Your current design stays live.
+                </>
+              ) : (
+                <>
+                  {design.remaining} of {design.limit} free design changes left — each saved change to your
+                  theme or brand colours uses one. Upgrade for unlimited restyling.
+                </>
+              )}
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <Labeled label="Font">
-              <Select value={theme.font} onValueChange={(v) => set("font", v)}>
+              <Select disabled={locked} value={theme.font} onValueChange={(v) => set("font", v)}>
                 <SelectTrigger className="w-full rounded-xl"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="modern">Modern</SelectItem>
@@ -1357,7 +1658,7 @@ function ThemePanel({ theme, setTheme, onUpdateBrand, business }: {
               </Select>
             </Labeled>
             <Labeled label="Corners">
-              <Select value={theme.radius} onValueChange={(v) => set("radius", v)}>
+              <Select disabled={locked} value={theme.radius} onValueChange={(v) => set("radius", v)}>
                 <SelectTrigger className="w-full rounded-xl"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="sharp">Sharp</SelectItem>
@@ -1367,7 +1668,7 @@ function ThemePanel({ theme, setTheme, onUpdateBrand, business }: {
               </Select>
             </Labeled>
             <Labeled label="Hero style">
-              <Select value={theme.heroStyle} onValueChange={(v) => set("heroStyle", v)}>
+              <Select disabled={locked} value={theme.heroStyle} onValueChange={(v) => set("heroStyle", v)}>
                 <SelectTrigger className="w-full rounded-xl"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="gradient">Gradient</SelectItem>
@@ -1377,7 +1678,7 @@ function ThemePanel({ theme, setTheme, onUpdateBrand, business }: {
               </Select>
             </Labeled>
             <Labeled label="Cards">
-              <Select value={theme.cardStyle} onValueChange={(v) => set("cardStyle", v)}>
+              <Select disabled={locked} value={theme.cardStyle} onValueChange={(v) => set("cardStyle", v)}>
                 <SelectTrigger className="w-full rounded-xl"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="flat">Flat</SelectItem>
@@ -1387,7 +1688,7 @@ function ThemePanel({ theme, setTheme, onUpdateBrand, business }: {
               </Select>
             </Labeled>
             <Labeled label="Layout width" >
-              <Select value={theme.containerWidth} onValueChange={(v) => set("containerWidth", v)}>
+              <Select disabled={locked} value={theme.containerWidth} onValueChange={(v) => set("containerWidth", v)}>
                 <SelectTrigger className="w-full rounded-xl"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="normal">Normal</SelectItem>
@@ -1395,10 +1696,42 @@ function ThemePanel({ theme, setTheme, onUpdateBrand, business }: {
                 </SelectContent>
               </Select>
             </Labeled>
+            <Labeled label="Design style">
+              <Select
+                disabled={locked}
+                value={theme.industry ?? resolveIndustry(business.category).key}
+                onValueChange={(v) => {
+                  const look = industryByKey(v);
+                  set("industry", v);
+                  if (look) {
+                    onUpdateBrand("brandPrimary", look.palette[0]);
+                    onUpdateBrand("brandSecondary", look.palette[1]);
+                    onUpdateBrand("brandAccent", look.palette[2]);
+                  }
+                }}
+              >
+                <SelectTrigger className="w-full rounded-xl"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {INDUSTRY_PRESETS.map((p) => (
+                    <SelectItem key={p.key} value={p.key}>{p.label}</SelectItem>
+                  ))}
+                  <SelectItem value="general">Local Business (classic)</SelectItem>
+                </SelectContent>
+              </Select>
+            </Labeled>
+            <Labeled label="Hero animation">
+              <Select disabled={locked} value={theme.motif ?? "auto"} onValueChange={(v) => set("motif", v)}>
+                <SelectTrigger className="w-full rounded-xl"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="auto">Auto (matches your business)</SelectItem>
+                  <SelectItem value="none">Off</SelectItem>
+                </SelectContent>
+              </Select>
+            </Labeled>
           </div>
           <Separator />
           <div>
-            <p className="mb-2 flex items-center gap-1.5 text-xs font-medium text-zinc-600">
+            <p className="mb-2 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
               <Palette className="h-3.5 w-3.5 text-amber-500" /> Color palettes
               {activePalette && (
                 <span className="ml-auto rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
@@ -1407,7 +1740,7 @@ function ThemePanel({ theme, setTheme, onUpdateBrand, business }: {
               )}
             </p>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-              {BRAND_PALETTES.map((p) => {
+              {palettes.map((p) => {
                 const active = activePalette?.name === p.name;
                 return (
                   <button
@@ -1415,14 +1748,16 @@ function ThemePanel({ theme, setTheme, onUpdateBrand, business }: {
                     type="button"
                     aria-label={`Apply ${p.name} palette`}
                     aria-pressed={active}
+                    disabled={locked}
                     onClick={() => {
                       onUpdateBrand("brandPrimary", p.colors[0]);
                       onUpdateBrand("brandSecondary", p.colors[1]);
                       onUpdateBrand("brandAccent", p.colors[2]);
                     }}
                     className={cn(
-                      "group flex items-center gap-2 rounded-xl border bg-white p-2 text-left transition hover:border-emerald-300 hover:shadow-sm",
-                      active ? "border-emerald-500 ring-1 ring-emerald-500" : "border-zinc-200",
+                      "group flex items-center gap-2 rounded-xl border bg-card p-2 text-left transition hover:border-emerald-300 hover:shadow-sm",
+                      active ? "border-emerald-500 ring-1 ring-emerald-500" : "border-border",
+                      locked && "cursor-not-allowed opacity-50 hover:border-border hover:shadow-none",
                     )}
                   >
                     <span className="flex h-7 w-12 shrink-0 overflow-hidden rounded-md border shadow-sm">
@@ -1431,16 +1766,24 @@ function ThemePanel({ theme, setTheme, onUpdateBrand, business }: {
                       <span className="h-full flex-1" style={{ background: p.colors[2] }} />
                     </span>
                     <span className="min-w-0">
-                      <span className="block truncate text-[11px] font-semibold text-zinc-800">{p.name}</span>
-                      <span className="block truncate text-[10px] text-zinc-400">{p.mood}</span>
+                      <span className="block truncate text-[11px] font-semibold text-foreground">{p.name}</span>
+                      <span className="block truncate text-[10px] text-muted-foreground">{p.mood}</span>
                     </span>
                   </button>
                 );
               })}
             </div>
-            <p className="mt-2 text-[11px] text-zinc-400">
+            <p className="mt-2 text-[11px] text-muted-foreground">
               One click applies the full palette to your live preview — or fine-tune each color below.
             </p>
+            {allowance && allowance.limit >= 0 && allowance.total > palettes.length ? (
+              <p className="mt-1.5 rounded-lg bg-amber-50 px-2.5 py-1.5 text-[11px] text-amber-800">
+                Your plan includes {palettes.length} of {allowance.total} palettes.{" "}
+                {allowance.source === "override"
+                  ? "This selection was set for your account."
+                  : "Upgrade your plan to unlock the rest — or set any colour by hand below."}
+              </p>
+            ) : null}
           </div>
           <div className="grid grid-cols-3 gap-2">
             {([
@@ -1448,14 +1791,21 @@ function ThemePanel({ theme, setTheme, onUpdateBrand, business }: {
               { key: "brandSecondary" as const, label: "Secondary" },
               { key: "brandAccent" as const, label: "Accent" },
             ]).map((c) => (
-              <label key={c.key} className="flex cursor-pointer flex-col items-center gap-1.5 rounded-xl border p-2 transition hover:border-emerald-300">
+              <label
+                key={c.key}
+                className={cn(
+                  "flex flex-col items-center gap-1.5 rounded-xl border p-2 transition",
+                  locked ? "cursor-not-allowed opacity-50" : "cursor-pointer hover:border-emerald-300",
+                )}
+              >
                 <span
                   className="h-8 w-full rounded-lg border"
                   style={{ background: (business[c.key] as string) || "#059669" }}
                 />
-                <span className="text-[10px] font-medium text-zinc-500">{c.label}</span>
+                <span className="text-[10px] font-medium text-muted-foreground">{c.label}</span>
                 <input
                   type="color"
+                  disabled={locked}
                   value={(business[c.key] as string) || "#059669"}
                   onChange={(e) => onUpdateBrand(c.key, e.target.value)}
                   className="sr-only"
@@ -1495,7 +1845,7 @@ function SeoFields({ value, onChange }: { value: SeoValue; onChange: (v: SeoValu
           placeholder="24/7 electrician in Pune for wiring, repairs and installations. Call now for a free quote."
           className="rounded-xl"
         />
-        <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-zinc-100">
+        <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-muted">
           <div
             className={cn("h-full transition-all", value.seoDescription.length >= 80 ? "bg-emerald-500" : "bg-amber-500")}
             style={{ width: `${Math.min(100, (value.seoDescription.length / 160) * 100)}%` }}
@@ -1518,7 +1868,7 @@ function SeoFields({ value, onChange }: { value: SeoValue; onChange: (v: SeoValu
 function SeoCard({ seo, setSeo }: { seo: SeoValue; setSeo: (v: SeoValue) => void }) {
   return (
     <Card className="rounded-2xl p-4">
-      <h2 className="mb-3 flex items-center gap-2 text-sm font-bold text-zinc-900">
+      <h2 className="mb-3 flex items-center gap-2 text-sm font-bold text-foreground">
         <Search className="h-4 w-4 text-emerald-600" /> SEO
       </h2>
       <SeoFields value={seo} onChange={setSeo} />
@@ -1535,11 +1885,11 @@ function ItemsListEditor({ items, onChange, keys, labels, max = 6 }: {
   return (
     <div className="space-y-2">
       {items.map((it, i) => (
-        <div key={i} className="space-y-2 rounded-xl border bg-zinc-50 p-2.5">
+        <div key={i} className="space-y-2 rounded-xl border bg-muted p-2.5">
           <div className="flex items-center justify-between">
-            <p className="text-[11px] font-bold uppercase tracking-wider text-zinc-400">Item {i + 1}</p>
+            <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Item {i + 1}</p>
             <Button
-              variant="ghost" size="icon" className="h-6 w-6 text-zinc-400 hover:text-red-600"
+              variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-red-600"
               aria-label="Remove item"
               onClick={() => onChange(items.filter((_, j) => j !== i))}
             >
@@ -1549,13 +1899,13 @@ function ItemsListEditor({ items, onChange, keys, labels, max = 6 }: {
           <Input
             value={String(it[keys[0]] ?? "")}
             placeholder={labels[0]}
-            className="rounded-lg bg-white"
+            className="rounded-lg bg-card"
             onChange={(e) => onChange(items.map((x, j) => (j === i ? { ...x, [keys[0]]: e.target.value } : x)))}
           />
           <Input
             value={String(it[keys[1]] ?? "")}
             placeholder={labels[1]}
-            className="rounded-lg bg-white"
+            className="rounded-lg bg-card"
             onChange={(e) => onChange(items.map((x, j) => (j === i ? { ...x, [keys[1]]: e.target.value } : x)))}
           />
         </div>
@@ -1595,8 +1945,8 @@ function SectionEditor({ section, onSave, onCancel }: {
           <ArrowLeft className="h-4 w-4" />
         </Button>
         <div>
-          <h2 className="text-sm font-bold text-zinc-900">Edit {lib?.name ?? section.type}</h2>
-          <p className="text-[11px] text-zinc-400">{lib?.description}</p>
+          <h2 className="text-sm font-bold text-foreground">Edit {lib?.name ?? section.type}</h2>
+          <p className="text-[11px] text-muted-foreground">{lib?.description}</p>
         </div>
       </div>
 
@@ -1610,7 +1960,12 @@ function SectionEditor({ section, onSave, onCancel }: {
             </Labeled>
             {strField("ctaPrimary", "Primary button", "Get a Free Quote")}
             {strField("ctaSecondary", "Secondary button", "Call Now")}
-            {strField("image", "Background image URL", "https://…")}
+            <ImageInput
+              label="Background image"
+              value={String(c.image ?? "")}
+              onChange={(v) => set("image", v)}
+              hint="Upload a photo or paste a link. Shown behind the headline — full-bleed on the Image style, tinted with your brand colours on Gradient, beside the text on Split."
+            />
           </>
         )}
         {section.type === "about" && (
@@ -1619,6 +1974,18 @@ function SectionEditor({ section, onSave, onCancel }: {
             <Labeled label="Body">
               <Textarea value={String(c.body ?? "")} rows={6} className="rounded-xl" onChange={(e) => set("body", e.target.value)} />
             </Labeled>
+            {/* The About section has always rendered an image beside the text
+                and has always stored content.image — but this control did not
+                exist, so the only value it could ever hold was the cover photo
+                copied in when the site was generated. An owner who had no cover
+                photo, or who wanted a different one here, had no way to set it
+                and saw an empty tinted box on their own website. */}
+            <ImageInput
+              label="Photo"
+              value={String(c.image ?? "")}
+              onChange={(v) => set("image", v)}
+              hint="Upload a photo or paste a link. Shown beside the text on desktop. Leave it empty and the text uses the full width."
+            />
           </>
         )}
         {section.type === "stats" && (
@@ -1673,13 +2040,24 @@ function SectionEditor({ section, onSave, onCancel }: {
             {strField("mapUrl", "Google Maps embed URL", "https://maps.google.com/…")}
           </>
         )}
-        {["services", "products", "gallery", "testimonials", "hours"].includes(section.type) && (
+        {/* "blog" belongs in this list and was missing from it, so it matched no
+            branch at all: opening the Blog section for editing showed a heading,
+            a Save button, and nothing in between. It is created with a title and
+            a subtitle and the renderer reads both — there was simply no way to
+            change either. */}
+        {["services", "products", "gallery", "testimonials", "hours", "blog"].includes(section.type) && (
           <>
             {strField("title", "Title")}
             {section.type !== "hours" && strField("subtitle", "Subtitle")}
             {["services", "products", "gallery", "testimonials"].includes(section.type) ? (
               <p className="rounded-xl bg-emerald-50 p-3 text-xs text-emerald-700">
                 Content for this section is managed from the {section.type.charAt(0).toUpperCase() + section.type.slice(1)} tab in the sidebar.
+              </p>
+            ) : null}
+            {section.type === "blog" ? (
+              <p className="rounded-xl bg-emerald-50 p-3 text-xs text-emerald-700">
+                Your articles are written in the Blog tab in the sidebar. This section shows
+                the latest ones, and stays hidden until you publish your first post.
               </p>
             ) : null}
           </>
@@ -1728,10 +2106,13 @@ function BusinessTab({ business }: { business: BusinessWithMeta }) {
     return Object.fromEntries(SOCIAL_FIELDS.map((f) => [f.key, String(stored[f.key] ?? "")]));
   });
   const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
 
   const setF = (k: keyof typeof form, v: string) => setForm((p) => ({ ...p, [k]: v }));
 
   async function save() {
+    if (savingRef.current) return;
+    savingRef.current = true;
     setSaving(true);
     try {
       const updated = await api.put<Business>("/api/business", {
@@ -1744,6 +2125,7 @@ function BusinessTab({ business }: { business: BusinessWithMeta }) {
     } catch (e) {
       toast({ title: "Could not save profile", description: errMsg(e), variant: "destructive" });
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   }
@@ -1754,7 +2136,7 @@ function BusinessTab({ business }: { business: BusinessWithMeta }) {
 
       <div className="grid items-start gap-4 xl:grid-cols-2">
         <Card className="rounded-2xl p-6">
-          <h2 className="mb-4 text-sm font-bold uppercase tracking-wider text-zinc-400">Business details</h2>
+          <h2 className="mb-4 text-sm font-bold uppercase tracking-wider text-muted-foreground">Business details</h2>
           <div className="grid gap-4 sm:grid-cols-2">
             <Labeled label="Business name"><Input className="rounded-xl" value={form.name} onChange={(e) => setF("name", e.target.value)} /></Labeled>
             <Labeled label="Owner name"><Input className="rounded-xl" value={form.ownerName} onChange={(e) => setF("ownerName", e.target.value)} /></Labeled>
@@ -1766,12 +2148,12 @@ function BusinessTab({ business }: { business: BusinessWithMeta }) {
                 <Textarea className="rounded-xl" rows={4} value={form.description} onChange={(e) => setF("description", e.target.value)} />
               </Labeled>
             </div>
-            <Labeled label="Phone"><Input className="rounded-xl" value={form.phone} onChange={(e) => setF("phone", e.target.value)} /></Labeled>
-            <Labeled label="WhatsApp"><Input className="rounded-xl" value={form.whatsapp} onChange={(e) => setF("whatsapp", e.target.value)} /></Labeled>
-            <Labeled label="Email"><Input className="rounded-xl" type="email" value={form.email} onChange={(e) => setF("email", e.target.value)} /></Labeled>
-            <Labeled label="Established year"><Input className="rounded-xl" value={form.establishedYear} onChange={(e) => setF("establishedYear", e.target.value)} placeholder="1998" /></Labeled>
+            <Labeled label="Phone"><Input className="rounded-xl" type="tel" inputMode="tel" autoComplete="tel" value={form.phone} onChange={(e) => setF("phone", e.target.value)} /></Labeled>
+            <Labeled label="WhatsApp"><Input className="rounded-xl" type="tel" inputMode="tel" value={form.whatsapp} onChange={(e) => setF("whatsapp", e.target.value)} /></Labeled>
+            <Labeled label="Email"><Input className="rounded-xl" type="email" inputMode="email" autoComplete="email" value={form.email} onChange={(e) => setF("email", e.target.value)} /></Labeled>
+            <Labeled label="Established year"><Input className="rounded-xl" inputMode="numeric" value={form.establishedYear} onChange={(e) => setF("establishedYear", e.target.value)} placeholder="1998" /></Labeled>
             <div className="sm:col-span-2">
-              <Labeled label="Address"><Input className="rounded-xl" value={form.address} onChange={(e) => setF("address", e.target.value)} /></Labeled>
+              <Labeled label="Address"><Input className="rounded-xl" autoComplete="street-address" value={form.address} onChange={(e) => setF("address", e.target.value)} /></Labeled>
             </div>
             <Labeled label="City"><Input className="rounded-xl" value={form.city} onChange={(e) => setF("city", e.target.value)} /></Labeled>
             <Labeled label="State"><Input className="rounded-xl" value={form.state} onChange={(e) => setF("state", e.target.value)} /></Labeled>
@@ -1782,7 +2164,7 @@ function BusinessTab({ business }: { business: BusinessWithMeta }) {
 
         <div className="space-y-4">
           <Card className="rounded-2xl p-6">
-            <h2 className="mb-4 text-sm font-bold uppercase tracking-wider text-zinc-400">Images &amp; Google</h2>
+            <h2 className="mb-4 text-sm font-bold uppercase tracking-wider text-muted-foreground">Images &amp; Google</h2>
             <div className="space-y-4">
               <ImageInput
                 label="Business logo"
@@ -1809,26 +2191,26 @@ function BusinessTab({ business }: { business: BusinessWithMeta }) {
           </Card>
 
           <Card className="rounded-2xl p-6">
-            <h2 className="mb-1 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-zinc-400">
+            <h2 className="mb-1 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-muted-foreground">
               <QrCode className="h-4 w-4 text-emerald-600" /> Payments &amp; QR code
             </h2>
-            <p className="mb-4 text-xs text-zinc-500">
+            <p className="mb-4 text-xs text-muted-foreground">
               Let customers pay you directly — a <strong>Scan &amp; Pay</strong> section with your QR + UPI ID appears on your website.
             </p>
             <div className="grid gap-5 sm:grid-cols-[auto_1fr] sm:items-start">
               {/* live QR preview */}
-              <div className="mx-auto w-fit rounded-2xl border-2 border-emerald-100 bg-white p-3 shadow-sm">
+              <div className="mx-auto w-fit rounded-2xl border-2 border-emerald-100 bg-card p-3 shadow-sm">
                 {form.upiId && isValidUpiId(form.upiId) && !form.paymentQrUrl ? (
                   <QRCode value={upiDeepLink(form.upiId, form.name, "Website payment")} size={132} bgColor="#ffffff" fgColor="#134e4a" />
                 ) : form.paymentQrUrl ? (
                   <img src={form.paymentQrUrl} alt="Payment QR preview" className="h-[132px] w-[132px] object-contain" />
                 ) : (
-                  <div className="flex h-[132px] w-[132px] flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed border-zinc-200 text-zinc-300">
+                  <div className="flex h-[132px] w-[132px] flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed border-border text-zinc-300">
                     <QrCode className="h-8 w-8" />
                     <span className="text-[10px] font-medium">QR preview</span>
                   </div>
                 )}
-                <p className="mt-1.5 text-center text-[9px] font-bold uppercase tracking-widest text-zinc-400">Live preview</p>
+                <p className="mt-1.5 text-center text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Live preview</p>
               </div>
               <div className="space-y-4">
                 <Labeled
@@ -1866,7 +2248,7 @@ function BusinessTab({ business }: { business: BusinessWithMeta }) {
           </Card>
 
           <Card className="rounded-2xl p-6">
-            <h2 className="mb-4 text-sm font-bold uppercase tracking-wider text-zinc-400">Social profiles</h2>
+            <h2 className="mb-4 text-sm font-bold uppercase tracking-wider text-muted-foreground">Social profiles</h2>
             <div className="grid gap-4 sm:grid-cols-2">
               {SOCIAL_FIELDS.map((f) => (
                 <Labeled key={f.key} label={f.label}>
@@ -1882,11 +2264,11 @@ function BusinessTab({ business }: { business: BusinessWithMeta }) {
           </Card>
 
           <Card className="rounded-2xl p-6">
-            <h2 className="mb-4 text-sm font-bold uppercase tracking-wider text-zinc-400">Business hours</h2>
+            <h2 className="mb-4 text-sm font-bold uppercase tracking-wider text-muted-foreground">Business hours</h2>
             <div className="space-y-2">
               {DAY_KEYS.map((d) => (
                 <div key={d} className="flex items-center gap-3">
-                  <span className="w-20 shrink-0 text-xs font-semibold text-zinc-600">{d.slice(0, 3)}</span>
+                  <span className="w-20 shrink-0 text-xs font-semibold text-muted-foreground">{d.slice(0, 3)}</span>
                   <Input
                     className="rounded-xl"
                     value={String(hours[d] ?? "")}
@@ -1980,7 +2362,7 @@ function ImageInput({ label, value, onChange, hint, maxWidth = 1600, square = fa
 
   return (
     <div>
-      <Label className="text-xs font-medium text-zinc-600">{label}</Label>
+      <Label className="text-xs font-medium text-muted-foreground">{label}</Label>
       <div className="mt-1.5 flex items-start gap-3">
         {value ? (
           <div className="relative shrink-0">
@@ -2006,7 +2388,7 @@ function ImageInput({ label, value, onChange, hint, maxWidth = 1600, square = fa
             aria-label={`Upload ${label}`}
             disabled={busy}
             className={cn(
-              "flex shrink-0 flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed border-zinc-300 bg-zinc-50 text-zinc-400 transition hover:border-emerald-400 hover:text-emerald-600 disabled:cursor-not-allowed disabled:opacity-70",
+              "flex shrink-0 flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed border-input bg-muted text-muted-foreground transition hover:border-emerald-400 hover:text-emerald-600 disabled:cursor-not-allowed disabled:opacity-70",
               square ? "h-20 w-20" : "h-20 w-32",
             )}
           >
@@ -2016,7 +2398,7 @@ function ImageInput({ label, value, onChange, hint, maxWidth = 1600, square = fa
         )}
         <div className="min-w-0 flex-1 space-y-1.5">
           <div className="relative">
-            <Link2 className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+            <Link2 className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
             <Input
               className="rounded-xl pl-8"
               value={value.startsWith("data:") ? "" : value}
@@ -2025,7 +2407,7 @@ function ImageInput({ label, value, onChange, hint, maxWidth = 1600, square = fa
               onChange={(e) => onChange(e.target.value)}
             />
           </div>
-          <p className="text-[11px] leading-snug text-zinc-400">
+          <p className="text-[11px] leading-snug text-muted-foreground">
             {err ? <span className="font-medium text-red-600">{err}</span> : hint || "Upload from your phone/computer, or paste a hosted URL."}
           </p>
         </div>
@@ -2199,6 +2581,30 @@ const CRUD_CONFIG: Record<CrudType, CrudCfg> = {
 
 const DUPLICABLE: CrudType[] = ["services", "products"];
 
+function StockPhotosButton({ onDone }: { onDone: () => void }) {
+  const [busy, setBusy] = useState(false);
+  async function run() {
+    setBusy(true);
+    try {
+      const res = await api.post<{ added: number; coverSet: boolean }>("/api/gallery/stock");
+      toast({
+        title: `${res.added} photos added`,
+        description: res.coverSet ? "Your cover photo was set too. Swap any photo for your own anytime." : "Swap any photo for your own anytime.",
+      });
+      onDone();
+    } catch (e) {
+      toast({ title: "Could not add photos", description: errMsg(e), variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <Button variant="outline" className="rounded-xl" disabled={busy} onClick={() => void run()}>
+      {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4 text-amber-500" />} Add photos for my business
+    </Button>
+  );
+}
+
 function ContentTab({ type, rows, loading, refetch }: {
   type: CrudType; rows: Rec[]; loading: boolean; refetch: () => void;
 }) {
@@ -2242,12 +2648,15 @@ function ContentTab({ type, rows, loading, refetch }: {
         title={type.charAt(0).toUpperCase() + type.slice(1)}
         subtitle={type === "faqs" ? "Frequently asked questions — great for SEO & AEO." : undefined}
         action={
-          <Button
-            className="rounded-xl bg-emerald-600 hover:bg-emerald-700"
-            onClick={openAdd}
-          >
-            <Plus className="h-4 w-4" /> {cfg.addLabel}
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            {type === "gallery" && <StockPhotosButton onDone={refetch} />}
+            <Button
+              className="rounded-xl bg-emerald-600 hover:bg-emerald-700"
+              onClick={openAdd}
+            >
+              <Plus className="h-4 w-4" /> {cfg.addLabel}
+            </Button>
+          </div>
         }
       />
 
@@ -2265,31 +2674,31 @@ function ContentTab({ type, rows, loading, refetch }: {
           }
         />
       ) : (
-        <div className="ws-scroll max-h-96 space-y-3 overflow-y-auto rounded-2xl bg-zinc-50/50 p-3 pr-2">
+        <div className="ws-scroll max-h-96 space-y-3 overflow-y-auto rounded-2xl bg-muted/50 p-3 pr-2">
           {rows.map((row) => {
             const thumb = cfg.rowThumb?.(row);
             return (
-              <div key={String(row.id)} className="flex items-start gap-3 rounded-xl border bg-white p-3 shadow-sm">
+              <div key={String(row.id)} className="flex items-start gap-3 rounded-xl border bg-card p-3 shadow-sm">
                 {thumb !== undefined ? (
                   thumb ? (
                     <img src={thumb} alt={cfg.rowTitle(row)} className="h-14 w-14 shrink-0 rounded-lg border object-cover" />
                   ) : (
-                    <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg border border-dashed bg-zinc-50 text-zinc-300">
+                    <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg border border-dashed bg-muted text-zinc-300">
                       <ImageIcon className="h-5 w-5" />
                     </span>
                   )
                 ) : null}
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
-                    <p className="truncate text-sm font-semibold text-zinc-900">{cfg.rowTitle(row)}</p>
+                    <p className="truncate text-sm font-semibold text-foreground">{cfg.rowTitle(row)}</p>
                     {cfg.rowBadges?.(row)}
                   </div>
-                  {cfg.rowSub(row) ? <p className="mt-0.5 line-clamp-2 text-xs text-zinc-500">{cfg.rowSub(row)}</p> : null}
+                  {cfg.rowSub(row) ? <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{cfg.rowSub(row)}</p> : null}
                 </div>
                 <div className="flex shrink-0 gap-1">
                   {DUPLICABLE.includes(type) && (
                     <Button
-                      variant="ghost" size="icon" className="h-8 w-8 text-zinc-500 hover:text-emerald-700"
+                      variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-emerald-700"
                       aria-label={`Duplicate ${cfg.rowTitle(row)}`}
                       title={`Duplicate ${cfg.rowTitle(row)}`}
                       onClick={() => openDuplicate(row)}
@@ -2298,13 +2707,18 @@ function ContentTab({ type, rows, loading, refetch }: {
                     </Button>
                   )}
                   <Button
-                    variant="ghost" size="icon" className="h-8 w-8 text-zinc-500 hover:text-emerald-700"
-                    aria-label="Edit"
+                    variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-emerald-700"
+                    aria-label={`Edit ${cfg.rowTitle(row)}`}
+                    title={`Edit ${cfg.rowTitle(row)}`}
                     onClick={() => openEdit(row)}
                   >
                     <Pencil className="h-4 w-4" />
                   </Button>
-                  <DeleteConfirm label={`This ${cfg.singular} will be removed from your website.`} onConfirm={() => void del(String(row.id))} />
+                  <DeleteConfirm
+                    label={`This ${cfg.singular} will be removed from your website.`}
+                    name={cfg.rowTitle(row)}
+                    onConfirm={() => void del(String(row.id))}
+                  />
                 </div>
               </div>
             );
@@ -2331,10 +2745,17 @@ function CrudDialog({ type, open, onOpenChange, editing, duplicate, onSaved }: {
   const cfg = CRUD_CONFIG[type];
   const [form, setForm] = useState<Rec>(cfg.defaults);
   const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
   const slugTouched = useRef(false);
 
   useEffect(() => {
     if (!open) return;
+    savingRef.current = false;
+    // Resetting the dialog's form each time it opens. Keying the dialog on
+    // the edited row would do the same thing structurally, at the cost of
+    // remounting every field on each open.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSaving(false);
     slugTouched.current = false;
     if (editing) {
       const next: Rec = {};
@@ -2372,6 +2793,11 @@ function CrudDialog({ type, open, onOpenChange, editing, duplicate, onSaved }: {
       else body[f.key] = typeof v === "string" ? v : "";
     }
     if (type === "blog" && !body.slug) body.slug = slugify(String(body.title || ""));
+
+    // A second click that lands before React re-renders would slip past
+    // disabled={saving} and create the row twice, so the guard is a ref.
+    if (savingRef.current) return;
+    savingRef.current = true;
     setSaving(true);
     try {
       if (editing) {
@@ -2382,9 +2808,13 @@ function CrudDialog({ type, open, onOpenChange, editing, duplicate, onSaved }: {
         toast({ title: "Added", description: `${cfg.singular === "FAQ" ? "FAQ" : cfg.singular} added to your website.` });
       }
       onSaved();
+      // Deliberately leave the guard latched on success: the dialog plays a
+      // close animation, and a click landing during it would save again.
+      // It is released when the dialog is next opened.
+      return;
     } catch (e) {
       toast({ title: "Could not save", description: errMsg(e), variant: "destructive" });
-    } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   }
@@ -2407,8 +2837,12 @@ function CrudDialog({ type, open, onOpenChange, editing, duplicate, onSaved }: {
             <div key={f.key} className={f.full || f.type === "textarea" ? "sm:col-span-2" : ""}>
               {f.type === "switch" ? (
                 <div className="flex h-full items-center justify-between gap-3 rounded-xl border p-3">
-                  <Label className="text-xs font-medium text-zinc-600">{f.label}</Label>
-                  <Switch checked={Boolean(form[f.key])} onCheckedChange={(v) => setF(f.key, v)} />
+                  <Label htmlFor={`crud-${f.key}`} className="text-xs font-medium text-muted-foreground">{f.label}</Label>
+                  <Switch
+                    id={`crud-${f.key}`}
+                    checked={Boolean(form[f.key])}
+                    onCheckedChange={(v) => setF(f.key, v)}
+                  />
                 </div>
               ) : f.type === "image" ? (
                 <ImageInput label={f.label} value={String(form[f.key] ?? "")} onChange={(v) => setF(f.key, v)} hint={f.hint} />
@@ -2438,6 +2872,8 @@ function CrudDialog({ type, open, onOpenChange, editing, duplicate, onSaved }: {
                   <Input
                     className="rounded-xl"
                     type={f.type === "number" ? "number" : "text"}
+                    // Prices and quantities want the numeric pad, not QWERTY.
+                    inputMode={f.type === "number" ? "decimal" : undefined}
                     value={String(form[f.key] ?? "")}
                     placeholder={f.placeholder}
                     onChange={(e) => {
@@ -2466,299 +2902,10 @@ function CrudDialog({ type, open, onOpenChange, editing, duplicate, onSaved }: {
 }
 
 /* ================================== 5. LEADS ================================ */
+// The leads screen lives in leads-tab.tsx: it fetches its own paged data, so it
+// no longer shares the dashboard's eager state.
 
-const LEAD_STATUSES: LeadStatus[] = ["NEW", "CONTACTED", "FOLLOW_UP", "QUALIFIED", "CONVERTED", "CLOSED", "SPAM"];
 
-function sourceLabel(s: string): string {
-  if (s === "FORM") return "Website form";
-  if (s === "WHATSAPP") return "WhatsApp";
-  return s;
-}
-
-function exportLeadsCsv(leads: Lead[]) {
-  const head = ["Name", "Phone", "Email", "Service", "Message", "Source", "Status", "Notes", "Created"];
-  const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-  const rows = leads.map((l) => [
-    l.name, l.phone, l.email, l.serviceName, l.message, l.source, l.status, l.notes,
-    new Date(l.createdAt).toLocaleString("en-IN"),
-  ].map(esc).join(","));
-  const csv = [head.map(esc).join(","), ...rows].join("\n");
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `websetu-leads-${new Date().toISOString().slice(0, 10)}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
-function LeadsTab({ leads, loading, refetch, onApply, onDelete }: {
-  leads: Lead[]; loading: boolean; refetch: () => void;
-  onApply: (l: Lead) => void; onDelete: (id: string) => void;
-}) {
-  const [status, setStatus] = useState("ALL");
-  const [q, setQ] = useState("");
-  const [detail, setDetail] = useState<Lead | null>(null);
-  const [notes, setNotes] = useState("");
-  const [savingNotes, setSavingNotes] = useState(false);
-
-  const filtered = useMemo(() => {
-    const query = q.trim().toLowerCase();
-    return leads.filter((l) => {
-      if (status !== "ALL" && l.status !== status) return false;
-      if (!query) return true;
-      return [l.name, l.phone, l.email, l.message, l.serviceName]
-        .some((v) => (v || "").toLowerCase().includes(query));
-    });
-  }, [leads, status, q]);
-
-  const newCount = leads.filter((l) => l.status === "NEW").length;
-
-  async function changeStatus(lead: Lead, next: string) {
-    try {
-      const updated = await api.patch<Lead>(`/api/leads/${lead.id}`, { status: next });
-      onApply(updated);
-      toast({ title: "Lead updated", description: `${lead.name} marked as ${next.replace("_", " ").toLowerCase()}.` });
-    } catch (e) {
-      toast({ title: "Could not update lead", description: errMsg(e), variant: "destructive" });
-    }
-  }
-
-  async function saveNotes() {
-    if (!detail) return;
-    setSavingNotes(true);
-    try {
-      const updated = await api.patch<Lead>(`/api/leads/${detail.id}`, { notes });
-      onApply(updated);
-      setDetail(updated);
-      toast({ title: "Note saved" });
-    } catch (e) {
-      toast({ title: "Could not save note", description: errMsg(e), variant: "destructive" });
-    } finally {
-      setSavingNotes(false);
-    }
-  }
-
-  async function del(lead: Lead) {
-    try {
-      await api.del(`/api/leads/${lead.id}`);
-      onDelete(lead.id);
-      toast({ title: "Lead deleted" });
-    } catch (e) {
-      toast({ title: "Could not delete lead", description: errMsg(e), variant: "destructive" });
-    }
-  }
-
-  const waLink = (l: Lead) =>
-    `https://wa.me/${(l.phone || "").replace(/[^\d]/g, "")}?text=${encodeURIComponent(`Hello ${l.name}, thank you for enquiring at our website!`)}`;
-
-  const Actions = ({ lead }: { lead: Lead }) => (
-    <div className="flex items-center gap-1">
-      <a
-        href={`tel:${lead.phone}`}
-        aria-label={`Call ${lead.name}`}
-        className="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-500 transition hover:bg-emerald-50 hover:text-emerald-700"
-      >
-        <Phone className="h-4 w-4" />
-      </a>
-      <a
-        href={waLink(lead)}
-        target="_blank" rel="noreferrer"
-        aria-label={`WhatsApp ${lead.name}`}
-        className="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-500 transition hover:bg-emerald-50 hover:text-emerald-700"
-      >
-        <MessageCircle className="h-4 w-4" />
-      </a>
-      <DeleteConfirm label={`Lead from ${lead.name} will be deleted.`} onConfirm={() => void del(lead)} />
-    </div>
-  );
-
-  const StatusSelect = ({ lead }: { lead: Lead }) => (
-    <Select value={lead.status} onValueChange={(v) => void changeStatus(lead, v)}>
-      <SelectTrigger size="sm" className="w-[130px] rounded-lg border-zinc-200 text-xs" aria-label="Lead status">
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent>
-        {LEAD_STATUSES.map((s) => (
-          <SelectItem key={s} value={s} className="text-xs">{s.replace("_", " ")}</SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  );
-
-  return (
-    <div className="space-y-4">
-      <PageHeader
-        title="Leads"
-        subtitle={newCount > 0 ? `${newCount} new lead${newCount > 1 ? "s" : ""} waiting for a first response.` : "Every enquiry from your website lands here."}
-        action={
-          <Button variant="outline" className="rounded-xl" onClick={() => exportLeadsCsv(filtered)} disabled={filtered.length === 0}>
-            <Download className="h-4 w-4" /> Export CSV
-          </Button>
-        }
-      />
-
-      <div className="flex flex-col gap-3 md:flex-row md:items-center">
-        <div className="ws-scroll overflow-x-auto pb-1">
-          <Tabs value={status} onValueChange={setStatus}>
-            <TabsList className="h-9 w-max">
-              <TabsTrigger value="ALL" className="text-xs">All ({leads.length})</TabsTrigger>
-              {LEAD_STATUSES.map((s) => (
-                <TabsTrigger key={s} value={s} className="text-xs">
-                  {s === "NEW" && newCount > 0 ? `New (${newCount})` : s.replace("_", " ")}
-                </TabsTrigger>
-              ))}
-            </TabsList>
-          </Tabs>
-        </div>
-        <div className="relative md:ml-auto md:w-64">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
-          <Input
-            className="rounded-xl pl-9"
-            placeholder="Search name, phone, message…"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            aria-label="Search leads"
-          />
-        </div>
-      </div>
-
-      {loading ? (
-        <LoadingRows n={5} />
-      ) : filtered.length === 0 ? (
-        <EmptyState
-          icon={Inbox}
-          title={leads.length === 0 ? "No leads yet" : "No leads match your filter"}
-          hint={leads.length === 0
-            ? "Publish your website and share it — enquiries from the contact form and WhatsApp will appear here instantly."
-            : "Try a different status or clear the search."}
-          action={leads.length > 0 ? (
-            <Button variant="outline" className="rounded-xl" onClick={() => { setStatus("ALL"); setQ(""); }}>Clear filters</Button>
-          ) : undefined}
-        />
-      ) : (
-        <>
-          {/* Desktop table */}
-          <div className="hidden rounded-2xl border bg-white shadow-sm md:block">
-            <Table>
-              <TableHeader>
-                <TableRow className="hover:bg-transparent">
-                  <TableHead className="rounded-tl-2xl">Customer</TableHead>
-                  <TableHead>Service</TableHead>
-                  <TableHead>Message</TableHead>
-                  <TableHead>Source</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Received</TableHead>
-                  <TableHead className="rounded-tr-2xl text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filtered.map((l) => (
-                  <TableRow key={l.id}>
-                    <TableCell>
-                      <p className="font-semibold text-zinc-900">{l.name}</p>
-                      <a href={`tel:${l.phone}`} className="text-xs text-emerald-700 hover:underline">{l.phone}</a>
-                      {l.email ? <p className="truncate text-xs text-zinc-400">{l.email}</p> : null}
-                    </TableCell>
-                    <TableCell className="text-xs text-zinc-600">{l.serviceName || "—"}</TableCell>
-                    <TableCell>
-                      <button
-                        type="button"
-                        className="block w-[220px] max-w-full truncate text-left text-xs text-zinc-600 hover:text-emerald-700 hover:underline"
-                        onClick={() => { setDetail(l); setNotes(l.notes); }}
-                        title="View full message"
-                      >
-                        {truncate(l.message || "—", 70)}
-                      </button>
-                      {l.notes ? (
-                        <p className="mt-0.5 flex items-center gap-1 text-[11px] text-amber-700">
-                          <Pencil className="h-3 w-3" /> Note saved
-                        </p>
-                      ) : null}
-                    </TableCell>
-                    <TableCell><Badge variant="outline" className="text-[11px]">{sourceLabel(l.source)}</Badge></TableCell>
-                    <TableCell><StatusSelect lead={l} /></TableCell>
-                    <TableCell className="whitespace-nowrap text-xs text-zinc-400">{timeAgo(l.createdAt)}</TableCell>
-                    <TableCell className="text-right"><Actions lead={l} /></TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-
-          {/* Mobile cards */}
-          <div className="space-y-3 md:hidden">
-            {filtered.map((l) => (
-              <Card key={l.id} className="rounded-2xl p-4">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <p className="truncate font-semibold text-zinc-900">{l.name}</p>
-                    <p className="text-xs text-zinc-400">{timeAgo(l.createdAt)} · {sourceLabel(l.source)}</p>
-                  </div>
-                  <StatusSelect lead={l} />
-                </div>
-                {l.serviceName ? <p className="mt-2 text-xs font-medium text-emerald-700">{l.serviceName}</p> : null}
-                <button type="button" className="mt-1 block w-full text-left text-xs text-zinc-600" onClick={() => { setDetail(l); setNotes(l.notes); }}>
-                  {truncate(l.message || "—", 90)} <span className="font-medium text-emerald-700">View</span>
-                </button>
-                <div className="mt-3 flex items-center justify-between border-t pt-3">
-                  <div className="flex gap-2 text-xs">
-                    <a href={`tel:${l.phone}`} className="font-medium text-emerald-700">{l.phone}</a>
-                    {l.email ? <span className="truncate text-zinc-400">{l.email}</span> : null}
-                  </div>
-                  <Actions lead={l} />
-                </div>
-              </Card>
-            ))}
-          </div>
-        </>
-      )}
-
-      {/* Detail + notes dialog */}
-      <Dialog open={!!detail} onOpenChange={(o) => { if (!o) setDetail(null); }}>
-        <DialogContent className="rounded-2xl sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>{detail?.name}</DialogTitle>
-            <DialogDescription>
-              {detail ? `${sourceLabel(detail.source)} · ${timeAgo(detail.createdAt)}` : ""}
-            </DialogDescription>
-          </DialogHeader>
-          {detail ? (
-            <div className="space-y-4">
-              <div className="flex flex-wrap gap-2">
-                <a href={`tel:${detail.phone}`} className="inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-sm font-medium text-emerald-700 hover:bg-emerald-50">
-                  <Phone className="h-4 w-4" /> {detail.phone}
-                </a>
-                <a href={waLink(detail)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-sm font-medium text-emerald-700 hover:bg-emerald-50">
-                  <MessageCircle className="h-4 w-4" /> WhatsApp
-                </a>
-                {detail.email ? (
-                  <a href={`mailto:${detail.email}`} className="inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50">
-                    <Mail className="h-4 w-4" /> Email
-                  </a>
-                ) : null}
-              </div>
-              <div>
-                <p className="mb-1 text-xs font-bold uppercase tracking-wider text-zinc-400">Message</p>
-                <p className="whitespace-pre-wrap rounded-xl bg-zinc-50 p-3 text-sm text-zinc-700">{detail.message || "—"}</p>
-                {detail.serviceName ? <p className="mt-2 text-xs text-zinc-500">Interested in: <span className="font-medium text-zinc-700">{detail.serviceName}</span></p> : null}
-              </div>
-              <Labeled label="Your notes (private)">
-                <Textarea className="rounded-xl" rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Called on 12th, quoted ₹4,500, follow up Friday…" />
-              </Labeled>
-            </div>
-          ) : null}
-          <DialogFooter className="gap-2">
-            <Button variant="outline" className="rounded-xl" onClick={() => setDetail(null)}>Close</Button>
-            <Button className="rounded-xl bg-emerald-600 hover:bg-emerald-700" onClick={() => void saveNotes()} disabled={savingNotes}>
-              {savingNotes ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save note
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
-  );
-}
 
 /* ================================== 6. SEO ================================== */
 
@@ -2774,6 +2921,10 @@ function SeoTab({ business, content }: { business: BusinessWithMeta; content: Co
 
   useEffect(() => {
     if (!website) return;
+    // The SEO form is deliberately re-seeded whenever the store's website
+    // object is replaced (after a save, publish or session refresh). The
+    // store is the external system here; this is the sync.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setSeo({
       seoTitle: website.seoTitle ?? "",
       seoDescription: website.seoDescription ?? "",
@@ -2812,20 +2963,23 @@ function SeoTab({ business, content }: { business: BusinessWithMeta; content: Co
 
       <div className="grid items-start gap-4 xl:grid-cols-2">
         <Card className="rounded-2xl p-6">
-          <h2 className="mb-4 text-sm font-bold uppercase tracking-wider text-zinc-400">Search appearance</h2>
+          <h2 className="mb-4 text-sm font-bold uppercase tracking-wider text-muted-foreground">Search appearance</h2>
           <SeoFields value={seo} onChange={setSeo} />
           <Button className="mt-4 rounded-xl bg-emerald-600 hover:bg-emerald-700" onClick={() => void save()} disabled={saving}>
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save SEO
           </Button>
 
           <Separator className="my-6" />
-          <p className="mb-2 text-xs font-bold uppercase tracking-wider text-zinc-400">Google result preview</p>
-          <div className="rounded-2xl border bg-white p-4 shadow-sm">
-            <p className="text-sm text-emerald-700">{business.slug}.websetu.in</p>
-            <p className="mt-0.5 text-lg font-medium leading-snug text-zinc-900">
+          <p className="mb-2 text-xs font-bold uppercase tracking-wider text-muted-foreground">Google result preview</p>
+          <div className="rounded-2xl border bg-card p-4 shadow-sm">
+            <p className="text-sm text-emerald-700">
+              {typeof window === "undefined" ? "" : window.location.host}
+              {liveSiteUrl(business.slug)}
+            </p>
+            <p className="mt-0.5 text-lg font-medium leading-snug text-foreground">
               {seo.seoTitle || `${business.name} — ${business.tagline || business.category}`}
             </p>
-            <p className="mt-1 text-sm leading-snug text-zinc-600">
+            <p className="mt-1 text-sm leading-snug text-muted-foreground">
               {seo.seoDescription || "Add a meta description to control this snippet — it is your free ad on Google."}
             </p>
           </div>
@@ -2833,7 +2987,7 @@ function SeoTab({ business, content }: { business: BusinessWithMeta; content: Co
 
         <div className="space-y-4">
           <Card className="rounded-2xl p-6">
-            <h2 className="mb-3 flex items-center gap-2 text-sm font-bold text-zinc-900">
+            <h2 className="mb-3 flex items-center gap-2 text-sm font-bold text-foreground">
               <MapPin className="h-4 w-4 text-amber-500" /> Local SEO
             </h2>
             <div className="grid grid-cols-3 gap-3 text-center">
@@ -2842,13 +2996,13 @@ function SeoTab({ business, content }: { business: BusinessWithMeta; content: Co
                 { label: "State", value: business.state || "—" },
                 { label: "Pincode", value: business.pincode || "—" },
               ].map((x) => (
-                <div key={x.label} className="rounded-xl bg-zinc-50 p-3">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">{x.label}</p>
-                  <p className="mt-1 truncate text-sm font-semibold text-zinc-800">{x.value}</p>
+                <div key={x.label} className="rounded-xl bg-muted p-3">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{x.label}</p>
+                  <p className="mt-1 truncate text-sm font-semibold text-foreground">{x.value}</p>
                 </div>
               ))}
             </div>
-            <p className="mt-3 text-xs text-zinc-500">
+            <p className="mt-3 text-xs text-muted-foreground">
               {business.gmbUrl
                 ? "Google Business Profile linked — reviews and maps listing boost local rankings."
                 : "Link your Google Business Profile in the Business Profile tab for stronger local rankings."}
@@ -2856,7 +3010,7 @@ function SeoTab({ business, content }: { business: BusinessWithMeta; content: Co
           </Card>
 
           <Card className="rounded-2xl p-6">
-            <h2 className="mb-3 flex items-center gap-2 text-sm font-bold text-zinc-900">
+            <h2 className="mb-3 flex items-center gap-2 text-sm font-bold text-foreground">
               <Sparkles className="h-4 w-4 text-amber-500" /> AEO — AI Answer Engines
             </h2>
             <div className="space-y-2">
@@ -2867,12 +3021,12 @@ function SeoTab({ business, content }: { business: BusinessWithMeta; content: Co
                   ) : (
                     <XCircle className="h-4 w-4 shrink-0 text-amber-500" />
                   )}
-                  <p className={cn("text-sm", c.pass ? "text-zinc-600" : "font-medium text-zinc-800")}>{c.label}</p>
+                  <p className={cn("text-sm", c.pass ? "text-muted-foreground" : "font-medium text-foreground")}>{c.label}</p>
                   <span className="ml-auto text-[10px] font-bold uppercase text-zinc-300">{c.weight} pts</span>
                 </div>
               ))}
             </div>
-            <p className="mt-3 text-xs text-zinc-500">
+            <p className="mt-3 text-xs text-muted-foreground">
               When people ask ChatGPT or Google &quot;best {business.category.toLowerCase()} in {business.city || "my city"}&quot;, FAQs and rich
               metadata help your site become the answer.
             </p>
@@ -2880,15 +3034,15 @@ function SeoTab({ business, content }: { business: BusinessWithMeta; content: Co
 
           <div className="grid gap-4 sm:grid-cols-2">
             <Card className="rounded-2xl p-5">
-              <h3 className="flex items-center gap-2 text-sm font-bold text-zinc-900"><Globe className="h-4 w-4 text-emerald-600" /> Sitemap</h3>
-              <p className="mt-2 text-xs leading-relaxed text-zinc-500">
-                Auto-generated at <code className="rounded bg-zinc-100 px-1 py-0.5 text-[11px]">/{business.slug}/sitemap.xml</code> and refreshed
+              <h3 className="flex items-center gap-2 text-sm font-bold text-foreground"><Globe className="h-4 w-4 text-emerald-600" /> Sitemap</h3>
+              <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                Auto-generated at <code className="rounded bg-muted px-1 py-0.5 text-[11px]">/{business.slug}/sitemap.xml</code> and refreshed
                 every time you publish.
               </p>
             </Card>
             <Card className="rounded-2xl p-5">
-              <h3 className="flex items-center gap-2 text-sm font-bold text-zinc-900"><ShieldCheck className="h-4 w-4 text-emerald-600" /> robots.txt</h3>
-              <p className="mt-2 text-xs leading-relaxed text-zinc-500">
+              <h3 className="flex items-center gap-2 text-sm font-bold text-foreground"><ShieldCheck className="h-4 w-4 text-emerald-600" /> robots.txt</h3>
+              <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
                 All major crawlers are allowed and your sitemap is referenced automatically. No configuration needed.
               </p>
             </Card>
@@ -2938,8 +3092,8 @@ function AnalyticsTab() {
         <Card className="rounded-2xl p-6 xl:col-span-2">
           <div className="mb-4 flex items-center justify-between">
             <div>
-              <h2 className="text-base font-bold text-zinc-900">Daily traffic</h2>
-              <p className="text-xs text-zinc-500">Visits and enquiries per day (last 14 days)</p>
+              <h2 className="text-base font-bold text-foreground">Daily traffic</h2>
+              <p className="text-xs text-muted-foreground">Visits and enquiries per day (last 14 days)</p>
             </div>
             <div className="flex items-center gap-4 text-xs font-medium">
               <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full" style={{ background: CHART_COLORS.emerald }} /> Visits</span>
@@ -2979,8 +3133,8 @@ function AnalyticsTab() {
 
         <div className="space-y-4">
           <Card className="rounded-2xl p-6">
-            <h2 className="mb-1 text-base font-bold text-zinc-900">CTA clicks</h2>
-            <p className="text-xs text-zinc-500">Which buttons customers actually press</p>
+            <h2 className="mb-1 text-base font-bold text-foreground">CTA clicks</h2>
+            <p className="text-xs text-muted-foreground">Which buttons customers actually press</p>
             {loading ? (
               <Skeleton className="mt-4 h-44 w-full rounded-2xl" />
             ) : (
@@ -2999,11 +3153,11 @@ function AnalyticsTab() {
           </Card>
 
           <Card className="rounded-2xl border-amber-200 bg-amber-50/60 p-6">
-            <h3 className="flex items-center gap-2 text-sm font-bold text-zinc-900">
+            <h3 className="flex items-center gap-2 text-sm font-bold text-foreground">
               <TrendingUp className="h-4 w-4 text-amber-600" /> Connect Google Analytics
             </h3>
-            <p className="mt-2 text-xs leading-relaxed text-zinc-600">
-              Full GA4 integration is coming on the <span className="font-semibold text-amber-700">Professional plan</span>. Meanwhile, WebSetu
+            <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+              Full GA4 integration is <span className="font-semibold text-amber-700">coming soon</span>. Meanwhile, WebSetu
               analytics automatically track visits, call clicks, WhatsApp clicks and leads — no setup needed.
             </p>
           </Card>
@@ -3023,15 +3177,27 @@ interface PaymentRow {
 function SubscriptionTab({ business, servicesCount }: { business: BusinessWithMeta; servicesCount: number }) {
   const setBusiness = useApp((s) => s.setBusiness);
   const plans = useApp((s) => s.plans);
-  const { data, loading, refetch } = useFetch<{ subscription: ReturnType<typeof JSON.parse> | null; payments: PaymentRow[] }>(
-    () => api.get("/api/subscription"),
-    [],
-  );
+  const { data, loading, refetch } = useFetch<{
+    subscription: ReturnType<typeof JSON.parse> | null;
+    payments: PaymentRow[];
+    mockPayments: boolean;
+    gateway: string | null;
+    testMode: boolean;
+    gstRate: number;
+  }>(() => api.get("/api/subscription"), []);
 
   const sub = business.subscription ?? (data?.subscription as BusinessWithMeta["subscription"] ?? null);
-  const [cycle, setCycle] = useState<"MONTHLY" | "YEARLY">("MONTHLY");
+  // Seeded from the current subscription rather than synced in an effect: the
+  // effect version rendered "Monthly" first and corrected itself a frame later.
+  const [cycle, setCycle] = useState<"MONTHLY" | "YEARLY">(
+    business.subscription?.cycle === "YEARLY" ? "YEARLY" : "MONTHLY",
+  );
+  const selectablePlans = plans.filter((p) => p.active && !isQuoteOnlyPlan(p));
   const [selectedPlanId, setSelectedPlanId] = useState<string>(
-    business.subscription?.planId ?? plans.find((p) => p.popular)?.id ?? "",
+    selectablePlans.find((p) => p.id === business.subscription?.planId)?.id ??
+      selectablePlans.find((p) => p.popular)?.id ??
+      selectablePlans[0]?.id ??
+      "",
   );
   const [couponCode, setCouponCode] = useState("");
   const [coupon, setCoupon] = useState<{ valid: boolean; discount?: number; finalAmount?: number; message?: string; description?: string } | null>(null);
@@ -3042,15 +3208,17 @@ function SubscriptionTab({ business, servicesCount }: { business: BusinessWithMe
 
   const selectedPlan = plans.find((p) => p.id === selectedPlanId) ?? null;
   const baseAmount = selectedPlan ? (cycle === "YEARLY" ? selectedPlan.priceYearly : selectedPlan.priceMonthly) : 0;
-  const payable = coupon?.valid && coupon.finalAmount !== undefined ? coupon.finalAmount : baseAmount;
+  const taxable = coupon?.valid && coupon.finalAmount !== undefined ? coupon.finalAmount : baseAmount;
+  // GST is added to the listed plan price, not carved out of it — the plans
+  // page quotes the pre-tax figure, so the customer sees it added here.
+  // Zero when the server has not said otherwise: WebSetu is not GST
+  // registered, and guessing 18 here would quote a customer a price the
+  // checkout then does not charge.
+  const gstRate = data?.gstRate ?? 0;
+  const gst = gstFor(taxable, gstRate);
+  const payable = taxable + gst;
+  const liveGateway = data?.gateway === "razorpay";
 
-  useEffect(() => {
-    if (business.subscription?.planId && !selectedPlanId) setSelectedPlanId(business.subscription.planId);
-  }, []);
-
-  useEffect(() => {
-    if (business.subscription) setCycle(business.subscription.cycle);
-  }, []);
 
   async function validateCoupon() {
     if (!couponCode.trim()) return;
@@ -3061,46 +3229,121 @@ function SubscriptionTab({ business, servicesCount }: { business: BusinessWithMe
         { code: couponCode.trim(), amount: baseAmount },
       );
       setCoupon(res);
+      // A rejected code is a problem with the field the customer just typed in,
+      // so it is answered under that field. Success stays a toast: there is
+      // nothing to correct, and the discount already shows in the total.
       if (res.valid) {
-        toast({ title: "Coupon applied 🎉", description: `You save ${rupee(res.discount ?? 0)} — ${res.description ?? ""}` });
-      } else {
-        toast({ title: "Coupon not valid", description: res.message ?? "Please check the code.", variant: "destructive" });
+        toast({
+          title: "Coupon applied 🎉",
+          description: `You save ${rupee(res.discount ?? 0)} — ${res.description ?? ""}`,
+        });
       }
     } catch (e) {
-      toast({ title: "Could not validate coupon", description: errMsg(e), variant: "destructive" });
+      setCoupon({ valid: false, message: errMsg(e) });
     } finally {
       setCheckingCoupon(false);
     }
   }
 
+  /** Refresh the session + billing view after a plan becomes active. */
+  async function afterActivation(payment: PaymentRow, planName: string) {
+    setSuccess({ invoiceNo: payment.invoiceNo, amount: payment.amount, plan: planName });
+    const me = await api.get<{ business: BusinessWithMeta | null }>("/api/auth/me");
+    if (me.business) setBusiness(me.business);
+    await refetch();
+  }
+
   async function pay() {
     if (!selectedPlan) return;
+    const appliedCoupon = coupon?.valid ? couponCode.trim().toUpperCase() : "";
     setPaying(true);
+
     try {
-      const res = await api.post<{ subscription: BusinessWithMeta["subscription"]; payment: PaymentRow }>("/api/subscription", {
+      if (!liveGateway) {
+        // Development only: the server refuses this path once a real gateway is
+        // configured, so it cannot be used to skip payment in production.
+        const res = await api.post<{ subscription: BusinessWithMeta["subscription"]; payment: PaymentRow }>(
+          "/api/subscription",
+          { planId: selectedPlan.id, cycle, couponCode: appliedCoupon, method },
+        );
+        await afterActivation(res.payment, selectedPlan.name);
+        return;
+      }
+
+      // The server prices the plan and creates the order; the amount below is
+      // whatever it decided, never what this page calculated.
+      const order = await api.post<{
+        orderId: string;
+        amount: number;
+        currency: string;
+        keyId: string;
+        prefill: { name: string; email: string; contact: string };
+        quote: { planName: string; amount: number };
+      }>("/api/subscription/order", {
         planId: selectedPlan.id,
         cycle,
-        couponCode: coupon?.valid ? couponCode.trim().toUpperCase() : "",
-        method,
+        couponCode: appliedCoupon,
       });
-      setSuccess({
-        invoiceNo: res.payment.invoiceNo,
-        amount: res.payment.amount,
-        plan: selectedPlan.name,
+
+      const opened = await openCheckout({
+        keyId: order.keyId,
+        orderId: order.orderId,
+        amount: order.amount,
+        currency: order.currency,
+        name: "WebSetu",
+        description: `${order.quote.planName} · ${cycle === "YEARLY" ? "Annual" : "Monthly"}`,
+        prefill: order.prefill,
+        onSuccess: (response) => {
+          void (async () => {
+            try {
+              const res = await api.post<{ payment: PaymentRow; alreadyActivated: boolean }>(
+                "/api/subscription/verify",
+                response,
+              );
+              await afterActivation(res.payment, order.quote.planName);
+            } catch (e) {
+              // The money may well have left their account — the webhook will
+              // still activate the plan — so this must not read as "payment
+              // failed, try again", which would invite a second charge.
+              toast({
+                title: "Payment received — activating",
+                description: `${errMsg(e)} Your plan will activate shortly. Payment id: ${response.razorpay_payment_id}`,
+              });
+              await refetch();
+            } finally {
+              setPaying(false);
+            }
+          })();
+        },
+        onDismiss: (reason) => {
+          setPaying(false);
+          if (reason) toast({ title: "Payment not completed", description: reason, variant: "destructive" });
+        },
       });
-      const me = await api.get<{ business: BusinessWithMeta | null }>("/api/auth/me");
-      if (me.business) setBusiness(me.business);
-      await refetch();
+
+      if (!opened) {
+        toast({
+          title: "Could not open checkout",
+          description: "The payment window could not load. Check your connection and try again.",
+          variant: "destructive",
+        });
+        setPaying(false);
+      }
+      // Left spinning on purpose while the sheet is open; the callbacks above
+      // clear it.
+      return;
     } catch (e) {
       toast({ title: "Payment failed", description: errMsg(e), variant: "destructive" });
     } finally {
-      setPaying(false);
+      if (!liveGateway) setPaying(false);
     }
   }
 
   const maxPages = sub?.plan?.maxPages ?? plans.find((p) => p.id === sub?.planId)?.maxPages ?? 5;
   const usagePct = Math.min(100, Math.round((servicesCount / Math.max(1, maxPages)) * 100));
-  const activePlans = plans.filter((p) => p.active);
+  // Quote-only tiers (Enterprise) are not self-serve — they are an enquiry, so
+  // they never appear in the checkout picker.
+  const activePlans = plans.filter((p) => p.active && !isQuoteOnlyPlan(p));
 
   return (
     <div className="space-y-6">
@@ -3110,39 +3353,39 @@ function SubscriptionTab({ business, servicesCount }: { business: BusinessWithMe
         {/* Current plan */}
         <Card className="rounded-2xl p-6">
           <div className="flex items-center justify-between">
-            <h2 className="text-sm font-bold uppercase tracking-wider text-zinc-400">Current plan</h2>
+            <h2 className="text-sm font-bold uppercase tracking-wider text-muted-foreground">Current plan</h2>
             {sub ? <SubStatusBadge status={sub.status} /> : <Badge variant="outline">No plan</Badge>}
           </div>
-          <p className="mt-3 text-2xl font-bold text-zinc-900">
+          <p className="mt-3 text-2xl font-bold text-foreground">
             {sub?.plan?.name ?? plans.find((p) => p.id === sub?.planId)?.name ?? "Free Trial"}
           </p>
           {sub ? (
-            <p className="text-sm text-zinc-500">
+            <p className="text-sm text-muted-foreground">
               {rupee(sub.amount)} · {sub.cycle === "YEARLY" ? "per year" : "per month"}
             </p>
           ) : null}
           <Separator className="my-4" />
           <dl className="space-y-2 text-sm">
-            <div className="flex justify-between"><dt className="text-zinc-500">Started</dt><dd className="font-medium text-zinc-800">{fmtDate(sub?.startedAt)}</dd></div>
+            <div className="flex justify-between"><dt className="text-muted-foreground">Started</dt><dd className="font-medium text-foreground">{fmtDate(sub?.startedAt)}</dd></div>
             {sub?.status === "TRIALING" ? (
-              <div className="flex justify-between"><dt className="text-zinc-500">Trial ends</dt><dd className="font-medium text-amber-700">{fmtDate(sub?.trialEndsAt)} ({daysUntil(sub?.trialEndsAt)}d)</dd></div>
+              <div className="flex justify-between"><dt className="text-muted-foreground">Trial ends</dt><dd className="font-medium text-amber-700">{fmtDate(sub?.trialEndsAt)} ({daysUntil(sub?.trialEndsAt)}d)</dd></div>
             ) : (
-              <div className="flex justify-between"><dt className="text-zinc-500">Renews</dt><dd className="font-medium text-zinc-800">{fmtDate(sub?.renewsAt)}</dd></div>
+              <div className="flex justify-between"><dt className="text-muted-foreground">Renews</dt><dd className="font-medium text-foreground">{fmtDate(sub?.renewsAt)}</dd></div>
             )}
           </dl>
           <Separator className="my-4" />
-          <p className="mb-2 text-xs font-bold uppercase tracking-wider text-zinc-400">Usage</p>
+          <p className="mb-2 text-xs font-bold uppercase tracking-wider text-muted-foreground">Usage</p>
           <div className="space-y-3">
             <div>
               <div className="mb-1 flex justify-between text-xs">
-                <span className="text-zinc-500">Content items (services)</span>
-                <span className="font-semibold text-zinc-700">{servicesCount} / {maxPages}</span>
+                <span className="text-muted-foreground">Content items (services)</span>
+                <span className="font-semibold text-foreground">{servicesCount} / {maxPages}</span>
               </div>
               <Progress value={usagePct} className="h-2" />
             </div>
-            <div className="flex items-center justify-between rounded-xl bg-zinc-50 p-3 text-xs">
-              <span className="flex items-center gap-1.5 text-zinc-500"><Sparkles className="h-3.5 w-3.5 text-amber-500" /> AI credits / month</span>
-              <span className="font-bold text-zinc-800">{sub?.plan?.aiCredits ?? 0}</span>
+            <div className="flex items-center justify-between rounded-xl bg-muted p-3 text-xs">
+              <span className="flex items-center gap-1.5 text-muted-foreground"><Sparkles className="h-3.5 w-3.5 text-amber-500" /> AI credits / month</span>
+              <span className="font-bold text-foreground">{sub?.plan?.aiCredits ?? 0}</span>
             </div>
           </div>
         </Card>
@@ -3150,8 +3393,8 @@ function SubscriptionTab({ business, servicesCount }: { business: BusinessWithMe
         {/* Plans + checkout */}
         <div className="space-y-4 xl:col-span-2">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-sm font-bold uppercase tracking-wider text-zinc-400">Change plan</h2>
-            <div className="flex items-center gap-1 rounded-xl bg-zinc-100 p-1">
+            <h2 className="text-sm font-bold uppercase tracking-wider text-muted-foreground">Change plan</h2>
+            <div className="flex items-center gap-1 rounded-xl bg-muted p-1">
               {(["MONTHLY", "YEARLY"] as const).map((c) => (
                 <button
                   key={c}
@@ -3159,7 +3402,7 @@ function SubscriptionTab({ business, servicesCount }: { business: BusinessWithMe
                   onClick={() => { setCycle(c); setCoupon(null); }}
                   className={cn(
                     "rounded-lg px-3 py-1.5 text-xs font-semibold transition",
-                    cycle === c ? "bg-white text-emerald-700 shadow-sm" : "text-zinc-500 hover:text-zinc-800",
+                    cycle === c ? "bg-card text-emerald-700 shadow-sm" : "text-muted-foreground hover:text-foreground",
                   )}
                 >
                   {c === "MONTHLY" ? "Monthly" : "Yearly"}
@@ -3186,8 +3429,8 @@ function SubscriptionTab({ business, servicesCount }: { business: BusinessWithMe
                     type="button"
                     onClick={() => { setSelectedPlanId(p.id); setCoupon(null); }}
                     className={cn(
-                      "relative rounded-2xl border bg-white p-5 text-left shadow-sm transition",
-                      isSelected ? "border-emerald-500 ring-2 ring-emerald-500/20" : "border-zinc-200 hover:border-emerald-300",
+                      "relative rounded-2xl border bg-card p-5 text-left shadow-sm transition",
+                      isSelected ? "border-emerald-500 ring-2 ring-emerald-500/20" : "border-border hover:border-emerald-300",
                     )}
                   >
                     {p.popular ? (
@@ -3196,17 +3439,17 @@ function SubscriptionTab({ business, servicesCount }: { business: BusinessWithMe
                       </span>
                     ) : null}
                     <div className="flex items-center justify-between">
-                      <p className="font-bold text-zinc-900">{p.name}</p>
+                      <p className="font-bold text-foreground">{p.name}</p>
                       {isCurrent ? <Badge className="border-emerald-200 bg-emerald-100 text-emerald-700">Current</Badge> : null}
                     </div>
-                    <p className="text-xs text-zinc-500">{p.tagline}</p>
-                    <p className="mt-2 text-2xl font-bold text-zinc-900">
+                    <p className="text-xs text-muted-foreground">{p.tagline}</p>
+                    <p className="mt-2 text-2xl font-bold text-foreground">
                       {rupee(price)}
-                      <span className="text-sm font-normal text-zinc-400">/{cycle === "YEARLY" ? "yr" : "mo"}</span>
+                      <span className="text-sm font-normal text-muted-foreground">/{cycle === "YEARLY" ? "yr" : "mo"}</span>
                     </p>
                     <ul className="mt-3 space-y-1.5">
                       {p.features.slice(0, 5).map((f, i) => (
-                        <li key={i} className="flex items-start gap-1.5 text-xs text-zinc-600">
+                        <li key={i} className="flex items-start gap-1.5 text-xs text-muted-foreground">
                           <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600" /> {f}
                         </li>
                       ))}
@@ -3219,7 +3462,7 @@ function SubscriptionTab({ business, servicesCount }: { business: BusinessWithMe
 
           {/* Checkout */}
           <Card className="rounded-2xl p-6">
-            <h2 className="mb-4 text-sm font-bold uppercase tracking-wider text-zinc-400">Checkout</h2>
+            <h2 className="mb-4 text-sm font-bold uppercase tracking-wider text-muted-foreground">Checkout</h2>
             <div className="grid gap-4 sm:grid-cols-3">
               <Labeled label="Coupon code">
                 <div className="flex gap-2">
@@ -3244,14 +3487,35 @@ function SubscriptionTab({ business, servicesCount }: { business: BusinessWithMe
                   </SelectContent>
                 </Select>
               </Labeled>
-              <div className="flex flex-col justify-end gap-1">
-                <div className="flex justify-between text-sm">
-                  <span className="text-zinc-500">{selectedPlan ? `${selectedPlan.name} · ${cycle === "YEARLY" ? "yearly" : "monthly"}` : "Select a plan"}</span>
-                  <span className="font-bold text-zinc-900">{rupee(payable)}</span>
+              <div className="flex flex-col justify-end gap-1 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">
+                    {selectedPlan ? `${selectedPlan.name} · ${cycle === "YEARLY" ? "yearly" : "monthly"}` : "Select a plan"}
+                  </span>
+                  <span className="text-foreground">{rupee(baseAmount)}</span>
                 </div>
-                {coupon?.valid && coupon.discount ? (
-                  <p className="text-right text-xs text-emerald-700">Coupon saves you {rupee(coupon.discount)}</p>
+                {coupon && !coupon.valid ? (
+                  <FormError message={coupon.message ?? "That code is not valid. Check it and try again."} />
                 ) : null}
+                {coupon?.valid && coupon.discount ? (
+                  <div className="flex justify-between text-emerald-700">
+                    <span>Coupon {couponCode.trim().toUpperCase()}</span>
+                    <span>&minus; {rupee(coupon.discount)}</span>
+                  </div>
+                ) : null}
+                {/* Hidden entirely when no tax is charged, rather than shown
+                    as "GST @ 0%" — a zero tax line on a bill from a business
+                    that is not registered invites exactly the wrong question. */}
+                {gstRate > 0 && (
+                  <div className="flex justify-between text-muted-foreground">
+                    <span>GST @ {gstRate}%</span>
+                    <span>{rupee(gst)}</span>
+                  </div>
+                )}
+                <div className="mt-1 flex justify-between border-t pt-1">
+                  <span className="font-medium text-foreground">Total payable</span>
+                  <span className="font-bold text-foreground">{rupee(payable)}</span>
+                </div>
               </div>
             </div>
             <Button
@@ -3262,16 +3526,24 @@ function SubscriptionTab({ business, servicesCount }: { business: BusinessWithMe
               {paying ? <Loader2 className="h-5 w-5 animate-spin" /> : <CreditCard className="h-5 w-5" />}
               Pay {rupee(payable)} &amp; Activate
             </Button>
-            <p className="mt-2 text-center text-[11px] text-zinc-400">Demo checkout — no real money is charged. Razorpay-ready architecture.</p>
+            <p className="mt-2 text-center text-[11px] text-muted-foreground">
+              {liveGateway
+                ? data?.testMode
+                  ? "Razorpay test mode — use a test card, no real money is charged."
+                    : gstRate > 0
+                    ? "Secure payment by Razorpay. Prices include GST; a tax invoice is issued on payment."
+                    : "Secure payment by Razorpay. A payment receipt is issued on payment."
+                : "Demo checkout — no real money is charged."}
+            </p>
           </Card>
         </div>
       </div>
 
       {/* Payment history */}
       <Card className="rounded-2xl p-6">
-        <h2 className="mb-4 text-sm font-bold uppercase tracking-wider text-zinc-400">Payment history</h2>
+        <h2 className="mb-4 text-sm font-bold uppercase tracking-wider text-muted-foreground">Payment history</h2>
         {(data?.payments ?? []).length === 0 ? (
-          <p className="py-6 text-center text-sm text-zinc-400">No payments yet — you are on the free trial.</p>
+          <p className="py-6 text-center text-sm text-muted-foreground">No payments yet — you are on the free trial.</p>
         ) : (
           <div className="ws-scroll max-h-96 overflow-y-auto rounded-xl border">
             <Table>
@@ -3283,19 +3555,33 @@ function SubscriptionTab({ business, servicesCount }: { business: BusinessWithMe
                   <TableHead>Amount</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Date</TableHead>
+                  <TableHead className="text-right">Invoice</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {(data?.payments ?? []).map((p) => (
                   <TableRow key={p.id}>
-                    <TableCell className="font-mono text-xs font-semibold text-zinc-800">{p.invoiceNo || "—"}</TableCell>
-                    <TableCell className="text-xs text-zinc-600">{p.description}</TableCell>
+                    <TableCell className="font-mono text-xs font-semibold text-foreground">{p.invoiceNo || "—"}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{p.description}</TableCell>
                     <TableCell className="text-xs">{p.method}</TableCell>
-                    <TableCell className="font-semibold text-zinc-900">{rupee(p.amount)}</TableCell>
+                    <TableCell className="font-semibold text-foreground">{rupee(p.amount)}</TableCell>
                     <TableCell>
                       <Badge className="border-emerald-200 bg-emerald-100 text-emerald-700">{p.status}</Badge>
                     </TableCell>
-                    <TableCell className="text-right text-xs text-zinc-400">{fmtDate(p.createdAt)}</TableCell>
+                    <TableCell className="text-right text-xs text-muted-foreground">{fmtDate(p.createdAt)}</TableCell>
+                    <TableCell className="text-right">
+                      {/* Opened in a new tab rather than downloaded: the page
+                          is printed to PDF by the browser, which needs it
+                          rendered rather than saved. */}
+                      <a
+                        href={`/invoice/${p.id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs font-semibold text-emerald-700 hover:underline"
+                      >
+                        View
+                      </a>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -3317,11 +3603,11 @@ function SubscriptionTab({ business, servicesCount }: { business: BusinessWithMe
             <DialogDescription>Your new plan is active immediately.</DialogDescription>
           </DialogHeader>
           {success ? (
-            <div className="space-y-2 rounded-2xl border bg-zinc-50 p-4 text-sm">
-              <div className="flex justify-between"><span className="text-zinc-500">Plan</span><span className="font-semibold text-zinc-900">{success.plan}</span></div>
-              <div className="flex justify-between"><span className="text-zinc-500">Amount paid</span><span className="font-semibold text-zinc-900">{rupee(success.amount)}</span></div>
-              <div className="flex justify-between"><span className="text-zinc-500">Invoice no.</span><span className="font-mono text-xs font-semibold text-zinc-800">{success.invoiceNo}</span></div>
-              <div className="flex justify-between"><span className="text-zinc-500">Next renewal</span><span className="font-semibold text-zinc-900">{fmtDate(sub?.renewsAt)}</span></div>
+            <div className="space-y-2 rounded-2xl border bg-muted p-4 text-sm">
+              <div className="flex justify-between"><span className="text-muted-foreground">Plan</span><span className="font-semibold text-foreground">{success.plan}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Amount paid</span><span className="font-semibold text-foreground">{rupee(success.amount)}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Invoice no.</span><span className="font-mono text-xs font-semibold text-foreground">{success.invoiceNo}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Next renewal</span><span className="font-semibold text-foreground">{fmtDate(sub?.renewsAt)}</span></div>
             </div>
           ) : null}
           <DialogFooter>
@@ -3335,54 +3621,120 @@ function SubscriptionTab({ business, servicesCount }: { business: BusinessWithMe
 
 /* ================================ 9. SETTINGS =============================== */
 
+interface AccountInfo {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  createdAt: string;
+  prefs: { leadAlerts: boolean; smsAlerts: boolean; weekly: boolean; productUpdates: boolean };
+}
+
 function SettingsTab() {
   const user = useApp((s) => s.user);
   const logout = useApp((s) => s.logout);
+  const logoutEverywhere = useApp((s) => s.logoutEverywhere);
   const business = useApp((s) => s.business);
-  const [prefs, setPrefs] = useState({ leadAlerts: true, weekly: true, productUpdates: false });
+
+  // Preferences used to live in component state only: the switches moved and
+  // nothing was ever sent to the server, so a reload silently reverted them.
+  const { data: account, loading, error, refetch } = useFetch<AccountInfo>(
+    () => api.get<AccountInfo>("/api/account"),
+    [],
+  );
+  const [prefs, setPrefs] = useState<AccountInfo["prefs"] | null>(null);
+  const [savingPref, setSavingPref] = useState<string | null>(null);
+
+  const effectivePrefs = prefs ?? account?.prefs ?? null;
+
+  async function togglePref(key: keyof AccountInfo["prefs"], value: boolean) {
+    if (!effectivePrefs) return;
+    const previous = effectivePrefs;
+    setPrefs({ ...effectivePrefs, [key]: value });
+    setSavingPref(key);
+    try {
+      const saved = await api.patch<AccountInfo>("/api/account", { prefs: { [key]: value } });
+      setPrefs(saved.prefs);
+      toast({ title: "Preference saved" });
+    } catch (e) {
+      setPrefs(previous); // roll back so the UI never claims a save that failed
+      toast({ title: "Could not save preference", description: errMsg(e), variant: "destructive" });
+    } finally {
+      setSavingPref(null);
+    }
+  }
 
   return (
     <div className="max-w-2xl space-y-6">
       <PageHeader title="Settings" subtitle="Your account and preferences." />
 
       <Card className="rounded-2xl p-6">
-        <h2 className="mb-4 text-sm font-bold uppercase tracking-wider text-zinc-400">Account</h2>
+        <h2 className="mb-4 text-sm font-bold uppercase tracking-wider text-muted-foreground">Account</h2>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Labeled label="Your name"><Input className="rounded-xl" value={user?.name ?? ""} readOnly /></Labeled>
-          <Labeled label="Email"><Input className="rounded-xl" value={user?.email ?? ""} readOnly /></Labeled>
+          <Labeled label="Your name">
+            <Input className="rounded-xl" value={account?.name ?? user?.name ?? ""} readOnly />
+          </Labeled>
+          <Labeled label="Email">
+            <Input className="rounded-xl" value={account?.email ?? user?.email ?? ""} readOnly />
+          </Labeled>
         </div>
-        <p className="mt-3 text-xs text-zinc-400">
+        <p className="mt-3 text-xs text-muted-foreground">
           Role: {user?.role === "ADMIN" ? "Administrator" : "Business owner"}
-          {business ? ` · Business: ${business.name}` : ""}
+          {business ? " · Business: " + business.name : ""}
         </p>
       </Card>
 
+      <PasswordCard />
+
+      <DomainsCard />
+
       <Card className="rounded-2xl p-6">
-        <h2 className="mb-4 text-sm font-bold uppercase tracking-wider text-zinc-400">Notifications</h2>
-        <div className="space-y-3">
-          {([
-            { key: "leadAlerts" as const, label: "New lead alerts", desc: "Get notified the moment a customer enquires" },
-            { key: "weekly" as const, label: "Weekly performance summary", desc: "Visits, leads and health score every Monday" },
-            { key: "productUpdates" as const, label: "Product updates", desc: "New features and tips for your website" },
-          ]).map((p) => (
-            <div key={p.key} className="flex items-center justify-between gap-4 rounded-xl border p-3.5">
-              <div>
-                <p className="text-sm font-medium text-zinc-800">{p.label}</p>
-                <p className="text-xs text-zinc-400">{p.desc}</p>
+        <h2 className="mb-4 text-sm font-bold uppercase tracking-wider text-muted-foreground">Notifications</h2>
+        {loading ? (
+          <div className="space-y-3">
+            {[0, 1, 2].map((i) => <Skeleton key={i} className="h-16 w-full rounded-xl" />)}
+          </div>
+        ) : error || !effectivePrefs ? (
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3.5">
+            <p className="text-sm text-amber-800">{error || "Could not load your preferences."}</p>
+            <Button size="sm" variant="outline" onClick={refetch}>Retry</Button>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {([
+              { key: "leadAlerts" as const, label: "New lead alerts", desc: "Email the moment a customer enquires" },
+              { key: "smsAlerts" as const, label: "SMS lead alerts", desc: "Text your business number too — for when you are away from email" },
+              { key: "weekly" as const, label: "Weekly performance summary", desc: "Visits, leads and health score every Monday" },
+              { key: "productUpdates" as const, label: "Product updates", desc: "New features and tips for your website" },
+            ]).map((p) => (
+              <div key={p.key} className="flex items-center justify-between gap-4 rounded-xl border p-3.5">
+                <div>
+                  <p className="text-sm font-medium text-foreground">{p.label}</p>
+                  <p className="text-xs text-muted-foreground">{p.desc}</p>
+                </div>
+                <Switch
+                  checked={effectivePrefs[p.key]}
+                  disabled={savingPref === p.key}
+                  aria-label={p.label}
+                  onCheckedChange={(v) => void togglePref(p.key, v)}
+                />
               </div>
-              <Switch checked={prefs[p.key]} onCheckedChange={(v) => setPrefs((s) => ({ ...s, [p.key]: v }))} />
-            </div>
-          ))}
-        </div>
+            ))}
+            <p className="text-[11px] text-muted-foreground">
+              Alerts always appear in your notification bell. Email goes to your business email address,
+              and SMS to your WhatsApp or phone number from Business Profile — keep them up to date.
+            </p>
+          </div>
+        )}
       </Card>
 
       <Card className="rounded-2xl border-red-200 p-6">
         <h2 className="mb-1 text-sm font-bold uppercase tracking-wider text-red-500">Danger zone</h2>
-        <p className="mb-4 text-sm text-zinc-500">
+        <p className="mb-4 text-sm text-muted-foreground">
           Need to close your account or transfer your website? Our support team will help you do it safely.
         </p>
         <div className="flex flex-wrap gap-2">
-          <a href="mailto:support@websetu.in?subject=WebSetu%20account%20support">
+          <a href="mailto:info@aetherdevsolutions.com?subject=WebSetu%20account%20support">
             <Button variant="outline" className="rounded-xl">
               <Mail className="h-4 w-4" /> Contact support
             </Button>
@@ -3390,8 +3742,85 @@ function SettingsTab() {
           <Button variant="outline" className="rounded-xl text-red-600 hover:bg-red-50 hover:text-red-700" onClick={logout}>
             <LogOut className="h-4 w-4" /> Log out
           </Button>
+          {/* Sessions are signed tokens rather than rows, so this is the only
+              way to end one on a device you no longer have. */}
+          <Button
+            variant="outline"
+            className="rounded-xl text-red-600 hover:bg-red-50 hover:text-red-700"
+            onClick={() => {
+              void logoutEverywhere().catch((e) =>
+                toast({ title: "Could not sign out everywhere", description: errMsg(e), variant: "destructive" }),
+              );
+            }}
+          >
+            <LogOut className="h-4 w-4" /> Sign out everywhere
+          </Button>
         </div>
       </Card>
     </div>
+  );
+}
+
+function PasswordCard() {
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setErr("");
+    // The server re-checks all of this; these messages just avoid a round-trip.
+    if (next.length < 8) return setErr("New password must be at least 8 characters.");
+    if (!/[a-zA-Z]/.test(next) || !/[0-9]/.test(next)) {
+      return setErr("New password must contain at least one letter and one number.");
+    }
+    if (next !== confirm) return setErr("The two new passwords do not match.");
+    setBusy(true);
+    try {
+      await api.put("/api/account", { currentPassword: current, newPassword: next });
+      setCurrent("");
+      setNext("");
+      setConfirm("");
+      toast({ title: "Password changed", description: "Use your new password next time you log in." });
+    } catch (e2) {
+      setErr(errMsg(e2));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card className="rounded-2xl p-6">
+      <h2 className="mb-4 text-sm font-bold uppercase tracking-wider text-muted-foreground">Password</h2>
+      <form className="space-y-4" onSubmit={submit}>
+        <Labeled label="Current password">
+          <Input
+            className="rounded-xl" type="password" autoComplete="current-password"
+            value={current} onChange={(e) => setCurrent(e.target.value)} required
+          />
+        </Labeled>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Labeled label="New password" hint="Minimum 8 characters, with a letter and a number.">
+            <Input
+              className="rounded-xl" type="password" autoComplete="new-password" minLength={8}
+              value={next} onChange={(e) => setNext(e.target.value)} required
+            />
+          </Labeled>
+          <Labeled label="Confirm new password">
+            <Input
+              className="rounded-xl" type="password" autoComplete="new-password" minLength={8}
+              value={confirm} onChange={(e) => setConfirm(e.target.value)} required
+            />
+          </Labeled>
+        </div>
+        {err ? <p className="text-xs font-medium text-red-600">{err}</p> : null}
+        <Button type="submit" disabled={busy} className="rounded-xl bg-emerald-600 hover:bg-emerald-700">
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
+          Change password
+        </Button>
+      </form>
+    </Card>
   );
 }

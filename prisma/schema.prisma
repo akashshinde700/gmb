@@ -16,77 +16,103 @@ model User {
   passwordHash String
   name         String
   role         String   @default("CUSTOMER") // CUSTOMER | ADMIN
+  notifyJson   String   @default("{}") // {leadAlerts, weekly, productUpdates}
+  /// Bumped to invalidate every session token already issued for this user —
+  /// on a password change, or an explicit "sign out everywhere".
+  tokenVersion Int      @default(0)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
   business      Business?
   notifications Notification[]
+  resetTokens   PasswordReset[]
 }
 
 model Business {
-  id              String   @id @default(cuid())
-  userId          String   @unique
-  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  name            String
-  slug            String   @unique
-  category        String
-  tagline         String   @default("")
-  description     String   @default("")
-  ownerName       String   @default("")
-  phone           String   @default("")
-  whatsapp        String   @default("")
-  email           String   @default("")
-  address         String   @default("")
-  city            String   @default("")
-  state           String   @default("")
-  country         String   @default("India")
-  pincode         String   @default("")
-  establishedYear String   @default("")
-  gstin           String   @default("")
-  logoUrl         String   @default("")
-  coverUrl        String   @default("")
-  brandPrimary    String   @default("#059669")
-  brandSecondary  String   @default("#0f766e")
-  brandAccent     String   @default("#f59e0b")
-  templateId      String   @default("")
-  gmbUrl          String   @default("")
-  mapsUrl         String   @default("")
-  placeId         String   @default("")
-  upiId           String   @default("")  // UPI VPA e.g. name@okicici — used for payment QR
-  paymentQrUrl    String   @default("")  // custom QR image (dataURL or hosted URL); auto-generated when empty
-  hoursJson       String   @default("{}") // {mon:"9:00-18:00",...} + {days:[...]}
-  socialsJson     String   @default("{}") // {facebook,instagram,youtube,linkedin,x,pinterest}
-  status          String   @default("DRAFT") // DRAFT | PUBLISHED | SUSPENDED | EXPIRED | ARCHIVED
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id                  String    @id @default(cuid())
+  userId              String    @unique
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name                String
+  slug                String    @unique
+  category            String
+  tagline             String    @default("")
+  description         String    @default("")
+  ownerName           String    @default("")
+  phone               String    @default("")
+  whatsapp            String    @default("")
+  email               String    @default("")
+  address             String    @default("")
+  city                String    @default("")
+  state               String    @default("")
+  country             String    @default("India")
+  pincode             String    @default("")
+  establishedYear     String    @default("")
+  gstin               String    @default("")
+  logoUrl             String    @default("")
+  coverUrl            String    @default("")
+  brandPrimary        String    @default("#059669")
+  brandSecondary      String    @default("#0f766e")
+  brandAccent         String    @default("#f59e0b")
+  templateId          String    @default("")
+  gmbUrl              String    @default("")
+  mapsUrl             String    @default("")
+  placeId             String    @default("")
+  upiId               String    @default("") // UPI VPA e.g. name@okicici — used for payment QR
+  paymentQrUrl        String    @default("") // custom QR image (dataURL or hosted URL); auto-generated when empty
+  hoursJson           String    @default("{}") // {mon:"9:00-18:00",...} + {days:[...]}
+  socialsJson         String    @default("{}") // {facebook,instagram,youtube,linkedin,x,pinterest}
+  status              String    @default("DRAFT") // DRAFT | PUBLISHED | SUSPENDED | EXPIRED | ARCHIVED
+  // Per-customer palette override set by an admin: JSON array of Palette ids.
+  // Empty means "follow the plan allowance".
+  allowedPalettesJson String    @default("")
+  /// Custom domains this customer has paid for, granted by an admin.
+  ///
+  /// Domains are sold as an add-on rather than bundled into a plan, so this —
+  /// not the plan — is where the entitlement normally comes from. It adds to
+  /// whatever the plan allows, so bundling one into a tier later still works.
+  domainCredits       Int       @default(0)
+  aiUsedCount         Int       @default(0) // AI generations used in the current period
+  // Appearance edits (theme / brand colours) used while on a free or trial plan.
+  themeChangesUsed    Int       @default(0)
+  // Google reviews cached from the Places API, with the time they were fetched.
+  googleReviewsJson   String    @default("[]")
+  googleReviewsAt     DateTime?
+  aiPeriodStart       DateTime  @default(now()) // rolls forward every 30 days
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
-  website       Website?
-  services      Service[]
-  products      Product[]
-  gallery       GalleryItem[]
-  testimonials  Testimonial[]
-  faqs          Faq[]
-  blogPosts     BlogPost[]
-  leads         Lead[]
-  subscription  Subscription?
-  payments      Payment[]
-  analytics     AnalyticsEvent[]
+  website        Website?
+  domains        Domain[]
+  domainRequests DomainRequest[]
+  services       Service[]
+  products       Product[]
+  gallery        GalleryItem[]
+  testimonials   Testimonial[]
+  faqs           Faq[]
+  blogPosts      BlogPost[]
+  leads          Lead[]
+  subscription   Subscription?
+  payments       Payment[]
+  analytics      AnalyticsEvent[]
+
+  @@index([status])
+  @@index([templateId])
 }
 
 model Website {
-  id             String   @id @default(cuid())
-  businessId     String   @unique
-  business       Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  seoTitle       String   @default("")
-  seoDescription String   @default("")
-  keywords       String   @default("")
-  ogImage        String   @default("")
-  themeJson      String   @default("{}")   // {font, radius, containerWidth, heroStyle, cardStyle}
-  sectionsJson   String   @default("[]")   // ordered [{id,type,visible,content}]
-  version        Int      @default(1)
+  id             String    @id @default(cuid())
+  businessId     String    @unique
+  business       Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  seoTitle       String    @default("")
+  seoDescription String    @default("")
+  keywords       String    @default("")
+  ogImage        String    @default("")
+  themeJson      String    @default("{}") // {font, radius, containerWidth, heroStyle, cardStyle}
+  sectionsJson   String    @default("[]") // ordered [{id,type,visible,content}]
+  version        Int       @default(1)
   publishedAt    DateTime?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 }
 
 model Service {
@@ -101,6 +127,8 @@ model Service {
   featured    Boolean  @default(false)
   sortOrder   Int      @default(0)
   createdAt   DateTime @default(now())
+
+  @@index([businessId, sortOrder])
 }
 
 model Product {
@@ -120,6 +148,8 @@ model Product {
   featured    Boolean  @default(false)
   sortOrder   Int      @default(0)
   createdAt   DateTime @default(now())
+
+  @@index([businessId, sortOrder])
 }
 
 model GalleryItem {
@@ -131,6 +161,8 @@ model GalleryItem {
   alt        String   @default("")
   sortOrder  Int      @default(0)
   createdAt  DateTime @default(now())
+
+  @@index([businessId, sortOrder])
 }
 
 model Testimonial {
@@ -144,6 +176,8 @@ model Testimonial {
   avatar     String   @default("")
   sortOrder  Int      @default(0)
   createdAt  DateTime @default(now())
+
+  @@index([businessId, sortOrder])
 }
 
 model Faq {
@@ -154,6 +188,8 @@ model Faq {
   answer     String
   sortOrder  Int      @default(0)
   createdAt  DateTime @default(now())
+
+  @@index([businessId, sortOrder])
 }
 
 model BlogPost {
@@ -174,6 +210,7 @@ model BlogPost {
   updatedAt   DateTime  @updatedAt
 
   @@unique([businessId, slug])
+  @@index([businessId, published, publishedAt])
 }
 
 model Lead {
@@ -186,57 +223,101 @@ model Lead {
   message     String   @default("")
   source      String   @default("FORM") // FORM | WHATSAPP | CALL
   serviceName String   @default("")
-  status      String   @default("NEW")  // NEW | CONTACTED | FOLLOW_UP | QUALIFIED | CONVERTED | CLOSED | SPAM
+  status      String   @default("NEW") // NEW | CONTACTED | FOLLOW_UP | QUALIFIED | CONVERTED | CLOSED | SPAM
   notes       String   @default("")
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
+  @@index([businessId, createdAt])
+  @@index([businessId, status])
+  @@index([createdAt])
 }
 
 model Plan {
-  id           String   @id @default(cuid())
-  name         String
-  slug         String   @unique
-  tagline      String   @default("")
-  priceMonthly Float
-  priceYearly  Float
-  featuresJson String   @default("[]")
-  maxPages     Int      @default(5) // -1 = unlimited
-  aiCredits    Int      @default(0)
-  popular      Boolean  @default(false)
-  active       Boolean  @default(true)
-  sortOrder    Int      @default(0)
-  createdAt    DateTime @default(now())
+  id                  String   @id @default(cuid())
+  name                String
+  slug                String   @unique
+  tagline             String   @default("")
+  priceMonthly        Float
+  priceYearly         Float
+  featuresJson        String   @default("[]")
+  maxPages            Int      @default(5) // -1 = unlimited
+  aiCredits           Int      @default(0)
+  maxPalettes         Int      @default(-1) // brand palettes this plan may pick from; -1 = all
+  // Appearance changes allowed before an upgrade is required; -1 = unlimited.
+  maxThemeChanges     Int      @default(-1)
+  // Custom domains this plan may connect. 0 = not offered, -1 = unlimited.
+  maxDomains          Int      @default(0)
+  // Set when this plan was created for one customer only ("Custom — Acme").
+  // Such plans are hidden from public pricing and from the plan picker.
+  customForBusinessId String?
+  popular             Boolean  @default(false)
+  active              Boolean  @default(true)
+  sortOrder           Int      @default(0)
+  createdAt           DateTime @default(now())
 
   subscriptions Subscription[]
 }
 
 model Subscription {
-  id         String    @id @default(cuid())
-  businessId String    @unique
-  business   Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  planId     String
-  plan       Plan      @relation(fields: [planId], references: [id])
-  cycle      String    @default("MONTHLY") // MONTHLY | YEARLY
-  status     String    @default("TRIALING") // TRIALING | ACTIVE | PAST_DUE | EXPIRED | CANCELED
-  amount     Float     @default(0)
-  startedAt  DateTime  @default(now())
-  renewsAt   DateTime?
+  id          String    @id @default(cuid())
+  businessId  String    @unique
+  business    Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  planId      String
+  plan        Plan      @relation(fields: [planId], references: [id])
+  cycle       String    @default("MONTHLY") // MONTHLY | YEARLY
+  status      String    @default("TRIALING") // TRIALING | ACTIVE | PAST_DUE | EXPIRED | CANCELED
+  amount      Float     @default(0)
+  startedAt   DateTime  @default(now())
+  renewsAt    DateTime?
   trialEndsAt DateTime?
-  createdAt  DateTime  @default(now())
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @default(now()) @updatedAt
+
+  @@index([status])
+  @@index([planId])
 }
 
 model Payment {
-  id             String   @id @default(cuid())
-  businessId     String
-  business       Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  subscriptionId String?
-  amount         Float
-  method         String   @default("UPI") // UPI | CARD | NETBANKING
-  status         String   @default("SUCCESS") // SUCCESS | FAILED | REFUNDED
-  invoiceNo      String   @default("")
-  couponCode     String   @default("")
-  description    String   @default("")
-  createdAt      DateTime @default(now())
+  id               String    @id @default(cuid())
+  // Nullable + SetNull: deleting a business must not erase its payment history.
+  businessId       String?
+  business         Business? @relation(fields: [businessId], references: [id], onDelete: SetNull)
+  subscriptionId   String?
+  amount           Float
+  method           String    @default("UPI") // UPI | CARD | NETBANKING
+  status           String    @default("SUCCESS") // SUCCESS | FAILED | REFUNDED
+  invoiceNo        String    @default("")
+  /// The gateway's own payment id. Kept as a column rather than buried in the
+  /// description so a refund webhook can find the row it refers to.
+  gatewayPaymentId String    @default("")
+  /// GST breakdown, kept alongside the total so an invoice can be reproduced
+  /// exactly as it was charged — the rate is stored, not assumed, because a
+  /// rate change must not rewrite last year's invoices.
+  taxableAmount    Float     @default(0)
+  taxRate          Float     @default(0)
+  taxAmount        Float     @default(0)
+  /// The GST split, stored rather than derived. Which of these applies depends
+  /// on the customer's state at the time of sale, and a customer who later
+  /// moves must not silently rewrite an invoice already filed with a return.
+  cgst             Float     @default(0)
+  sgst             Float     @default(0)
+  igst             Float     @default(0)
+  /// Place of supply — the customer's state. Required on a GST invoice.
+  placeOfSupply    String    @default("")
+  /// The customer's GSTIN when they gave one; without it on the invoice they
+  /// cannot claim input tax credit.
+  customerGstin    String    @default("")
+  /// Billing name and address as they stood at the time of sale.
+  billToJson       String    @default("{}")
+  couponCode       String    @default("")
+  description      String    @default("")
+  createdAt        DateTime  @default(now())
+
+  @@index([businessId, createdAt])
+  @@index([status, createdAt])
+  @@index([invoiceNo])
+  @@index([gatewayPaymentId])
 }
 
 model Coupon {
@@ -253,18 +334,18 @@ model Coupon {
 }
 
 model Template {
-  id         String   @id @default(cuid())
-  name       String
-  slug       String   @unique
-  category   String   @default("local") // industry fit
-  description String  @default("")
-  premium    Boolean  @default(false)
-  themeJson  String   @default("{}") // default theme overrides
-  gradient   String   @default("from-emerald-500 to-teal-600")
-  coverImage String   @default("")
-  active     Boolean  @default(true)
-  sortOrder  Int      @default(0)
-  createdAt  DateTime @default(now())
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  category    String   @default("local") // industry fit
+  description String   @default("")
+  premium     Boolean  @default(false)
+  themeJson   String   @default("{}") // default theme overrides
+  gradient    String   @default("from-emerald-500 to-teal-600")
+  coverImage  String   @default("")
+  active      Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
 }
 
 model AnalyticsEvent {
@@ -275,6 +356,9 @@ model AnalyticsEvent {
   path       String   @default("/")
   meta       String   @default("{}")
   createdAt  DateTime @default(now())
+
+  @@index([businessId, createdAt])
+  @@index([businessId, type, createdAt])
 }
 
 model PlatformLead {
@@ -287,6 +371,10 @@ model PlatformLead {
   source       String   @default("CONTACT") // CONTACT | DEMO | SALES
   status       String   @default("NEW") // NEW | CONTACTED | CONVERTED | CLOSED
   createdAt    DateTime @default(now())
+
+  followUps PlatformLeadFollowUp[]
+
+  @@index([status, createdAt])
 }
 
 model Notification {
@@ -297,6 +385,9 @@ model Notification {
   body      String   @default("")
   read      Boolean  @default(false)
   createdAt DateTime @default(now())
+
+  @@index([userId, read])
+  @@index([userId, createdAt])
 }
 
 model AuditLog {
@@ -307,4 +398,158 @@ model AuditLog {
   entityId  String   @default("")
   meta      String   @default("{}")
   createdAt DateTime @default(now())
+
+  @@index([entity, entityId])
+  @@index([createdAt])
+}
+
+/// A customer's own domain pointed at their WebSetu site.
+///
+/// The hostname is the routing key: `proxy.ts` looks up the incoming Host
+/// header here and rewrites the request onto /s/<business slug>. It is also
+/// what Caddy asks about before issuing a certificate, so a row only becomes
+/// ACTIVE once its DNS has been seen to point at us — otherwise anyone could
+/// claim a hostname and have certificates issued for it.
+model Domain {
+  id          String    @id @default(cuid())
+  businessId  String
+  business    Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  /// Lower-cased, punycode, no port, no trailing dot. Unique across the platform.
+  hostname    String    @unique
+  /// PENDING (awaiting DNS) | ACTIVE (verified, serving) | FAILED (checks exhausted)
+  status      String    @default("PENDING")
+  /// Random value the customer publishes as a TXT record to prove ownership.
+  token       String
+  /// The canonical hostname for this business. Others 308 to it, so a site is
+  /// never indexed twice under two names.
+  primary     Boolean   @default(false)
+  lastCheckAt DateTime?
+  lastError   String    @default("")
+  verifiedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([businessId])
+  @@index([status])
+}
+
+/// A single-use password reset link.
+///
+/// Only the hash of the token is stored: a leaked database must not hand out
+/// working reset links for every account that has one outstanding.
+model PasswordReset {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+/// Pre-aggregated analytics, one row per business per day per event type.
+///
+/// AnalyticsEvent grows by one row per page view for ever. The rollup keeps the
+/// numbers the dashboard actually shows while letting the raw rows be deleted
+/// past the retention window, so storage stops tracking traffic.
+model AnalyticsDaily {
+  id          String @id @default(cuid())
+  businessId  String
+  /// UTC calendar day as YYYY-MM-DD — stored as text so the grouping does not
+  /// depend on the database's own date functions.
+  day         String
+  type        String
+  count       Int    @default(0)
+  /// Distinct paths seen that day, for the "unique visits" figure.
+  uniquePaths Int    @default(0)
+
+  @@unique([businessId, day, type])
+  @@index([businessId, day])
+}
+
+/// Platform-wide key/value settings (e.g. the marketing + login colour palette).
+/// Single-row-per-key by design: `key` is the primary key.
+model Setting {
+  key       String   @id
+  value     String   @default("{}")
+  updatedAt DateTime @default(now()) @updatedAt
+}
+
+/// Brand colour palettes offered in the tenant website pickers and, when the
+/// scope allows, for WebSetu's own landing + login pages. Seeded from
+/// src/lib/palettes.ts on first read; admins can add their own on top.
+model Palette {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  mood      String   @default("")
+  primary   String
+  secondary String
+  accent    String
+  scope     String   @default("BOTH") // BUSINESS | PLATFORM | BOTH
+  active    Boolean  @default(true)
+  builtIn   Boolean  @default(false)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@index([active, sortOrder])
+}
+
+/// A note recorded against a platform enquiry — who chased it, when, and what
+/// was said. Enquiries without a trail are enquiries nobody follows up.
+model PlatformLeadFollowUp {
+  id        String       @id @default(cuid())
+  leadId    String
+  lead      PlatformLead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  note      String
+  actor     String       @default("")
+  createdAt DateTime     @default(now())
+
+  @@index([leadId, createdAt])
+}
+
+/// WebSetu's own marketing blog (separate from the per-tenant BlogPost model).
+model PlatformPost {
+  id          String    @id @default(cuid())
+  title       String
+  slug        String    @unique
+  excerpt     String    @default("")
+  content     String    @default("")
+  cover       String    @default("")
+  author      String    @default("")
+  tags        String    @default("")
+  published   Boolean   @default(false)
+  publishedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([published, publishedAt])
+}
+
+/// "Buy a domain for me": the customer asks, an admin quotes and registers it,
+/// the customer pays for the domain separately, then it is connected.
+model DomainRequest {
+  id           String   @id @default(cuid())
+  businessId   String
+  business     Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  /// Preferred hostname, lower-cased (e.g. shreeganeshroadways.com)
+  domain       String
+  /// Comma-separated fallbacks if the first choice is taken
+  alternatives String   @default("")
+  note         String   @default("")
+  /// What RDAP said when the request was made: AVAILABLE | TAKEN | UNKNOWN
+  availability String   @default("UNKNOWN")
+  /// REQUESTED | QUOTED | PAID | CONNECTED | CANCELLED
+  status       String   @default("REQUESTED")
+  /// Price quoted to the customer for the domain (₹, per year), paid separately
+  quotedPrice  Float?
+  adminNote    String   @default("")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([businessId])
+  @@index([status, createdAt])
 }

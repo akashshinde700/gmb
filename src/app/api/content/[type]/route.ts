@@ -1,113 +1,57 @@
 import { db } from "@/lib/db";
-import { fail, getSessionBusiness, getSessionUser, ok } from "@/lib/auth";
+import {
+  assertCreatable, delegate, isContentType, MAX_ROWS_PER_TYPE, orderFor, sanitize,
+} from "@/lib/content";
+import { HttpError, ok, pageParams, readJson, requireBusiness, requireUser, route } from "@/lib/api";
 
-const TYPES = ["services", "products", "gallery", "testimonials", "faqs", "blog"] as const;
-type ContentType = (typeof TYPES)[number];
-
-function delegate(type: ContentType) {
-  const map = {
-    services: db.service, products: db.product, gallery: db.galleryItem,
-    testimonials: db.testimonial, faqs: db.faq, blog: db.blogPost,
-  } as const;
-  return map[type];
-}
-
-export function sanitize(type: ContentType, body: Record<string, unknown>) {
-  // image/url fields may hold canvas-downscaled dataURLs (~2.5MB encoded)
-  const s = (k: string, max = 4000) => (body[k] === undefined ? undefined : String(body[k]).slice(0, max));
-  const img = (k: string) => (body[k] === undefined ? undefined : String(body[k]).slice(0, 2_600_000));
-  const n = (k: string) => (body[k] === undefined || body[k] === null || body[k] === "" ? null : Number(body[k]));
-  const b = (k: string) => (body[k] === undefined ? undefined : Boolean(body[k]));
-
-  switch (type) {
-    case "services": return {
-      name: s("name", 150), description: s("description", 3000), image: img("image"),
-      icon: s("icon", 50), price: s("price", 60), featured: b("featured"),
-      sortOrder: body.sortOrder === undefined ? undefined : Number(body.sortOrder),
-    };
-    case "products": return {
-      name: s("name", 150), sku: s("sku", 60), category: s("category", 100),
-      shortDesc: s("shortDesc", 300), description: s("description", 4000),
-      price: n("price"), salePrice: n("salePrice"), image: img("image"),
-      videoUrl: s("videoUrl", 1000),
-      hidePrice: b("hidePrice"), featured: b("featured"),
-      sortOrder: body.sortOrder === undefined ? undefined : Number(body.sortOrder),
-    };
-    case "gallery": return {
-      url: img("url"), caption: s("caption", 200), alt: s("alt", 200),
-      sortOrder: body.sortOrder === undefined ? undefined : Number(body.sortOrder),
-    };
-    case "testimonials": return {
-      name: s("name", 100), role: s("role", 100), content: s("content", 1500),
-      rating: body.rating === undefined ? undefined : Math.min(5, Math.max(1, Number(body.rating))),
-      avatar: img("avatar"),
-      sortOrder: body.sortOrder === undefined ? undefined : Number(body.sortOrder),
-    };
-    case "faqs": return {
-      question: s("question", 300), answer: s("answer", 2000),
-      sortOrder: body.sortOrder === undefined ? undefined : Number(body.sortOrder),
-    };
-    case "blog": return {
-      title: s("title", 200), excerpt: s("excerpt", 400), content: s("content", 50000),
-      cover: img("cover"), author: s("author", 100), category: s("category", 100),
-      tags: s("tags", 300),
-      published: b("published"),
-      slug: body.slug === undefined ? undefined : String(body.slug).toLowerCase().replace(/[^a-z0-9\s-]/g, "").replace(/\s+/g, "-").slice(0, 150),
-    };
-  }
-}
-
-function orderFor(type: ContentType): Record<string, string>[] {
-  // BlogPost has no sortOrder column
-  return type === "blog"
-    ? [{ publishedAt: "desc" }, { createdAt: "desc" }]
-    : [{ sortOrder: "asc" }, { createdAt: "desc" }];
-}
-
-export async function GET(req: Request, { params }: { params: Promise<{ type: string }> }) {
+export const GET = route(async (req: Request, { params }: { params: Promise<{ type: string }> }) => {
   const { type } = await params;
-  if (!TYPES.includes(type as ContentType)) return fail("Invalid content type", 404);
-  const session = await getSessionUser(req);
-  if (!session) return fail("Unauthorized", 401);
-  const business = await getSessionBusiness(session.id);
-  if (!business) return fail("No business found", 404);
+  if (!isContentType(type)) throw new HttpError("Invalid content type", 404);
+  const session = await requireUser(req);
+  const business = await requireBusiness(session);
+  const { take, skip } = pageParams(req, MAX_ROWS_PER_TYPE, MAX_ROWS_PER_TYPE);
 
-  const rows = await delegate(type as ContentType).findMany({
+  const rows = await delegate(type).findMany({
     where: { businessId: business.id },
-    orderBy: orderFor(type as ContentType),
+    orderBy: orderFor(type),
+    take,
+    skip,
   });
   return ok(rows);
-}
+});
 
-export async function POST(req: Request, { params }: { params: Promise<{ type: string }> }) {
+export const POST = route(async (req: Request, { params }: { params: Promise<{ type: string }> }) => {
   const { type } = await params;
-  if (!TYPES.includes(type as ContentType)) return fail("Invalid content type", 404);
-  const session = await getSessionUser(req);
-  if (!session) return fail("Unauthorized", 401);
-  const business = await getSessionBusiness(session.id);
-  if (!business) return fail("No business found", 404);
+  if (!isContentType(type)) throw new HttpError("Invalid content type", 404);
+  const session = await requireUser(req);
+  const business = await requireBusiness(session);
 
-  const body = (await req.json()) as Record<string, unknown>;
-  const data = sanitize(type as ContentType, body);
+  const existingCount = await delegate(type).count({ where: { businessId: business.id } });
+  if (existingCount >= MAX_ROWS_PER_TYPE) {
+    throw new HttpError(`You have reached the limit of ${MAX_ROWS_PER_TYPE} items for this section`, 409);
+  }
 
-  if (type === "services" && !data.name) return fail("Service name is required");
-  if (type === "products" && !data.name) return fail("Product name is required");
-  if (type === "gallery" && !data.url) return fail("Image URL is required");
-  if (type === "testimonials" && (!data.name || !data.content)) return fail("Name and review content are required");
-  if (type === "faqs" && (!data.question || !data.answer)) return fail("Question and answer are required");
-  if (type === "blog" && !data.title) return fail("Blog title is required");
+  const body = await readJson<Record<string, unknown>>(req);
+  const data = sanitize(type, body) as Record<string, unknown>;
+  assertCreatable(type, data);
 
-  const createData = { ...data, businessId: business.id } as Record<string, unknown>;
+  const createData: Record<string, unknown> = { ...data, businessId: business.id };
+
   if (type === "blog") {
     createData.publishedAt = data.published ? new Date() : null;
-    // unique slug per business
-    let slug = (data.slug as string) || "post";
-    const exists = async (s: string) => await db.blogPost.findFirst({ where: { businessId: business.id, slug: s } });
+    // Unique slug per business — the DB enforces @@unique([businessId, slug]),
+    // this only makes the suffix predictable instead of erroring at the user.
+    const base = (data.slug as string) || "post";
+    let slug = base;
     let i = 1;
-    while (await exists(slug)) { i += 1; slug = `${data.slug || "post"}-${i}`; }
+    while (await db.blogPost.findFirst({ where: { businessId: business.id, slug }, select: { id: true } })) {
+      i += 1;
+      slug = `${base}-${i}`;
+      if (i > 50) throw new HttpError("Could not generate a unique post URL — change the title");
+    }
     createData.slug = slug;
   }
 
-  const row = await delegate(type as ContentType).create({ data: createData as never });
+  const row = await delegate(type).create({ data: createData });
   return ok(row, 201);
-}
+});

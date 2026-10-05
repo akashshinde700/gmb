@@ -1,26 +1,26 @@
 "use client";
 // WebSetu — Section library: renders each website section from its JSON content
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Zap, Factory, Wrench, Sun, Coffee, Pizza, EggFried, PartyPopper, Sparkles,
-  Briefcase, Package, Heart, Star, Quote, Phone, Mail, MapPin, Clock, ChevronDown,
-  MessageCircle, Send, Loader2, CheckCircle2, Shield, Award, Users,
+  Sparkles, Package, Star, Quote, Phone, Mail, MapPin, Clock, ChevronDown,
+  MessageCircle, Send, Loader2, CheckCircle2, Award,
   Play, X, Copy, Check, QrCode as QrIcon, Youtube, ChevronLeft, ChevronRight,
 } from "lucide-react";
 import QRCode from "react-qr-code";
 import type { Business, Service, Product, SiteSection, Testimonial, GalleryItem } from "@/lib/types";
 import { upiDeepLink, youtubeId } from "@/lib/site-utils";
+import SiteImage from "@/components/site/site-image";
+import HeroScene from "@/components/site/hero-scene";
+import { SITE_ICONS } from "@/components/site/industry-icons";
+import type { SceneKind } from "@/lib/industries";
+import { isToday } from "@/lib/hours";
 
-const ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
-  zap: Zap, factory: Factory, wrench: Wrench, sun: Sun, coffee: Coffee, pizza: Pizza,
-  "egg-fried": EggFried, "party-popper": PartyPopper, sparkles: Sparkles, briefcase: Briefcase,
-  package: Package, heart: Heart, star: Star, shield: Shield, award: Award, users: Users,
-};
+const ICONS: Record<string, React.ComponentType<{ className?: string }>> = SITE_ICONS;
 
 function SectionTitle({ title, subtitle, center = true }: { title?: string; subtitle?: string; center?: boolean }) {
   if (!title && !subtitle) return null;
   return (
-    <div className={`mb-10 ${center ? "text-center mx-auto max-w-2xl" : ""}`}>
+    <div className={`ws-reveal mb-10 ${center ? "text-center mx-auto max-w-2xl" : ""}`}>
       {title && <h2 className="text-3xl md:text-4xl font-bold tracking-tight text-[var(--brand-secondary)]">{title}</h2>}
       {subtitle && <p className="mt-3 text-base md:text-lg text-[var(--brand-muted)]">{subtitle}</p>}
       <div className={`mt-4 h-1 w-16 rounded-full bg-[var(--brand-primary)] ${center ? "mx-auto" : ""}`} />
@@ -29,27 +29,75 @@ function SectionTitle({ title, subtitle, center = true }: { title?: string; subt
 }
 
 // ---------- HERO ----------
-function Hero({ section, business, onCta }: { section: SiteSection; business: Business; onCta: (type: string) => void }) {
+function Hero({ section, business, onCta, hoursLabel, heroStyle, scene, sceneVariant }: {
+  section: SiteSection; business: Business; onCta: (type: string) => void;
+  hoursLabel?: string;
+  /** The website theme's hero style — the section may override it. */
+  heroStyle?: string;
+  /** Industry animation shown when there is no cover photo; null when switched off. */
+  scene?: SceneKind | null;
+  /** Which arrangement of that animation this business gets. */
+  sceneVariant?: number;
+}) {
   const c = section.content as {
     badge?: string; heading?: string; subheading?: string;
     ctaPrimary?: string; ctaSecondary?: string; image?: string;
   };
-  const style = (section.content?.heroStyle as string) || "gradient";
+  // The Theme panel's "Hero style" used to be ignored here, so choosing Image
+  // or Split changed nothing on the live site.
+  const style = (section.content?.heroStyle as string) || heroStyle || "gradient";
+  const image = (c.image || "").trim();
+  const split = style === "split" && !!image;
   return (
     <section className="relative overflow-hidden">
       <div
         className="absolute inset-0"
         style={{ background: `linear-gradient(135deg, var(--brand-secondary) 0%, var(--brand-primary) 100%)` }}
       />
-      {c.image && style === "image" && (
+      {image && style === "image" && (
         <div className="absolute inset-0">
           { }
-          <img src={c.image} alt={business.name} className="h-full w-full object-cover" loading="eager" fetchPriority="high" />
+          <SiteImage
+            src={image}
+            alt={business.name}
+            wrapperClassName="h-full w-full"
+            className="object-cover"
+            sizes="100vw"
+            priority
+          />
           <div className="absolute inset-0" style={{ background: `linear-gradient(100deg, rgba(0,0,0,0.82) 25%, rgba(0,0,0,0.45) 100%)` }} />
         </div>
       )}
-      <div className="relative mx-auto max-w-6xl px-4 sm:px-6 py-20 md:py-28">
-        <div className="max-w-2xl">
+      {/* A background image used to be dropped unless the style was "image",
+          which made the field look broken. On the gradient style it now shows
+          through the brand colours instead of being ignored. */}
+      {image && style === "gradient" && (
+        <div className="absolute inset-0">
+          { }
+          <SiteImage
+            src={image}
+            alt=""
+            wrapperClassName="h-full w-full"
+            className="object-cover"
+            sizes="100vw"
+            priority
+          />
+          <div
+            className="absolute inset-0"
+            style={{
+              background:
+                "linear-gradient(135deg, color-mix(in srgb, var(--brand-secondary) 88%, transparent) 0%, color-mix(in srgb, var(--brand-primary) 78%, transparent) 100%)",
+            }}
+          />
+        </div>
+      )}
+      {!image && scene && <HeroScene kind={scene} variant={sceneVariant} />}
+      <div
+        className={`relative mx-auto max-w-6xl px-4 sm:px-6 py-20 md:py-28 ${
+          split ? "grid items-center gap-10 md:grid-cols-2" : ""
+        }`}
+      >
+        <div className={split ? "" : "max-w-2xl"}>
           {c.badge && (
             <span className="inline-flex items-center gap-2 rounded-full bg-white/15 backdrop-blur px-4 py-1.5 text-sm font-medium text-white border border-white/25">
               {c.badge}
@@ -65,24 +113,65 @@ function Hero({ section, business, onCta }: { section: SiteSection; business: Bu
             <a
               href={`#contact`}
               onClick={() => onCta("CTA_CALL")}
-              className="rounded-[var(--brand-radius)] bg-[var(--brand-accent)] px-7 py-3.5 text-base font-semibold text-[#1c1917] shadow-lg transition hover:brightness-110 active:scale-95"
+              className="ws-shine rounded-[var(--brand-radius)] bg-[var(--brand-accent)] px-7 py-3.5 text-base font-semibold text-[#1c1917] shadow-lg transition hover:-translate-y-0.5 hover:brightness-110 hover:shadow-xl active:scale-95"
             >
               {c.ctaPrimary || "Get a Free Quote"}
             </a>
             <a
               href={`tel:${business.phone}`}
               onClick={() => onCta("CTA_CALL")}
-              className="rounded-[var(--brand-radius)] border-2 border-white/60 bg-white/10 backdrop-blur px-7 py-3.5 text-base font-semibold text-white transition hover:bg-white/20 active:scale-95"
+              className="rounded-[var(--brand-radius)] border-2 border-white/60 bg-white/10 backdrop-blur px-7 py-3.5 text-base font-semibold text-white transition hover:-translate-y-0.5 hover:border-white hover:bg-white/20 active:scale-95"
             >
               {c.ctaSecondary || "Call Now"}
             </a>
           </div>
-          {(business.establishedYear || business.city) && (
-            <p className="mt-6 text-sm text-white/60">
-              {business.establishedYear && `Serving since ${business.establishedYear}`}{business.establishedYear && business.city && " • "}{business.city && `${business.city}, ${business.state || ""}`}
-            </p>
+          {/* Only facts the owner supplied — nothing is inferred or invented. */}
+          {(business.establishedYear || business.city || business.gmbUrl || hoursLabel) && (
+            <ul className="mt-7 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm text-white/75">
+              {hoursLabel && (
+                <li className="inline-flex items-center gap-1.5">
+                  <Clock className="h-4 w-4" aria-hidden="true" /> {hoursLabel}
+                </li>
+              )}
+              {business.establishedYear && (
+                <li className="inline-flex items-center gap-1.5">
+                  <Award className="h-4 w-4" aria-hidden="true" /> Serving since {business.establishedYear}
+                </li>
+              )}
+              {business.city && (
+                <li className="inline-flex items-center gap-1.5">
+                  <MapPin className="h-4 w-4" aria-hidden="true" /> {business.city}
+                  {business.state ? `, ${business.state}` : ""}
+                </li>
+              )}
+              {business.gmbUrl && (
+                <li>
+                  <a
+                    href={business.gmbUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 underline-offset-4 hover:text-white hover:underline"
+                  >
+                    <Star className="h-4 w-4" aria-hidden="true" /> See us on Google
+                  </a>
+                </li>
+              )}
+            </ul>
           )}
         </div>
+        {split && (
+          <div className="relative">
+            { }
+            <SiteImage
+              src={image}
+              alt={business.name}
+              wrapperClassName="aspect-[4/3] w-full rounded-[var(--brand-radius-lg)] shadow-2xl ring-1 ring-white/20"
+              className="object-cover"
+              sizes="(max-width: 768px) 100vw, 50vw"
+              priority
+            />
+          </div>
+        )}
       </div>
     </section>
   );
@@ -96,8 +185,8 @@ function Stats({ section }: { section: SiteSection }) {
     <section className="border-y border-[var(--brand-border)] bg-[var(--brand-surface)]">
       <div className="mx-auto grid max-w-6xl grid-cols-2 gap-6 px-4 py-12 sm:px-6 md:grid-cols-4">
         {items.map((s, i) => (
-          <div key={i} className="text-center">
-            <div className="text-3xl md:text-4xl font-extrabold text-[var(--brand-primary)]">{s.value}</div>
+          <div key={i} className="ws-reveal group text-center">
+            <div className="text-3xl font-extrabold text-[var(--brand-primary)] transition duration-300 group-hover:scale-110 md:text-4xl">{s.value}</div>
             <div className="mt-1 text-sm text-[var(--brand-muted)]">{s.label}</div>
           </div>
         ))}
@@ -107,24 +196,42 @@ function Stats({ section }: { section: SiteSection }) {
 }
 
 // ---------- ABOUT ----------
-function About({ section }: { section: SiteSection }) {
+function About({ section, layout = 0 }: { section: SiteSection; layout?: number }) {
   const c = section.content as { title?: string; body?: string; image?: string };
+  // Which side the picture sits on, and whether the two columns are even. Same
+  // content, visibly different page.
+  const flip = layout % 2 === 1;
+  const split = ["md:grid-cols-2", "md:grid-cols-[1.15fr_1fr]", "md:grid-cols-[1fr_1.2fr]"][layout % 3];
+  // No photo: the text takes the whole width. There used to be a tinted empty
+  // box here to keep the two-column grid balanced, and on a real site it read
+  // as a picture that had failed to load — which is exactly what an owner with
+  // no cover photo saw, with no way to fix it because the editor had no image
+  // field at all.
+  const image = (c.image || "").trim();
   return (
     <section className="py-16 md:py-20">
-      <div className="mx-auto grid max-w-6xl items-center gap-10 px-4 sm:px-6 md:grid-cols-2">
-        <div>
+      <div
+        className={
+          "mx-auto grid max-w-6xl items-center gap-10 px-4 sm:px-6 " +
+          (image ? split : "max-w-3xl grid-cols-1")
+        }
+      >
+        <div className={flip && image ? "md:order-2" : undefined}>
           <SectionTitle title={c.title} center={false} />
           <p className="whitespace-pre-line text-base md:text-lg leading-relaxed text-[var(--brand-body)]">
             {c.body}
           </p>
         </div>
-        {c.image ? (
-          <div className="overflow-hidden rounded-[var(--brand-radius-lg)] shadow-xl">
-            { }
-            <img src={c.image} alt="About our business" className="aspect-[4/3] w-full object-cover" loading="lazy" decoding="async" />
+        {image && (
+          <div className={`overflow-hidden rounded-[var(--brand-radius-lg)] shadow-xl ${flip ? "md:order-1" : ""}`}>
+            <SiteImage
+              src={image}
+              alt="About our business"
+              wrapperClassName="aspect-[4/3] w-full"
+              className="object-cover"
+              sizes="(max-width: 768px) 100vw, 50vw"
+            />
           </div>
-        ) : (
-          <div className="hidden rounded-[var(--brand-radius-lg)] bg-[var(--brand-primary)]/10 aspect-[4/3] md:block" />
         )}
       </div>
     </section>
@@ -132,26 +239,37 @@ function About({ section }: { section: SiteSection }) {
 }
 
 // ---------- SERVICES ----------
-function Services({ section, services, onCta }: { section: SiteSection; services: Service[]; onCta: (t: string) => void }) {
+function Services({ section, services, onCta, onEnquire, layout = 0 }: {
+  section: SiteSection; services: Service[]; onCta: (t: string) => void; onEnquire: (subject: string) => void;
+  layout?: number;
+}) {
   const c = section.content as { title?: string; subtitle?: string };
+  const cols = ["sm:grid-cols-2 lg:grid-cols-3", "sm:grid-cols-2", "sm:grid-cols-2 lg:grid-cols-4"][layout % 3];
+  const centred = layout % 2 === 0;
   if (!services.length) return null;
   return (
     <section id="services" className="bg-[var(--brand-surface)] py-16 md:py-20">
       <div className="mx-auto max-w-6xl px-4 sm:px-6">
-        <SectionTitle title={c.title} subtitle={c.subtitle} />
-        <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+        <SectionTitle title={c.title} subtitle={c.subtitle} center={centred} />
+        <div className={`grid gap-6 ${cols}`}>
           {services.map((s) => {
             const Icon = ICONS[s.icon] || Sparkles;
             return (
-              <div key={s.id} className="group overflow-hidden rounded-[var(--brand-radius-lg)] bg-white shadow-sm ring-1 ring-[var(--brand-border)] transition hover:shadow-lg hover:-translate-y-0.5">
+              <div key={s.id} className="ws-reveal ws-card group overflow-hidden rounded-[var(--brand-radius-lg)] bg-white shadow-sm ring-1 ring-[var(--brand-border)] hover:shadow-xl hover:ring-[var(--brand-primary)]/40">
                 {s.image ? (
                   <div className="aspect-[16/9] overflow-hidden bg-[var(--brand-primary)]/10">
                     { }
-                    <img src={s.image} alt={s.name} className="h-full w-full object-cover transition duration-300 group-hover:scale-105" loading="lazy" decoding="async" />
+                    <SiteImage
+                      src={s.image}
+                      alt={s.name}
+                      wrapperClassName="h-full w-full"
+                      className="ws-zoom object-cover"
+                      sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
+                    />
                   </div>
                 ) : (
                   <div className="px-6 pt-6">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-[var(--brand-radius)] bg-[var(--brand-primary)]/10 text-[var(--brand-primary)]">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-[var(--brand-radius)] bg-[var(--brand-primary)]/10 text-[var(--brand-primary)] transition duration-300 group-hover:scale-110 group-hover:bg-[var(--brand-primary)] group-hover:text-white">
                       <Icon className="h-6 w-6" />
                     </div>
                   </div>
@@ -160,9 +278,15 @@ function Services({ section, services, onCta }: { section: SiteSection; services
                   <h3 className="text-lg font-semibold text-[var(--brand-secondary)]">{s.name}</h3>
                   <p className="mt-2 text-sm leading-relaxed text-[var(--brand-muted)]">{s.description}</p>
                   {s.price && <p className="mt-3 text-sm font-semibold text-[var(--brand-primary)]">{s.price}</p>}
-                  <a href="#contact" onClick={() => onCta("CTA_CALL")} className="mt-4 inline-flex items-center gap-1 text-sm font-semibold text-[var(--brand-primary)] group-hover:gap-2 transition-all">
-                    Enquire Now <Send className="h-3.5 w-3.5" />
-                  </a>
+                  {/* Carries the service through to the form and onto the lead,
+                      so the owner sees what the enquiry is actually about. */}
+                  <button
+                    type="button"
+                    onClick={() => { onCta("CTA_CALL"); onEnquire(s.name); }}
+                    className="mt-4 inline-flex items-center gap-1.5 rounded text-sm font-semibold text-[var(--brand-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-primary)] focus-visible:ring-offset-2"
+                  >
+                    Enquire about this <Send className="ws-arrow h-3.5 w-3.5" aria-hidden="true" />
+                  </button>
                 </div>
               </div>
             );
@@ -174,7 +298,9 @@ function Services({ section, services, onCta }: { section: SiteSection; services
 }
 
 // ---------- PRODUCTS ----------
-function Products({ section, products, onCta }: { section: SiteSection; products: Product[]; onCta: (t: string) => void }) {
+function Products({ section, products, onCta, onEnquire }: {
+  section: SiteSection; products: Product[]; onCta: (t: string) => void; onEnquire: (subject: string) => void;
+}) {
   const c = section.content as { title?: string; subtitle?: string };
   const [videoProduct, setVideoProduct] = useState<Product | null>(null);
   const [activeCategory, setActiveCategory] = useState("All");
@@ -219,11 +345,17 @@ function Products({ section, products, onCta }: { section: SiteSection; products
           {filteredProducts.map((p) => {
             const vid = p.videoUrl ? youtubeId(p.videoUrl) : null;
             return (
-              <div key={p.id} className="flex flex-col overflow-hidden rounded-[var(--brand-radius-lg)] bg-white shadow-sm ring-1 ring-[var(--brand-border)] transition hover:shadow-lg">
+              <div key={p.id} className="ws-reveal ws-card group flex flex-col overflow-hidden rounded-[var(--brand-radius-lg)] bg-white shadow-sm ring-1 ring-[var(--brand-border)] hover:shadow-xl hover:ring-[var(--brand-primary)]/40">
                 <div className="relative aspect-[4/3] bg-[var(--brand-primary)]/10 flex items-center justify-center overflow-hidden">
                   {p.image ? (
                      
-                    <img src={p.image} alt={p.name} className="h-full w-full object-cover" loading="lazy" decoding="async" />
+                    <SiteImage
+                      src={p.image}
+                      alt={p.name}
+                      wrapperClassName="h-full w-full"
+                      className="object-cover"
+                      sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
+                    />
                   ) : (
                     <Package className="h-10 w-10 text-[var(--brand-primary)]/50" />
                   )}
@@ -255,7 +387,13 @@ function Products({ section, products, onCta }: { section: SiteSection; products
                   )}
                   <div className="mt-3 flex items-center justify-between">
                     <span className="text-base">{fmt(p) ?? <span className="text-sm font-semibold text-[var(--brand-primary)]">Enquire for price</span>}</span>
-                    <a href="#contact" onClick={() => onCta("CTA_CALL")} className="rounded-[var(--brand-radius)] bg-[var(--brand-primary)] px-3 py-1.5 text-xs font-semibold text-white hover:brightness-110 transition">Enquire</a>
+                    <button
+                      type="button"
+                      onClick={() => { onCta("CTA_CALL"); onEnquire(p.name); }}
+                      className="rounded-[var(--brand-radius)] bg-[var(--brand-primary)] px-3 py-1.5 text-xs font-semibold text-white transition hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-primary)] focus-visible:ring-offset-2"
+                    >
+                      Enquire
+                    </button>
                   </div>
                 </div>
               </div>
@@ -307,8 +445,8 @@ function WhyUs({ section }: { section: SiteSection }) {
         <SectionTitle title={c.title} />
         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
           {items.map((it, i) => (
-            <div key={i} className="rounded-[var(--brand-radius-lg)] bg-white p-6 ring-1 ring-[var(--brand-border)]">
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[var(--brand-accent)]/20 text-[var(--brand-secondary)] font-bold">{i + 1}</div>
+            <div key={i} className="ws-reveal ws-card group rounded-[var(--brand-radius-lg)] bg-white p-6 ring-1 ring-[var(--brand-border)] hover:shadow-xl hover:ring-[var(--brand-primary)]/40">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[var(--brand-accent)]/20 font-bold text-[var(--brand-secondary)] transition duration-300 group-hover:scale-110 group-hover:bg-[var(--brand-accent)]">{i + 1}</div>
               <h3 className="mt-4 font-semibold text-[var(--brand-secondary)]">{it.title}</h3>
               <p className="mt-2 text-sm leading-relaxed text-[var(--brand-muted)]">{it.description}</p>
             </div>
@@ -361,12 +499,12 @@ function Gallery({ section, gallery }: { section: SiteSection; gallery: GalleryI
                 aria-label={g.caption ? `View image: ${g.caption}` : `View image ${i + 1} of ${gallery.length}`}
                 className="block w-full cursor-zoom-in focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-primary)]"
               >
-                <img
+                <SiteImage
                   src={g.url}
                   alt={g.alt || g.caption || "Gallery image"}
-                  className="aspect-[4/3] w-full object-cover transition duration-300 group-hover:scale-105"
-                  loading="lazy"
-                  decoding="async"
+                  wrapperClassName="aspect-[4/3] w-full"
+                  className="ws-zoom object-cover"
+                  sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 25vw"
                 />
               </button>
               {g.caption && <figcaption className="mt-2 text-sm text-[var(--brand-muted)]">{g.caption}</figcaption>}
@@ -431,13 +569,34 @@ function Gallery({ section, gallery }: { section: SiteSection; gallery: GalleryI
 function Testimonials({ section, testimonials }: { section: SiteSection; testimonials: Testimonial[] }) {
   const c = section.content as { title?: string; subtitle?: string };
   if (!testimonials.length) return null;
+  // Averaged from the reviews actually shown below — no external rating is implied.
+  const rated = testimonials.filter((t) => t.rating > 0);
+  const average = rated.length ? rated.reduce((sum, t) => sum + t.rating, 0) / rated.length : 0;
   return (
     <section id="testimonials" className="bg-[var(--brand-surface)] py-16 md:py-20">
       <div className="mx-auto max-w-6xl px-4 sm:px-6">
         <SectionTitle title={c.title} subtitle={c.subtitle} />
+        {rated.length >= 2 && (
+          <div className="mb-8 flex flex-wrap items-center justify-center gap-3 text-sm">
+            <span className="flex items-center gap-1" aria-hidden="true">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <Star
+                  key={i}
+                  className={`h-5 w-5 ${
+                    i < Math.round(average) ? "fill-[var(--brand-accent)] text-[var(--brand-accent)]" : "text-[var(--brand-border)]"
+                  }`}
+                />
+              ))}
+            </span>
+            <span className="font-semibold text-[var(--brand-secondary)]">{average.toFixed(1)} out of 5</span>
+            <span className="text-[var(--brand-muted)]">
+              from {rated.length} customer {rated.length === 1 ? "review" : "reviews"}
+            </span>
+          </div>
+        )}
         <div className="grid gap-6 md:grid-cols-3">
           {testimonials.map((t) => (
-            <div key={t.id} className="rounded-[var(--brand-radius-lg)] bg-white p-6 shadow-sm ring-1 ring-[var(--brand-border)]">
+            <div key={t.id} className="ws-reveal ws-card rounded-[var(--brand-radius-lg)] bg-white p-6 shadow-sm ring-1 ring-[var(--brand-border)]">
               <Quote className="h-6 w-6 text-[var(--brand-accent)]" />
               <p className="mt-3 text-sm leading-relaxed text-[var(--brand-body)]">“{t.content}”</p>
               <div className="mt-4 flex items-center gap-1">
@@ -469,16 +628,33 @@ function FaqSection({ section }: { section: SiteSection }) {
         <SectionTitle title={c.title || "Frequently Asked Questions"} />
         <div className="space-y-3">
           {items.map((f, i) => (
-            <div key={i} className="rounded-[var(--brand-radius-lg)] bg-[var(--brand-surface)] ring-1 ring-[var(--brand-border)] overflow-hidden">
-              <button
-                onClick={() => setOpen(open === i ? null : i)}
-                className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left font-medium text-[var(--brand-secondary)]"
-                aria-expanded={open === i}
+            <div key={i} className="overflow-hidden rounded-[var(--brand-radius-lg)] bg-[var(--brand-surface)] ring-1 ring-[var(--brand-border)]">
+              <h3>
+                <button
+                  type="button"
+                  onClick={() => setOpen(open === i ? null : i)}
+                  className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left font-medium text-[var(--brand-secondary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--brand-primary)]"
+                  aria-expanded={open === i}
+                  aria-controls={`faq-answer-${i}`}
+                  id={`faq-question-${i}`}
+                >
+                  {f.question}
+                  <ChevronDown
+                    className={`h-5 w-5 shrink-0 text-[var(--brand-primary)] transition-transform ${open === i ? "rotate-180" : ""}`}
+                    aria-hidden="true"
+                  />
+                </button>
+              </h3>
+              {/* Kept mounted and hidden so the answer text stays in the DOM for
+                  crawlers and in-page search, not only when expanded. */}
+              <div
+                id={`faq-answer-${i}`}
+                role="region"
+                aria-labelledby={`faq-question-${i}`}
+                hidden={open !== i}
               >
-                {f.question}
-                <ChevronDown className={`h-5 w-5 shrink-0 text-[var(--brand-primary)] transition-transform ${open === i ? "rotate-180" : ""}`} />
-              </button>
-              {open === i && <p className="px-5 pb-5 text-sm leading-relaxed text-[var(--brand-muted)]">{f.answer}</p>}
+                <p className="px-5 pb-5 text-sm leading-relaxed text-[var(--brand-muted)]">{f.answer}</p>
+              </div>
             </div>
           ))}
         </div>
@@ -498,11 +674,11 @@ function CtaBanner({ section, business, onCta }: { section: SiteSection; busines
           <h2 className="text-2xl md:text-3xl font-bold text-white">{c.title}</h2>
           {c.subtitle && <p className="mx-auto mt-3 max-w-xl text-white/85">{c.subtitle}</p>}
           <div className="mt-7 flex flex-wrap justify-center gap-3">
-            <a href={`tel:${business.phone}`} onClick={() => onCta("CTA_CALL")} className="rounded-[var(--brand-radius)] bg-[var(--brand-accent)] px-7 py-3 font-semibold text-[#1c1917] shadow transition hover:brightness-110 active:scale-95">
+            <a href={`tel:${business.phone}`} onClick={() => onCta("CTA_CALL")} className="ws-shine rounded-[var(--brand-radius)] bg-[var(--brand-accent)] px-7 py-3 font-semibold text-[#1c1917] shadow transition hover:-translate-y-0.5 hover:brightness-110 hover:shadow-xl active:scale-95">
               <span className="inline-flex items-center gap-2"><Phone className="h-4 w-4" />{c.primary || "Call Now"}</span>
             </a>
             {waNumber && (
-              <a href={`https://wa.me/${waNumber}?text=${encodeURIComponent(`Hello ${business.name}, I have an enquiry.`)}`} target="_blank" rel="noreferrer" onClick={() => onCta("CTA_WHATSAPP")} className="rounded-[var(--brand-radius)] bg-white/10 border-2 border-white/50 px-7 py-3 font-semibold text-white backdrop-blur transition hover:bg-white/20 active:scale-95">
+              <a href={`https://wa.me/${waNumber}?text=${encodeURIComponent(`Hello ${business.name}, I have an enquiry.`)}`} target="_blank" rel="noreferrer" onClick={() => onCta("CTA_WHATSAPP")} className="rounded-[var(--brand-radius)] border-2 border-white/50 bg-white/10 px-7 py-3 font-semibold text-white backdrop-blur transition hover:-translate-y-0.5 hover:border-white hover:bg-white/20 active:scale-95">
                 <span className="inline-flex items-center gap-2"><MessageCircle className="h-4 w-4" />{c.secondary || "WhatsApp Us"}</span>
               </a>
             )}
@@ -541,7 +717,13 @@ function Payment({ section, business, onCta }: { section: SiteSection; business:
           <div className="shrink-0 rounded-[var(--brand-radius-lg)] border-2 border-[var(--brand-primary)]/20 bg-white p-3 shadow-sm">
             {customQr ? (
                
-              <img src={customQr} alt={`${business.name} payment QR code`} className="h-44 w-44 object-contain" loading="lazy" decoding="async" />
+              <SiteImage
+                src={customQr}
+                alt={`${business.name} payment QR code`}
+                wrapperClassName="h-44 w-44"
+                className="object-contain"
+                sizes="176px"
+              />
             ) : (
               <QRCode value={payLink} size={176} bgColor="#ffffff" fgColor="var(--brand-secondary)" />
             )}
@@ -586,23 +768,39 @@ function Payment({ section, business, onCta }: { section: SiteSection; business:
 }
 
 // ---------- BUSINESS HOURS ----------
-function Hours({ section, business }: { section: SiteSection; business: Business }) {
+function Hours({ section, business, status }: { section: SiteSection; business: Business; status?: string }) {
   const c = section.content as { title?: string };
   const days = business.hours && Object.keys(business.hours).length
     ? business.hours
     : { Monday: "9:00 AM – 7:00 PM", Tuesday: "9:00 AM – 7:00 PM", Wednesday: "9:00 AM – 7:00 PM", Thursday: "9:00 AM – 7:00 PM", Friday: "9:00 AM – 7:00 PM", Saturday: "9:00 AM – 7:00 PM", Sunday: "Closed" };
-  const today = new Date().toLocaleDateString("en-IN", { weekday: "long" });
+  // Matching on a locale string broke for stored keys like "mon"; the day index
+  // is what actually identifies today.
   return (
     <section className="bg-[var(--brand-surface)] py-16 md:py-20">
       <div className="mx-auto max-w-2xl px-4 sm:px-6">
         <SectionTitle title={c.title || "Business Hours"} />
+        {status ? (
+          <p className="mb-4 text-center text-sm font-semibold text-[var(--brand-secondary)]">{status}</p>
+        ) : null}
         <div className="rounded-[var(--brand-radius-lg)] bg-white p-6 ring-1 ring-[var(--brand-border)] shadow-sm">
-          {Object.entries(days).map(([day, time]) => (
-            <div key={day} className={`flex items-center justify-between border-b border-[var(--brand-border)] py-2.5 last:border-0 text-sm ${day === today ? "font-bold text-[var(--brand-primary)]" : "text-[var(--brand-body)]"}`}>
-              <span className="inline-flex items-center gap-2"><Clock className="h-4 w-4 text-[var(--brand-primary)]" />{day}{day === today && " (Today)"}</span>
-              <span>{time as string}</span>
-            </div>
-          ))}
+          {Object.entries(days).map(([day, time]) => {
+            const todayRow = isToday(day);
+            return (
+              <div
+                key={day}
+                className={`flex items-center justify-between border-b border-[var(--brand-border)] py-2.5 text-sm last:border-0 ${
+                  todayRow ? "font-bold text-[var(--brand-primary)]" : "text-[var(--brand-body)]"
+                }`}
+              >
+                <span className="inline-flex items-center gap-2">
+                  <Clock className="h-4 w-4 text-[var(--brand-primary)]" aria-hidden="true" />
+                  {day}
+                  {todayRow && " (Today)"}
+                </span>
+                <span>{time as string}</span>
+              </div>
+            );
+          })}
         </div>
       </div>
     </section>
@@ -610,24 +808,49 @@ function Hours({ section, business }: { section: SiteSection; business: Business
 }
 
 // ---------- CONTACT + MAP + ENQUIRY FORM ----------
-function Contact({ section, business, onCta, submitLead }: {
-  section: SiteSection; business: Business; onCta: (t: string) => void; submitLead: (data: { name: string; phone: string; email: string; message: string }) => Promise<string | null>;
+function Contact({ section, business, onCta, submitLead, subject }: {
+  section: SiteSection;
+  business: Business;
+  onCta: (t: string) => void;
+  submitLead: (data: {
+    name: string; phone: string; email: string; message: string; website: string; serviceName?: string;
+  }) => Promise<string | null>;
+  /** Service or product the visitor clicked "Enquire" on, if any. */
+  subject?: string;
 }) {
   const c = section.content as { title?: string; subtitle?: string; mapUrl?: string };
-  const [form, setForm] = useState({ name: "", phone: "", email: "", message: "" });
+  // `website` is a honeypot: hidden from people, filled in by bots. The server
+  // silently accepts and discards any submission that has it set.
+  const [form, setForm] = useState({ name: "", phone: "", email: "", message: "", website: "" });
   const [sending, setSending] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<{ name?: string; phone?: string; email?: string }>({});
+  const nameRef = useRef<HTMLInputElement>(null);
+  const phoneRef = useRef<HTMLInputElement>(null);
+
+  function validate() {
+    const errors: { name?: string; phone?: string; email?: string } = {};
+    if (!form.name.trim()) errors.name = "Please tell us your name.";
+    // Same rule the API enforces, so a valid-looking number is never rejected
+    // only after the round-trip.
+    if (!form.phone.trim()) errors.phone = "We need a phone number to call you back.";
+    else if (!/^[+\d][\d\s-]{6,19}$/.test(form.phone.trim())) errors.phone = "That does not look like a valid phone number.";
+    if (form.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) errors.email = "Check the email address.";
+    return errors;
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    if (!form.name.trim() || !form.phone.trim()) {
-      setError("Name and phone number are required.");
-      return;
-    }
+    const errors = validate();
+    setFieldErrors(errors);
+    if (errors.name) return nameRef.current?.focus();
+    if (errors.phone) return phoneRef.current?.focus();
+    if (errors.email) return;
+
     setSending(true);
-    const err = await submitLead(form);
+    const err = await submitLead({ ...form, serviceName: subject || "" });
     setSending(false);
     if (err) { setError(err); return; }
     setDone(true);
@@ -635,6 +858,11 @@ function Contact({ section, business, onCta, submitLead }: {
 
   const waNumber = (business.whatsapp || business.phone || "").replace(/[^\d]/g, "");
   const mapsHref = business.mapsUrl || c.mapUrl || `https://maps.google.com/?q=${encodeURIComponent(`${business.address} ${business.city} ${business.pincode}`)}`;
+  // The embed needs a place to point at; with no address there is nothing to show.
+  const mapQuery = [business.name, business.address, business.city, business.pincode]
+    .map((part) => (part || "").trim())
+    .filter(Boolean)
+    .join(", ");
 
   return (
     <section id="contact" className="py-16 md:py-20">
@@ -668,58 +896,173 @@ function Contact({ section, business, onCta, submitLead }: {
                 </a>
               )}
             </div>
-            <a href={mapsHref} target="_blank" rel="noreferrer" onClick={() => onCta("CTA_DIRECTIONS")}
-              className="flex h-52 items-center justify-center rounded-[var(--brand-radius-lg)] overflow-hidden ring-1 ring-[var(--brand-border)] bg-[var(--brand-primary)]/5 hover:bg-[var(--brand-primary)]/10 transition">
-              <div className="text-center">
-                <MapPin className="mx-auto h-10 w-10 text-[var(--brand-primary)]" />
-                <p className="mt-2 text-sm font-semibold text-[var(--brand-secondary)]">Open in Google Maps</p>
-                <p className="text-xs text-[var(--brand-muted)]">Get Directions →</p>
+            {mapQuery ? (
+              // A real map beats a button that says "map": visitors judge a local
+              // business on whether they can see where it is.
+              <div className="overflow-hidden rounded-[var(--brand-radius-lg)] ring-1 ring-[var(--brand-border)]">
+                <iframe
+                  title={`Map showing ${business.name}`}
+                  src={`https://maps.google.com/maps?q=${encodeURIComponent(mapQuery)}&output=embed`}
+                  className="h-52 w-full border-0"
+                  loading="lazy"
+                  referrerPolicy="no-referrer-when-downgrade"
+                />
+                <a
+                  href={mapsHref}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={() => onCta("CTA_DIRECTIONS")}
+                  className="flex items-center justify-center gap-2 bg-white py-3 text-sm font-semibold text-[var(--brand-primary)] transition hover:bg-[var(--brand-primary)]/5"
+                >
+                  <MapPin className="h-4 w-4" aria-hidden="true" /> Get directions
+                </a>
               </div>
-            </a>
+            ) : (
+              <a
+                href={mapsHref}
+                target="_blank"
+                rel="noreferrer"
+                onClick={() => onCta("CTA_DIRECTIONS")}
+                className="flex h-52 items-center justify-center overflow-hidden rounded-[var(--brand-radius-lg)] bg-[var(--brand-primary)]/5 ring-1 ring-[var(--brand-border)] transition hover:bg-[var(--brand-primary)]/10"
+              >
+                <div className="text-center">
+                  <MapPin className="mx-auto h-10 w-10 text-[var(--brand-primary)]" aria-hidden="true" />
+                  <p className="mt-2 text-sm font-semibold text-[var(--brand-secondary)]">Open in Google Maps</p>
+                  <p className="text-xs text-[var(--brand-muted)]">Get directions →</p>
+                </div>
+              </a>
+            )}
           </div>
 
           {/* Enquiry form */}
           <div className="rounded-[var(--brand-radius-lg)] bg-white p-6 shadow-lg ring-1 ring-[var(--brand-border)]">
             {done ? (
               <div className="flex h-full flex-col items-center justify-center py-10 text-center">
-                <CheckCircle2 className="h-14 w-14 text-[var(--brand-primary)]" />
-                <h3 className="mt-4 text-xl font-bold text-[var(--brand-secondary)]">Enquiry Received!</h3>
-                <p className="mt-2 max-w-xs text-sm text-[var(--brand-muted)]">Thank you for reaching out. We will contact you within 24 hours.</p>
+                <CheckCircle2 className="h-14 w-14 text-[var(--brand-primary)]" aria-hidden="true" />
+                <h3 className="mt-4 text-xl font-bold text-[var(--brand-secondary)]">Enquiry received</h3>
+                <p className="mt-2 max-w-xs text-sm text-[var(--brand-muted)]">
+                  Thank you for reaching out. We will contact you within 24 hours
+                  {business.phone ? " — or call us now if it is urgent." : "."}
+                </p>
+                <div className="mt-5 flex flex-wrap justify-center gap-2">
+                  {business.phone && (
+                    <a
+                      href={`tel:${business.phone}`}
+                      onClick={() => onCta("CTA_CALL")}
+                      className="inline-flex items-center gap-2 rounded-[var(--brand-radius)] bg-[var(--brand-primary)] px-4 py-2 text-sm font-semibold text-white"
+                    >
+                      <Phone className="h-4 w-4" aria-hidden="true" /> {business.phone}
+                    </a>
+                  )}
+                  {/* A dead end after submitting cost the business a second enquiry. */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setForm({ name: "", phone: "", email: "", message: "", website: "" });
+                      setFieldErrors({});
+                      setDone(false);
+                    }}
+                    className="rounded-[var(--brand-radius)] px-4 py-2 text-sm font-semibold text-[var(--brand-primary)] ring-1 ring-[var(--brand-border)]"
+                  >
+                    Send another
+                  </button>
+                </div>
               </div>
             ) : (
               <form onSubmit={handleSubmit} className="space-y-4">
-                <h3 className="font-bold text-lg text-[var(--brand-secondary)]">Send an Enquiry</h3>
-                {error && <p className="rounded-[var(--brand-radius)] bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-red-200">{error}</p>}
+                <input
+                  type="text"
+                  name="website"
+                  tabIndex={-1}
+                  autoComplete="off"
+                  aria-hidden="true"
+                  value={form.website}
+                  onChange={(e) => setForm({ ...form, website: e.target.value })}
+                  className="hidden"
+                />
+                <h3 className="text-lg font-bold text-[var(--brand-secondary)]">Send an enquiry</h3>
+                {subject ? (
+                  <p className="rounded-[var(--brand-radius)] bg-[var(--brand-primary)]/10 px-3 py-2 text-sm text-[var(--brand-secondary)]">
+                    Enquiring about <span className="font-semibold">{subject}</span>
+                  </p>
+                ) : null}
+                {error && (
+                  <p role="alert" className="rounded-[var(--brand-radius)] bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-red-200">
+                    {error}
+                  </p>
+                )}
                 <div className="grid gap-4 sm:grid-cols-2">
                   <label className="block">
                     <span className="mb-1 block text-sm font-medium text-[var(--brand-secondary)]">Name *</span>
-                    <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required
-                      className="w-full rounded-[var(--brand-radius)] border border-[var(--brand-border)] bg-white px-3.5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[var(--brand-primary)]" placeholder="Your name" />
+                    <input
+                      ref={nameRef}
+                      value={form.name}
+                      onChange={(e) => setForm({ ...form, name: e.target.value })}
+                      required
+                      autoComplete="name"
+                      aria-invalid={!!fieldErrors.name}
+                      className={`w-full rounded-[var(--brand-radius)] border bg-white px-3.5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[var(--brand-primary)] ${
+                        fieldErrors.name ? "border-red-400" : "border-[var(--brand-border)]"
+                      }`}
+                      placeholder="Your name"
+                    />
+                    {fieldErrors.name && <span className="mt-1 block text-xs text-red-600">{fieldErrors.name}</span>}
                   </label>
                   <label className="block">
                     <span className="mb-1 block text-sm font-medium text-[var(--brand-secondary)]">Phone *</span>
-                    <input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} required type="tel"
-                      className="w-full rounded-[var(--brand-radius)] border border-[var(--brand-border)] bg-white px-3.5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[var(--brand-primary)]" placeholder="+91 …" />
+                    <input
+                      ref={phoneRef}
+                      value={form.phone}
+                      onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                      required
+                      type="tel"
+                      inputMode="tel"
+                      autoComplete="tel"
+                      aria-invalid={!!fieldErrors.phone}
+                      className={`w-full rounded-[var(--brand-radius)] border bg-white px-3.5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[var(--brand-primary)] ${
+                        fieldErrors.phone ? "border-red-400" : "border-[var(--brand-border)]"
+                      }`}
+                      placeholder="+91 98765 43210"
+                    />
+                    {fieldErrors.phone && <span className="mt-1 block text-xs text-red-600">{fieldErrors.phone}</span>}
                   </label>
                 </div>
                 <label className="block">
                   <span className="mb-1 block text-sm font-medium text-[var(--brand-secondary)]">Email</span>
-                  <input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} type="email"
-                    className="w-full rounded-[var(--brand-radius)] border border-[var(--brand-border)] bg-white px-3.5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[var(--brand-primary)]" placeholder="you@example.com" />
+                  <input
+                    value={form.email}
+                    onChange={(e) => setForm({ ...form, email: e.target.value })}
+                    type="email"
+                    autoComplete="email"
+                    aria-invalid={!!fieldErrors.email}
+                    className={`w-full rounded-[var(--brand-radius)] border bg-white px-3.5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[var(--brand-primary)] ${
+                      fieldErrors.email ? "border-red-400" : "border-[var(--brand-border)]"
+                    }`}
+                    placeholder="you@example.com"
+                  />
+                  {fieldErrors.email && <span className="mt-1 block text-xs text-red-600">{fieldErrors.email}</span>}
                 </label>
                 <label className="block">
                   <span className="mb-1 block text-sm font-medium text-[var(--brand-secondary)]">Message</span>
-                  <textarea value={form.message} onChange={(e) => setForm({ ...form, message: e.target.value })} rows={4}
-                    className="w-full rounded-[var(--brand-radius)] border border-[var(--brand-border)] bg-white px-3.5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[var(--brand-primary)]" placeholder="Tell us what you need…" />
+                  <textarea
+                    value={form.message}
+                    onChange={(e) => setForm({ ...form, message: e.target.value })}
+                    rows={4}
+                    className="w-full rounded-[var(--brand-radius)] border border-[var(--brand-border)] bg-white px-3.5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[var(--brand-primary)]"
+                    placeholder={subject ? `Tell us what you need for ${subject}…` : "Tell us what you need…"}
+                  />
                 </label>
                 <button type="submit" disabled={sending}
-                  className="flex w-full items-center justify-center gap-2 rounded-[var(--brand-radius)] bg-[var(--brand-primary)] px-6 py-3 font-semibold text-white shadow transition hover:brightness-110 disabled:opacity-60 active:scale-[0.98]">
+                  className="ws-shine flex w-full items-center justify-center gap-2 rounded-[var(--brand-radius)] bg-[var(--brand-primary)] px-6 py-3 font-semibold text-white shadow transition hover:brightness-110 hover:shadow-lg disabled:opacity-60 active:scale-[0.98]">
                   {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                   {sending ? "Sending…" : "Submit Enquiry"}
                 </button>
                 {waNumber && (
                   <a href={`https://wa.me/${waNumber}?text=${encodeURIComponent(`Hello ${business.name}!`)}`} target="_blank" rel="noreferrer" onClick={() => onCta("CTA_WHATSAPP")}
-                    className="flex w-full items-center justify-center gap-2 rounded-[var(--brand-radius)] bg-[#25D366] px-6 py-3 font-semibold text-white shadow transition hover:brightness-105 active:scale-[0.98]">
+                    // Palette, not WhatsApp's green: this button sits directly
+                    // under "Submit Enquiry", which is already the brand
+                    // colour, and the mismatch was the first thing anyone saw.
+                    className="flex w-full items-center justify-center gap-2 rounded-[var(--brand-radius)] bg-[var(--brand-secondary)] px-6 py-3 font-semibold text-white shadow transition hover:brightness-125 active:scale-[0.98]">
                     <MessageCircle className="h-4 w-4" /> Chat on WhatsApp
                   </a>
                 )}
@@ -732,4 +1075,83 @@ function Contact({ section, business, onCta, submitLead }: {
   );
 }
 
-export { Hero, Stats, About, Services, Products, WhyUs, Gallery, Testimonials, FaqSection, CtaBanner, Payment, Hours, Contact, SectionTitle, ICONS };
+
+// ---------- BLOG ----------
+/**
+ * Teaser grid for the tenant's own posts.
+ *
+ * The dashboard has had a blog editor from the start, but nothing ever rendered
+ * what it produced and no public URL existed — posts were written, saved, and
+ * seen by nobody, on a product sold for its SEO. Each card links to the
+ * server-rendered post at /s/<slug>/blog/<post>, which is what search engines
+ * can actually index.
+ */
+function BlogTeaser({ section, posts, businessSlug }: {
+  section: SiteSection;
+  posts: { id: string; title: string; slug: string; excerpt: string; cover: string; publishedAt: string | null }[];
+  businessSlug: string;
+}) {
+  const c = section.content as { title?: string; subtitle?: string };
+  if (!posts.length) return null;
+
+  const dated = (iso: string | null) => {
+    if (!iso) return "";
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime())
+      ? ""
+      : d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+  };
+
+  return (
+    <section id="blog" className="bg-[var(--brand-bg)] py-16 md:py-20">
+      <div className="mx-auto max-w-6xl px-4 sm:px-6">
+        <SectionTitle title={c.title || "From our blog"} subtitle={c.subtitle} />
+        <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+          {posts.slice(0, 6).map((post) => (
+            <a
+              key={post.id}
+              href={`/s/${businessSlug}/blog/${post.slug}`}
+              className="group flex flex-col overflow-hidden rounded-[var(--brand-radius-lg)] bg-[var(--brand-surface)] ring-1 ring-[var(--brand-border)] transition hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-primary)]"
+            >
+              {post.cover && (
+                <SiteImage
+                  src={post.cover}
+                  alt=""
+                  wrapperClassName="h-40 w-full"
+                  className="object-cover transition group-hover:scale-[1.03]"
+                  sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
+                />
+              )}
+              <div className="flex flex-1 flex-col p-5">
+                {post.publishedAt && (
+                  <span className="text-xs font-medium text-[var(--brand-muted)]">{dated(post.publishedAt)}</span>
+                )}
+                <h3 className="mt-1 text-lg font-semibold leading-snug text-[var(--brand-secondary)]">
+                  {post.title}
+                </h3>
+                {post.excerpt && (
+                  <p className="mt-2 line-clamp-3 text-sm leading-relaxed text-[var(--brand-muted)]">
+                    {post.excerpt}
+                  </p>
+                )}
+                <span className="mt-4 text-sm font-semibold text-[var(--brand-primary)]">Read more &rarr;</span>
+              </div>
+            </a>
+          ))}
+        </div>
+        {posts.length > 6 && (
+          <div className="mt-10 text-center">
+            <a
+              href={`/s/${businessSlug}/blog`}
+              className="inline-block rounded-[var(--brand-radius-sm)] border border-[var(--brand-primary)] px-6 py-3 text-sm font-semibold text-[var(--brand-primary)] transition hover:bg-[var(--brand-primary)] hover:text-white"
+            >
+              All articles
+            </a>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+export { Hero, Stats, About, Services, Products, WhyUs, Gallery, Testimonials, FaqSection, BlogTeaser, CtaBanner, Payment, Hours, Contact, SectionTitle, ICONS };

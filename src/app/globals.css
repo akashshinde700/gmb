@@ -1,6 +1,13 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
+/* Dark mode is switched off. This variant stays because removing it would NOT
+   remove dark mode — Tailwind's built-in `dark:` follows prefers-color-scheme,
+   so every `dark:` utility left in the shadcn components would start firing on
+   any machine set to dark, which is the opposite of what was asked. Pointing
+   the variant at a `.dark` ancestor that nothing renders keeps them all inert.
+   To bring dark mode back: restore the `.dark { ... }` token block (git
+   history) and put the class on the console shells again. */
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
@@ -37,6 +44,13 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-destructive-foreground: var(--destructive-foreground);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -51,7 +65,10 @@
   --card-foreground: oklch(0.145 0 0);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
+  /* WebSetu's brand green. The stock scaffold shipped a neutral here, which is
+     the whole reason 1,090 raw emerald-* classes accumulated: the token did not
+     describe the product, so nobody could use it. */
+  --primary: oklch(0.596 0.145 163.2);        /* emerald-600 */
   --primary-foreground: oklch(0.985 0 0);
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
@@ -60,9 +77,18 @@
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
   --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.985 0 0);
+  /* Status colours kept genuinely distinct: success is not the brand green, or
+     "saved" and "this is a button" would look identical. */
+  --success: oklch(0.627 0.17 149.2);         /* green-600  */
+  --success-foreground: oklch(0.985 0 0);
+  --warning: oklch(0.681 0.162 75.8);         /* amber-600  */
+  --warning-foreground: oklch(0.145 0 0);
+  --info: oklch(0.588 0.158 254.1);           /* blue-600   */
+  --info-foreground: oklch(0.985 0 0);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
+  --ring: oklch(0.596 0.145 163.2);
   --chart-1: oklch(0.646 0.222 41.116);
   --chart-2: oklch(0.6 0.118 184.704);
   --chart-3: oklch(0.398 0.07 227.392);
@@ -78,45 +104,329 @@
   --sidebar-ring: oklch(0.708 0 0);
 }
 
-.dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
-}
-
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
   body {
     @apply bg-background text-foreground;
+  }
+}
+
+
+/* ============================================================================
+   Platform palette (.ws-theme)
+   ----------------------------------------------------------------------------
+   WebSetu's own marketing and login screens were written with fixed emerald /
+   teal utility classes. Rather than rewriting several hundred class names, this
+   layer remaps those brand utilities to three CSS variables that a platform
+   admin controls (Admin -> Appearance). Tenant websites are unaffected: they
+   render from their own --brand-* variables.
+
+   The variables are set inline on the wrapper element by the views; the values
+   below are the fallback used before the palette loads.
+   ========================================================================== */
+.ws-theme {
+  --ws-primary: #059669;
+  --ws-secondary: #064e3b;
+  --ws-accent: #f59e0b;
+  /* derived shades — kept in one place so every rule below stays consistent */
+  --ws-primary-dark: color-mix(in srgb, var(--ws-primary) 82%, black);
+  --ws-primary-light: color-mix(in srgb, var(--ws-primary) 12%, white);
+  --ws-primary-lighter: color-mix(in srgb, var(--ws-primary) 7%, white);
+  --ws-primary-soft: color-mix(in srgb, var(--ws-primary) 25%, white);
+  --ws-primary-pale: color-mix(in srgb, var(--ws-primary) 45%, white);
+}
+
+/* backgrounds */
+.ws-theme .bg-emerald-600,
+.ws-theme .bg-emerald-500 { background-color: var(--ws-primary); }
+.ws-theme .bg-emerald-400 { background-color: var(--ws-primary-pale); }
+.ws-theme .bg-emerald-100 { background-color: var(--ws-primary-light); }
+.ws-theme .bg-emerald-50 { background-color: var(--ws-primary-lighter); }
+.ws-theme .hover\:bg-emerald-700:hover { background-color: var(--ws-primary-dark); }
+.ws-theme .hover\:bg-emerald-50:hover { background-color: var(--ws-primary-lighter); }
+.ws-theme .group:hover .group-hover\:bg-emerald-100 { background-color: var(--ws-primary-light); }
+
+/* text */
+.ws-theme .text-emerald-600,
+.ws-theme .text-emerald-700,
+.ws-theme .text-emerald-800 { color: var(--ws-primary); }
+.ws-theme .text-emerald-400,
+.ws-theme .text-emerald-200,
+.ws-theme .text-emerald-100,
+.ws-theme .text-emerald-50 { color: color-mix(in srgb, var(--ws-primary) 30%, white); }
+.ws-theme .hover\:text-emerald-700:hover { color: var(--ws-primary-dark); }
+.ws-theme .hover\:text-emerald-400:hover { color: color-mix(in srgb, var(--ws-primary) 35%, white); }
+.ws-theme .group:hover .group-hover\:text-emerald-600 { color: var(--ws-primary); }
+
+/* borders + rings */
+.ws-theme .border-emerald-600 { border-color: var(--ws-primary); }
+.ws-theme .border-emerald-200 { border-color: var(--ws-primary-soft); }
+.ws-theme .hover\:border-emerald-300:hover,
+.ws-theme .hover\:border-emerald-200:hover { border-color: var(--ws-primary-soft); }
+.ws-theme .ring-emerald-600 { --tw-ring-color: var(--ws-primary); }
+.ws-theme .ring-emerald-500 { --tw-ring-color: var(--ws-primary); }
+.ws-theme .focus-visible\:ring-emerald-600:focus-visible,
+/* The keyboard focus ring. Twelve controls across the marketing page and the
+   login screen use emerald-500 for it, and without this line every one of them
+   flashed green on a site an admin had made indigo or maroon — the one piece of
+   UI a keyboard user actually follows, pointing at the wrong brand. */
+.ws-theme .focus-visible\:ring-emerald-500:focus-visible { --tw-ring-color: var(--ws-primary); }
+
+/* Coloured shadows. Tinted to the palette rather than left emerald; the alpha
+   in the utility name is what makes them subtle, so it is kept here. */
+.ws-theme .shadow-emerald-600\/20 { --tw-shadow-color: color-mix(in srgb, var(--ws-primary) 20%, transparent); }
+.ws-theme .shadow-emerald-900\/25 { --tw-shadow-color: color-mix(in srgb, var(--ws-secondary) 25%, transparent); }
+.ws-theme .shadow-emerald-900\/10 { --tw-shadow-color: color-mix(in srgb, var(--ws-secondary) 10%, transparent); }
+.ws-theme .hover\:shadow-emerald-900\/10:hover { --tw-shadow-color: color-mix(in srgb, var(--ws-secondary) 10%, transparent); }
+.ws-theme .hover\:shadow-emerald-900\/5:hover { --tw-shadow-color: color-mix(in srgb, var(--ws-secondary) 5%, transparent); }
+.ws-theme .text-emerald-100\/80 { color: color-mix(in srgb, var(--ws-primary) 25%, white); }
+
+/* gradients — the hero and CTA bands */
+.ws-theme .from-emerald-500,
+.ws-theme .from-emerald-600 { --tw-gradient-from: var(--ws-primary); }
+.ws-theme .via-emerald-700 { --tw-gradient-via: var(--ws-primary-dark); }
+.ws-theme .to-teal-600,
+.ws-theme .to-teal-700,
+.ws-theme .to-teal-800 { --tw-gradient-to: var(--ws-secondary); }
+.ws-theme .from-teal-500 { --tw-gradient-from: var(--ws-secondary); }
+
+/**
+ * Motion.
+ *
+ * Two durations and one curve, used everywhere, so the console moves at a
+ * consistent speed instead of each component picking its own. Both are short:
+ * this is a tool people use daily, and animation that is noticeable the first
+ * time is irritating the hundredth.
+ *
+ * Only `opacity` and `transform` are animated. Anything that animates width,
+ * height or top forces layout on every frame, which is what makes an interface
+ * feel slower for having been animated.
+ */
+:root {
+  --ws-motion-fast: 120ms;
+  --ws-motion: 200ms;
+  --ws-ease: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Content arriving after a skeleton, or a tab's panel appearing. Kept to a
+   fade plus a few pixels: a large slide reads as the page moving, not as
+   content settling. */
+@keyframes ws-enter {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.ws-enter {
+  animation: ws-enter var(--ws-motion) var(--ws-ease) both;
+}
+
+/* ---------------------------------------------------------------------------
+   Tenant-site hero scenes (components/site/hero-scene) + the polish layer.
+
+   Decorative only, and only transform/opacity/filter so none of it touches
+   layout. Every animation here is switched off by the reduced-motion rule at
+   the end of this file.
+   ------------------------------------------------------------------------- */
+
+@keyframes ws-glow { 0%,100% { transform: scale(1); opacity: .65 } 50% { transform: scale(1.18); opacity: 1 } }
+@keyframes ws-sweep {
+  0% { transform: translateX(0) skewX(-14deg); opacity: 0 }
+  12% { opacity: .5 }
+  60% { opacity: .18 }
+  100% { transform: translateX(460%) skewX(-14deg); opacity: 0 }
+}
+
+/* drive */
+@keyframes ws-drive { from { transform: translateX(-22%) } to { transform: translateX(calc(100vw + 10%)) } }
+@keyframes ws-wheel { to { transform: rotate(360deg) } }
+@keyframes ws-road { to { background-position: -72px 0 } }
+@keyframes ws-pass { from { transform: translateX(0) } to { transform: translateX(calc(100vw + 30%)) } }
+
+/* build */
+@keyframes ws-slew { 0%,100% { transform: rotate(-11deg) } 50% { transform: rotate(11deg) } }
+@keyframes ws-trolley { 0%,100% { transform: translateX(0) } 50% { transform: translateX(-54px) } }
+@keyframes ws-hoist { 0%,100% { transform: translateY(0) } 45%,55% { transform: translateY(74px) } }
+@keyframes ws-course {
+  0% { opacity: 0; transform: translateY(-16px) }
+  18%,88% { opacity: 1; transform: none }
+  100% { opacity: 0 }
+}
+@keyframes ws-dust {
+  0% { transform: translateY(10px) scale(.6); opacity: 0 }
+  25% { opacity: .5 }
+  100% { transform: translateY(-120px) scale(1.5); opacity: 0 }
+}
+
+/* water */
+@keyframes ws-wave { from { transform: translateX(0) } to { transform: translateX(-50%) } }
+@keyframes ws-bubble {
+  0% { transform: translateY(0) translateX(0) scale(.7); opacity: 0 }
+  12% { opacity: .9 }
+  50% { transform: translateY(-46vh) translateX(16px) scale(1) }
+  100% { transform: translateY(-92vh) translateX(-10px) scale(1.15); opacity: 0 }
+}
+@keyframes ws-droplet {
+  0% { transform: translateY(0); opacity: 0 }
+  10% { opacity: .9 }
+  55%,100% { transform: translateY(58vh); opacity: 0 }
+}
+@keyframes ws-ripple {
+  0%,52% { transform: scale(.3); opacity: 0 }
+  60% { opacity: .7 }
+  100% { transform: scale(3.4); opacity: 0 }
+}
+
+/* care */
+@keyframes ws-trace { from { stroke-dashoffset: 1400 } to { stroke-dashoffset: 0 } }
+@keyframes ws-ring {
+  0% { transform: translate(-50%,-50%) scale(.35); opacity: .8 }
+  100% { transform: translate(-50%,-50%) scale(2.6); opacity: 0 }
+}
+@keyframes ws-mote {
+  0% { transform: translateY(0) scale(.7); opacity: 0 }
+  15% { opacity: .85 }
+  100% { transform: translateY(-78vh) scale(1.1); opacity: 0 }
+}
+
+/* tech */
+@keyframes ws-node { 0%,100% { transform: translate(-50%,-50%) scale(.75); opacity: .45 } 50% { transform: translate(-50%,-50%) scale(1.35); opacity: 1 } }
+@keyframes ws-gridshift { to { background-position: 44px 44px } }
+
+/* craft */
+@keyframes ws-rays { to { transform: rotate(360deg) } }
+@keyframes ws-twinkle { 0%,100% { transform: scale(.4); opacity: .2 } 50% { transform: scale(1.3); opacity: 1 } }
+
+.ws-glow { animation: ws-glow 8s ease-in-out infinite }
+.ws-sweep {
+  animation: ws-sweep 9s ease-in-out infinite;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.14), transparent);
+}
+.ws-drive { animation: ws-drive 13s linear infinite; color: #fff }
+.ws-wheel { animation: ws-wheel 1.1s linear infinite; transform-box: fill-box }
+.ws-road {
+  animation: ws-road .9s linear infinite;
+  background-image: repeating-linear-gradient(90deg, rgba(255,255,255,.5) 0 36px, transparent 36px 72px);
+}
+.ws-pass { animation: ws-pass 8s linear infinite }
+.ws-slew { animation: ws-slew 11s ease-in-out infinite; transform-box: fill-box }
+.ws-trolley { animation: ws-trolley 7s ease-in-out infinite; transform-box: fill-box }
+.ws-hoist { animation: ws-hoist 7s ease-in-out infinite; transform-box: fill-box }
+.ws-course { animation: ws-course 9s ease-in-out infinite; transform-box: fill-box }
+.ws-dust { animation: ws-dust 11s ease-out infinite }
+.ws-wave { animation: ws-wave 11s linear infinite }
+.ws-bubble { animation: ws-bubble 12s ease-in infinite; bottom: -6% }
+.ws-droplet { animation: ws-droplet 6s ease-in infinite }
+.ws-ripple { animation: ws-ripple 6s ease-out infinite }
+.ws-trace { stroke-dasharray: 1400; animation: ws-trace 5s ease-in-out infinite alternate }
+.ws-ring { animation: ws-ring 4.8s ease-out infinite }
+.ws-mote { animation: ws-mote 13s ease-in infinite }
+.ws-node { animation: ws-node 3.2s ease-in-out infinite; transform: translate(-50%,-50%) }
+.ws-grid {
+  animation: ws-gridshift 7s linear infinite;
+  background-image:
+    linear-gradient(rgba(255,255,255,.5) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.5) 1px, transparent 1px);
+  background-size: 44px 44px;
+}
+.ws-rays { animation: ws-rays 70s linear infinite }
+.ws-twinkle { animation: ws-twinkle 3.4s ease-in-out infinite }
+
+/* The scene sits behind the headline and must never catch a click. */
+.ws-scene { contain: paint }
+
+/* ---------------------------------------------------------------------------
+   Scroll reveal.
+
+   Chrome drives it from the scroll position directly. Everywhere else an
+   IntersectionObserver adds .is-in (components/site/site-reveal). The hidden
+   state only applies once that script has marked the document, so a blocked or
+   failed script can never leave a tenant site blank.
+   ------------------------------------------------------------------------- */
+@keyframes ws-rise-in { from { opacity: 0; transform: translateY(18px) } to { opacity: 1; transform: none } }
+
+@supports (animation-timeline: view()) {
+  .ws-reveal {
+    animation: ws-rise-in .7s var(--ws-ease) both;
+    animation-timeline: view();
+    animation-range: entry 0% entry 46%;
+  }
+}
+@supports not (animation-timeline: view()) {
+  html.ws-js .ws-reveal { opacity: 0 }
+  html.ws-js .ws-reveal.is-in { animation: ws-rise-in .7s var(--ws-ease) both }
+}
+
+/* ---------------------------------------------------------------------------
+   Hover polish for tenant sites, in one place so every section feels the same.
+   ------------------------------------------------------------------------- */
+.ws-card { transition: transform .35s var(--ws-ease), box-shadow .35s var(--ws-ease), border-color .35s var(--ws-ease) }
+.ws-card:hover { transform: translateY(-6px) }
+.ws-zoom { transition: transform .6s var(--ws-ease) }
+.group:hover .ws-zoom { transform: scale(1.07) }
+.ws-arrow { transition: transform .3s var(--ws-ease) }
+.group:hover .ws-arrow { transform: translateX(5px) }
+
+/* A light sweep across a button on hover — the detail that reads as premium. */
+@keyframes ws-shine { from { left: -60%; opacity: 1 } to { left: 115%; opacity: 0 } }
+.ws-shine { position: relative; overflow: hidden; isolation: isolate }
+.ws-shine::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 -60%;
+  width: 45%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.45), transparent);
+  transform: skewX(-18deg);
+  opacity: 0;
+}
+.ws-shine:hover::after { animation: ws-shine 1s var(--ws-ease) }
+
+/* Underline that grows from the left — nav links. */
+.ws-underline { position: relative }
+.ws-underline::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: -4px;
+  height: 2px;
+  width: 100%;
+  background: currentColor;
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform .3s var(--ws-ease);
+}
+.ws-underline:hover::after { transform: scaleX(1) }
+
+/**
+ * Respect a reduced-motion preference.
+ *
+ * The setting is most often turned on by people for whom motion causes actual
+ * discomfort — vestibular disorders, migraine — so this is not a nicety. Motion
+ * is cut to a near-instant rather than removed outright, which keeps state
+ * changes that rely on a transition from snapping in a confusing way.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* Reveal-on-scroll hides content until it is observed. With motion off there
+     is nothing to reveal, so it must never start hidden — otherwise a reader
+     who asked for less motion gets a half-empty page. */
+  html.ws-js .ws-reveal,
+  html.ws-js .ws-reveal.is-in {
+    opacity: 1 !important;
+    animation: none !important;
+  }
+
+  /* The hero scenes are pure decoration; with motion off they are just noise. */
+  .ws-scene {
+    display: none !important;
   }
 }

@@ -1,5 +1,5 @@
 // WebSetu — DB row → API type serializers (parse JSON columns, ISO dates)
-import { parseJson } from "@/lib/sections";
+import { DEFAULT_THEME, parseJson } from "@/lib/sections";
 import type {
   BusinessHours, SocialLinks, SiteSection, SiteTheme,
 } from "@/lib/types";
@@ -35,7 +35,7 @@ export function serializeWebsite(w: {
 }) {
   return {
     seoTitle: w.seoTitle, seoDescription: w.seoDescription, keywords: w.keywords, ogImage: w.ogImage,
-    theme: parseJson<SiteTheme>(w.themeJson, {}), sections: parseJson<SiteSection[]>(w.sectionsJson, []),
+    theme: { ...DEFAULT_THEME, ...parseJson<Partial<SiteTheme>>(w.themeJson, {}) }, sections: parseJson<SiteSection[]>(w.sectionsJson, []),
     version: w.version, publishedAt: w.publishedAt?.toISOString() ?? null,
   };
 }
@@ -43,7 +43,7 @@ export function serializeWebsite(w: {
 export function serializeSub(s: {
   id: string; planId: string; cycle: string; status: string; amount: number;
   startedAt: Date; renewsAt: Date | null; trialEndsAt: Date | null;
-  plan?: { id: string; name: string; slug: string; tagline: string; priceMonthly: number; priceYearly: number; featuresJson: string; maxPages: number; aiCredits: number; popular: boolean; active: boolean; sortOrder: number } | null;
+  plan?: { id: string; name: string; slug: string; tagline: string; priceMonthly: number; priceYearly: number; featuresJson: string; maxPages: number; aiCredits: number; maxPalettes: number; popular: boolean; active: boolean; sortOrder: number } | null;
 }) {
   return {
     id: s.id, planId: s.planId, cycle: s.cycle as "MONTHLY" | "YEARLY", status: s.status,
@@ -53,7 +53,8 @@ export function serializeSub(s: {
       id: s.plan.id, name: s.plan.name, slug: s.plan.slug, tagline: s.plan.tagline,
       priceMonthly: s.plan.priceMonthly, priceYearly: s.plan.priceYearly,
       features: parseJson<string[]>(s.plan.featuresJson, []),
-      maxPages: s.plan.maxPages, aiCredits: s.plan.aiCredits, popular: s.plan.popular,
+      maxPages: s.plan.maxPages, aiCredits: s.plan.aiCredits, maxPalettes: s.plan.maxPalettes,
+      popular: s.plan.popular,
       active: s.plan.active, sortOrder: s.plan.sortOrder,
     } : undefined,
   };
@@ -61,12 +62,15 @@ export function serializeSub(s: {
 
 export function serializePlan(p: {
   id: string; name: string; slug: string; tagline: string; priceMonthly: number; priceYearly: number;
-  featuresJson: string; maxPages: number; aiCredits: number; popular: boolean; active: boolean; sortOrder: number;
+  featuresJson: string; maxPages: number; aiCredits: number; maxPalettes: number;
+  popular: boolean; active: boolean; sortOrder: number; customForBusinessId?: string | null;
 }) {
   return {
     id: p.id, name: p.name, slug: p.slug, tagline: p.tagline, priceMonthly: p.priceMonthly,
     priceYearly: p.priceYearly, features: parseJson<string[]>(p.featuresJson, []),
-    maxPages: p.maxPages, aiCredits: p.aiCredits, popular: p.popular, active: p.active, sortOrder: p.sortOrder,
+    maxPages: p.maxPages, aiCredits: p.aiCredits, maxPalettes: p.maxPalettes,
+    popular: p.popular, active: p.active, sortOrder: p.sortOrder,
+    customForBusinessId: p.customForBusinessId ?? null,
   };
 }
 

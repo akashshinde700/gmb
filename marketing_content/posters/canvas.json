@@ -1,0 +1,24 @@
+{
+  "artboards": [
+    { "file": "Main.dc.html", "x": 0, "y": 0, "w": 1080, "h": 1920, "title": "WhatsApp status 1080x1920", "print": "fixed" },
+    { "file": "Instagram.dc.html", "x": 1240, "y": 0, "w": 1080, "h": 1080, "title": "Instagram 1080x1080", "print": "fixed" },
+    { "file": "Flyer.dc.html", "x": 2480, "y": 0, "w": 794, "h": 1123, "title": "A4 flyer (print)", "print": "fixed" }
+  ],
+  "annotations": [
+    {
+      "id": "facts-check",
+      "x": 0,
+      "y": -300,
+      "w": 640,
+      "text": "Every claim here is checked against the live product on 10 Sept 2026.\n\nDo NOT add: lead/enquiry numbers (hidden on the landing page), \"500+ businesses\", \"4.9 rating\" (both are placeholder design copy, not real), Marathi/Hindi websites (not built), the Rs99 Basic plan (switched off).\n\nThe flyer's phone number is a placeholder - put yours in before printing."
+    },
+    {
+      "id": "print-note",
+      "x": 2480,
+      "y": -300,
+      "w": 640,
+      "text": "A4 flyer is authored at 96px per inch (794x1123), body type at 17-22px so nothing drops below the 12pt print floor.\n\nExport PDF gives one page at real size. The emerald blocks still read in grayscale if the print shop runs it black and white."
+    }
+  ],
+  "launch": { "view": "canvas" }
+}

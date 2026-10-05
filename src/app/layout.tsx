@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { SITE_DESCRIPTION } from "@/lib/marketing-flags";
+import { siteOrigin } from "@/lib/site-utils";
 import { Toaster } from "@/components/ui/toaster";
 
 const geistSans = Geist({
@@ -14,16 +16,45 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
+  /**
+   * Without this, Next resolves every relative Open Graph and Twitter image
+   * against the server's own address — so a customer's uploaded cover went out
+   * to WhatsApp and Facebook as http://localhost:4400/api/uploads/… and no
+   * preview ever loaded. It also emitted the build warning nobody chased down.
+   */
+  metadataBase: new URL(siteOrigin()),
   title: "WebSetu — Your Business, Online in 15 Minutes",
-  description:
-    "WebSetu is India's complete Website-as-a-Service platform for local businesses. Website + Google presence + SEO + Leads + WhatsApp + Analytics — without any coding.",
+  description: SITE_DESCRIPTION,
   keywords: ["business website", "website builder India", "local business SaaS", "WebSetu", "WaaS"],
-  icons: { icon: "/logo.svg" },
+  // No `icons` here on purpose. The icons come from the file convention —
+  // src/app/icon.svg, apple-icon.png and favicon.ico — which Next serves at
+  // hashed URLs like /icon?<hash>.
+  //
+  // That hash is the point. This used to point at the fixed path /logo.svg, and
+  // the tab still showed the Z mark from the template this project was
+  // scaffolded from: browsers cache a favicon against its URL and never look
+  // again while the URL is unchanged, so replacing the file changed nothing for
+  // anyone who had already visited. A content-hashed URL refetches on its own.
+  //
+  // favicon.ico is there for the callers that request /favicon.ico directly and
+  // ignore <link> — crawlers, feed readers, saved shortcuts. That path used to
+  // 404.
   openGraph: {
     title: "WebSetu — Your Business, Online in 15 Minutes",
     description: "Give us your business details, we create and operate your complete online presence.",
     siteName: "WebSetu",
     type: "website",
+    locale: "en_IN",
+    // A generated card rather than nothing. Pasted into a WhatsApp group this
+    // is the difference between a blank grey box and something that looks like
+    // a product.
+    images: [{ url: "/og", width: 1200, height: 630, alt: "WebSetu" }],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "WebSetu — Your Business, Online in 15 Minutes",
+    description: "Give us your business details, we create and operate your complete online presence.",
+    images: ["/og"],
   },
 };
 

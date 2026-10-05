@@ -1,46 +1,57 @@
 import { db } from "@/lib/db";
-import { fail, getSessionUser, ok } from "@/lib/auth";
 import { serializePlan } from "@/lib/serialize";
+import { audit, HttpError, ok, readJson, requireAdmin, route, str } from "@/lib/api";
 
-async function requireAdmin(req: Request) {
-  const session = await getSessionUser(req);
-  if (!session) return { error: fail("Unauthorized", 401) as Response };
-  if (session.role !== "ADMIN") return { error: fail("Admin access required", 403) as Response };
-  return { session };
-}
-
-export async function GET(req: Request) {
-  const { error } = await requireAdmin(req);
-  if (error) return error;
+export const GET = route(async (req: Request) => {
+  await requireAdmin(req);
   const plans = await db.plan.findMany({ orderBy: { sortOrder: "asc" } });
   return ok(plans.map(serializePlan));
-}
+});
 
-export async function POST(req: Request) {
-  const { error } = await requireAdmin(req);
-  if (error) return error;
+export const POST = route(async (req: Request) => {
+  const admin = await requireAdmin(req);
 
-  const body = (await req.json()) as {
+  const body = await readJson<{
     name?: string; tagline?: string; priceMonthly?: number; priceYearly?: number;
-    features?: string[]; maxPages?: number; aiCredits?: number; popular?: boolean;
-  };
-  if (!body.name) return fail("Plan name is required");
+    features?: string[]; maxPages?: number; aiCredits?: number; maxPalettes?: number; popular?: boolean;
+  }>(req);
 
-  const slug = body.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  const name = str(body.name, 60);
+  if (!name) throw new HttpError("Plan name is required");
+
+  const priceMonthly = Number(body.priceMonthly ?? 0);
+  const priceYearly = Number(body.priceYearly ?? 0);
+  if (!Number.isFinite(priceMonthly) || priceMonthly < 0) throw new HttpError("Monthly price must be zero or more");
+  if (!Number.isFinite(priceYearly) || priceYearly < 0) throw new HttpError("Yearly price must be zero or more");
+
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  if (!slug) throw new HttpError("Plan name must contain letters or numbers");
   const exists = await db.plan.findUnique({ where: { slug } });
-  if (exists) return fail("A plan with this name already exists");
+  if (exists) throw new HttpError("A plan with this name already exists", 409);
+
+  const maxPages = Number(body.maxPages ?? 10);
+  const aiCredits = Number(body.aiCredits ?? 0);
+  // -1 keeps the whole palette library available on this plan.
+  const maxPalettes = Number(body.maxPalettes ?? -1);
 
   const plan = await db.plan.create({
     data: {
-      name: body.name, slug, tagline: body.tagline || "",
-      priceMonthly: Number(body.priceMonthly || 0),
-      priceYearly: Number(body.priceYearly || 0),
-      featuresJson: JSON.stringify((body.features || []).filter(Boolean)),
-      maxPages: Number(body.maxPages ?? 10),
-      aiCredits: Number(body.aiCredits ?? 0),
+      name,
+      slug,
+      tagline: str(body.tagline, 200),
+      priceMonthly,
+      priceYearly,
+      featuresJson: JSON.stringify(
+        (Array.isArray(body.features) ? body.features : []).filter(Boolean).slice(0, 30).map((f) => str(f, 200)),
+      ),
+      maxPages: Number.isFinite(maxPages) ? Math.trunc(maxPages) : 10,
+      aiCredits: Number.isFinite(aiCredits) ? Math.trunc(aiCredits) : 0,
+      maxPalettes: Number.isFinite(maxPalettes) ? Math.trunc(maxPalettes) : -1,
       popular: Boolean(body.popular),
       sortOrder: (await db.plan.count()) + 1,
     },
   });
+
+  await audit({ actor: admin.id, action: "PLAN_CREATE", entity: "plan", entityId: plan.id, meta: { slug } });
   return ok(serializePlan(plan), 201);
-}
+});

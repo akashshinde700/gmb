@@ -1,52 +1,55 @@
 import { db } from "@/lib/db";
-import { fail, getSessionBusiness, getSessionUser, ok } from "@/lib/auth";
 import { computeHealth } from "@/lib/health";
-import { serializeWebsite } from "@/lib/serialize";
+import { serializeBusiness, serializeWebsite } from "@/lib/serialize";
 import { parseJson } from "@/lib/sections";
-import type { SiteSection } from "@/lib/types";
-import type { Business } from "@prisma/client";
+import type { Business, SiteSection } from "@/lib/types";
+import { audit, HttpError, ok, readJson, requireBusiness, requireUser, route } from "@/lib/api";
+import { publishBlockers } from "@/lib/publish-rules";
+import { tenantBaseUrl } from "@/lib/site-utils";
 
 /** POST /api/website/publish — validate & publish the tenant website */
-export async function POST(req: Request) {
-  const session = await getSessionUser(req);
-  if (!session) return fail("Unauthorized", 401);
-  const business = await getSessionBusiness(session.id);
-  if (!business?.website) return fail("Website not found", 404);
+export const POST = route(async (req: Request) => {
+  const session = await requireUser(req);
+  const business = await requireBusiness(session);
+  if (!business.website) throw new HttpError("Website not found", 404);
 
-  const body = (await req.json().catch(() => ({}))) as { unpublish?: boolean };
+  const body = await readJson<{ unpublish?: boolean }>(req);
 
   if (body.unpublish) {
-    const [b, w] = await Promise.all([
+    // Both rows move together: a half-applied unpublish leaves a site marked
+    // DRAFT but still advertising a publishedAt date (or the reverse).
+    const [b, w] = await db.$transaction([
       db.business.update({ where: { id: business.id }, data: { status: "DRAFT" } }),
       db.website.update({ where: { businessId: business.id }, data: { publishedAt: null } }),
     ]);
+    await audit({ actor: session.id, action: "WEBSITE_UNPUBLISHED", entity: "business", entityId: business.id });
     return ok({ ...serializeWebsite(w), businessStatus: b.status });
   }
 
-  // Publish validations
-  const errors: string[] = [];
-  if (!business.name) errors.push("Business name is required");
-  if (!business.phone) errors.push("Phone number is required for customers to contact you");
-  if (!business.address || !business.city) errors.push("Business address & city are required");
-  const sections = parseJson<SiteSection[]>(business.website.sectionsJson, []);
-  const visible = sections.filter((s) => s.visible);
-  if (visible.length < 3) errors.push("At least 3 visible sections are required");
-  if (!business.website.seoTitle) errors.push("SEO title is required");
-
-  const counts = {
-    services: await db.service.count({ where: { businessId: business.id } }),
-    products: await db.product.count({ where: { businessId: business.id } }),
-    gallery: await db.galleryItem.count({ where: { businessId: business.id } }),
-    testimonials: await db.testimonial.count({ where: { businessId: business.id } }),
-    faqs: await db.faq.count({ where: { businessId: business.id } }),
-    blogPosts: await db.blogPost.count({ where: { businessId: business.id } }),
-  };
-
-  if (errors.length) {
-    return fail(`Cannot publish: ${errors.join("; ")}`, 422);
+  if (business.status === "SUSPENDED") {
+    throw new HttpError("This website is suspended. Contact support to restore it.", 403);
   }
 
-  const [b, w] = await Promise.all([
+  // The same rules the onboarding wizard uses, so a site that the wizard says
+  // is live really is, and one it cannot publish reports the same reasons here.
+  const sections = parseJson<SiteSection[]>(business.website.sectionsJson, []);
+  const errors = publishBlockers(business, {
+    seoTitle: business.website.seoTitle,
+    visibleSections: sections.filter((s) => s.visible).length,
+  });
+
+  if (errors.length) throw new HttpError(`Cannot publish: ${errors.join("; ")}`, 422);
+
+  const [services, products, gallery, testimonials, faqs, blogPosts] = await Promise.all([
+    db.service.count({ where: { businessId: business.id } }),
+    db.product.count({ where: { businessId: business.id } }),
+    db.galleryItem.count({ where: { businessId: business.id } }),
+    db.testimonial.count({ where: { businessId: business.id } }),
+    db.faq.count({ where: { businessId: business.id } }),
+    db.blogPost.count({ where: { businessId: business.id } }),
+  ]);
+
+  const [b, w] = await db.$transaction([
     db.business.update({ where: { id: business.id }, data: { status: "PUBLISHED" } }),
     db.website.update({ where: { businessId: business.id }, data: { publishedAt: new Date() } }),
   ]);
@@ -55,19 +58,22 @@ export async function POST(req: Request) {
     data: {
       userId: session.id,
       title: "Website published 🎉",
-      body: `${business.name} is now LIVE at ${business.slug}.websetu.in. Share it with your customers!`,
+      // The real address, not `<slug>.websetu.in` — a domain this platform does
+      // not serve and never has. A customer who copied that out of their own
+      // notification had nowhere to send it.
+      body: `${business.name} is now LIVE at ${tenantBaseUrl(business.slug, null)}. Share it with your customers!`,
     },
   });
+  await audit({
+    actor: session.id, action: "WEBSITE_PUBLISHED", entity: "business", entityId: business.id,
+    meta: { slug: business.slug, version: w.version },
+  });
 
-  const health = computeHealth(serializeBusinessLite(b), serializeWebsite(w), counts);
+  const health = computeHealth(
+    serializeBusiness(b) as Business,
+    serializeWebsite(w),
+    { services, products, gallery, testimonials, faqs, blogPosts },
+  );
 
   return ok({ ...serializeWebsite(w), businessStatus: b.status, health });
-}
-
-function serializeBusinessLite(b: Business) {
-  return {
-    ...b,
-    hours: parseJson(b.hoursJson, {}), socials: parseJson(b.socialsJson, {}),
-    createdAt: b.createdAt,
-  };
-}
+});

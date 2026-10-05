@@ -2,30 +2,112 @@
 // WebSetu — Auth view (login / register). Split-screen layout:
 // emerald brand panel (desktop) + form card with Login/Register tabs.
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { TRIAL_LABEL } from "@/lib/trial";
 import type { FormEvent } from "react";
-import { ArrowLeft, CheckCircle2, Loader2, Sparkles } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Eye, EyeOff, Loader2, Sparkles } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
-import { api, setToken } from "@/lib/api-client";
+import { api } from "@/lib/api-client";
+import {
+  ForgotPasswordDialog, ResetPasswordPanel, resetTokenFromUrl,
+} from "@/components/views/password-reset";
 import { useApp } from "@/store/app-store";
+import { PRIVACY, TERMS } from "@/lib/legal";
+import {
+  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
+import { themeVars, type PlatformTheme } from "@/lib/platform-theme";
 import type { AuthResponse } from "@/lib/types";
 
 const BULLETS = ["Launch in 15 minutes", "AI-written content", "Leads + WhatsApp built-in"];
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export default function AuthView() {
+/**
+ * Password input with a show/hide toggle. Typing a long password blind is the
+ * main reason people end up at "Invalid email or password".
+ */
+function PasswordField({
+  id,
+  value,
+  onChange,
+  autoComplete,
+  placeholder,
+  minLength,
+  hint,
+}: {
+  id: string;
+  value: string;
+  onChange: (v: string) => void;
+  autoComplete: string;
+  placeholder: string;
+  minLength?: number;
+  hint?: string;
+}) {
+  const [visible, setVisible] = useState(false);
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor={id}>Password</Label>
+      <div className="relative">
+        <Input
+          id={id}
+          type={visible ? "text" : "password"}
+          autoComplete={autoComplete}
+          placeholder={placeholder}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          required
+          minLength={minLength}
+          className="pr-10"
+        />
+        <button
+          type="button"
+          onClick={() => setVisible((v) => !v)}
+          aria-label={visible ? "Hide password" : "Show password"}
+          aria-pressed={visible}
+          tabIndex={-1}
+          className="absolute right-1 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition hover:bg-muted hover:text-foreground"
+        >
+          {visible ? <EyeOff className="h-4 w-4" aria-hidden /> : <Eye className="h-4 w-4" aria-hidden />}
+        </button>
+      </div>
+      {hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
+    </div>
+  );
+}
+
+/** @param serverTheme the platform palette, resolved on the server — see the
+ *  note in landing-view: nothing on a signed-out page hydrates the store. */
+export default function AuthView({ platformTheme: serverTheme }: { platformTheme?: PlatformTheme }) {
+  const router = useRouter();
   const authMode = useApp((s) => s.authMode);
+  const storeTheme = useApp((s) => s.platformTheme);
+  const platformTheme = serverTheme ?? storeTheme;
   const setAuthMode = useApp((s) => s.setAuthMode);
   const hydrate = useApp((s) => s.hydrate);
   const { toast } = useToast();
 
   const [busy, setBusy] = useState(false);
+  /**
+   * The real double-submit guard.
+   *
+   * `busy` only disables the button on the NEXT render, so a second click that
+   * lands in the same tick sails past it and fires a second request — two
+   * sessions, and two hits against the account's login budget for what the
+   * person experienced as one impatient double-click. A ref flips now, in the
+   * handler, before anything is awaited.
+   */
+  const inFlight = useRef(false);
+  // Terms and Privacy used to be href="#" links. On a hash-routed app that
+  // is not merely dead — it rewrites the route and throws the visitor back
+  // to the marketing page mid-signup.
+  const [legal, setLegal] = useState<"privacy" | "terms" | null>(null);
   const [error, setError] = useState("");
 
   // login fields
@@ -35,10 +117,22 @@ export default function AuthView() {
   const [regName, setRegName] = useState("");
   const [regEmail, setRegEmail] = useState("");
   const [regPassword, setRegPassword] = useState("");
+  const [forgotOpen, setForgotOpen] = useState(false);
+  // Set when the visitor arrived on an emailed reset link (…/?reset=<token>).
+  const [resetToken, setResetToken] = useState("");
 
-  /** Shared post-auth flow: persist token, hydrate session, route by account state. */
+  useEffect(() => {
+    // Read once on mount: the token lives in the query string, which the server
+    // render knows nothing about, so it cannot be read during render without a
+    // hydration mismatch.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setResetToken(resetTokenFromUrl());
+  }, []);
+
+  /** Shared post-auth flow: hydrate the session and route by account state. */
   async function finishAuth(res: AuthResponse) {
-    setToken(res.token);
+    // The session cookie was set by the response that carried `res`; there is
+    // nothing to persist here any more.
     await hydrate();
     // best-effort notification badge refresh (optional, must not block routing)
     api
@@ -49,11 +143,11 @@ export default function AuthView() {
 
     const state = useApp.getState();
     if (res.user.role === "ADMIN") {
-      window.location.hash = "#/admin";
+      router.push("/admin");
     } else if (state.business) {
-      window.location.hash = "#/dashboard";
+      router.push("/dashboard");
     } else {
-      window.location.hash = "#/onboarding";
+      router.push("/onboarding");
     }
   }
 
@@ -64,6 +158,8 @@ export default function AuthView() {
       setError("Please enter your email and password.");
       return;
     }
+    if (inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     try {
       const res = await api.post<AuthResponse>("/api/auth/login", {
@@ -71,9 +167,14 @@ export default function AuthView() {
         password: loginPassword,
       });
       await finishAuth(res);
+      // Deliberately not re-enabling the form on success: we are on our way to
+      // the dashboard, and the soft navigation takes long enough that a second
+      // click still lands on a button that says "Logging in…". That is how one
+      // impatient double-click became two sessions and two hits against the
+      // account's login budget. Only a FAILED attempt puts the form back.
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed. Please try again.");
-    } finally {
+      inFlight.current = false;
       setBusy(false);
     }
   }
@@ -90,10 +191,21 @@ export default function AuthView() {
       setError("Please enter a valid email address.");
       return;
     }
-    if (regPassword.length < 6) {
-      setError("Password must be at least 6 characters.");
+    // Mirrors the server rule in /api/auth/register — the server is the one
+    // that enforces it; this only saves a round-trip.
+    if (regPassword.length < 8) {
+      setError("Password must be at least 8 characters.");
       return;
     }
+    if (!/[a-zA-Z]/.test(regPassword) || !/[0-9]/.test(regPassword)) {
+      setError("Password must contain at least one letter and one number.");
+      return;
+    }
+    // Same guard as the login form: a double-click here would create the
+    // account twice, and the second attempt fails on the unique email with an
+    // error the person did nothing to deserve.
+    if (inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     try {
       const res = await api.post<AuthResponse>("/api/auth/register", {
@@ -102,19 +214,14 @@ export default function AuthView() {
         password: regPassword,
       });
       await finishAuth(res);
+      // As above: on success this form is on its way off screen.
     } catch (err) {
       setError(err instanceof Error ? err.message : "Registration failed. Please try again.");
-    } finally {
+      inFlight.current = false;
       setBusy(false);
     }
   }
 
-  function fillDemo() {
-    setAuthMode("login");
-    setError("");
-    setLoginEmail("demo@websetu.in");
-    setLoginPassword("demo1234");
-  }
 
   function switchMode(mode: string) {
     setAuthMode(mode === "register" ? "register" : "login");
@@ -122,7 +229,16 @@ export default function AuthView() {
   }
 
   return (
-    <div className="grid min-h-screen w-full lg:grid-cols-2">
+    <>
+    <ForgotPasswordDialog
+      open={forgotOpen}
+      onOpenChange={setForgotOpen}
+      defaultEmail={loginEmail}
+    />
+    <div
+      className="ws-theme grid min-h-screen w-full lg:grid-cols-2"
+      style={themeVars(platformTheme) as React.CSSProperties}
+    >
       {/* ---------- Left brand panel (desktop only) ---------- */}
       <div className="relative hidden flex-col justify-between overflow-hidden bg-gradient-to-br from-emerald-600 via-emerald-700 to-teal-800 p-10 text-white lg:flex xl:p-14">
         <div
@@ -136,7 +252,7 @@ export default function AuthView() {
         <div aria-hidden className="pointer-events-none absolute -bottom-24 -right-24 h-80 w-80 rounded-full bg-amber-400/15 blur-3xl" />
 
         <div className="relative flex items-center gap-2.5">
-          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/15 text-xl font-bold backdrop-blur">
+          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-card/15 text-xl font-bold backdrop-blur">
             W
           </span>
           <span className="text-xl font-bold tracking-tight">WebSetu</span>
@@ -154,7 +270,7 @@ export default function AuthView() {
               </li>
             ))}
           </ul>
-          <div className="mt-10 rounded-2xl border border-white/15 bg-white/10 p-5 backdrop-blur">
+          <div className="mt-10 rounded-2xl border border-white/15 bg-card/10 p-5 backdrop-blur">
             <p className="text-sm leading-relaxed text-emerald-50">
               &ldquo;We went live the same evening we signed up — and got three enquiries in the first week.&rdquo;
             </p>
@@ -169,39 +285,48 @@ export default function AuthView() {
       </div>
 
       {/* ---------- Right form panel ---------- */}
-      <div className="flex flex-1 flex-col items-center justify-center bg-[#fafaf9] px-4 py-10 sm:px-6">
+      {/* A landmark so screen-reader users can jump straight to the form. */}
+      <main className="flex flex-1 flex-col items-center justify-center bg-background px-4 py-10 sm:px-6">
         <div className="w-full max-w-md">
           <button
             type="button"
             onClick={() => {
-              window.location.hash = "#/";
+              router.push("/");
             }}
-            className="mb-4 inline-flex items-center gap-1.5 rounded-md px-1 py-1 text-sm text-zinc-500 transition-colors hover:text-emerald-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600"
+            className="mb-4 inline-flex items-center gap-1.5 rounded-md px-1 py-1 text-sm text-muted-foreground transition-colors hover:text-emerald-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600"
           >
             <ArrowLeft className="h-4 w-4" />
             Back to home
           </button>
 
-          <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-xl shadow-zinc-900/5 sm:p-8">
+          <div className="rounded-2xl border border-border bg-card p-6 shadow-xl shadow-zinc-900/5 sm:p-8">
             {/* Mobile logo (left panel is hidden) */}
             <div className="mb-6 flex items-center gap-2.5 lg:hidden">
               <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500 to-teal-700 text-lg font-bold text-white">
                 W
               </span>
-              <span className="text-lg font-bold tracking-tight text-zinc-900">WebSetu</span>
+              <span className="text-lg font-bold tracking-tight text-foreground">WebSetu</span>
             </div>
 
-            <h2 className="text-2xl font-bold tracking-tight text-zinc-900">
+            {resetToken ? (
+              <ResetPasswordPanel
+                token={resetToken}
+                onDone={finishAuth}
+                onCancel={() => setResetToken("")}
+              />
+            ) : (
+            <>
+            <h2 className="text-2xl font-bold tracking-tight text-foreground">
               {authMode === "login" ? "Welcome back" : "Create your account"}
             </h2>
-            <p className="mt-1.5 text-sm text-zinc-500">
+            <p className="mt-1.5 text-sm text-muted-foreground">
               {authMode === "login"
                 ? "Log in to manage your website, leads and more."
-                : "Start your 14-day free trial — no credit card required."}
+                : `Start your ${TRIAL_LABEL} — no credit card required.`}
             </p>
 
             <Tabs value={authMode} onValueChange={switchMode} className="mt-6">
-              <TabsList className="grid h-11 w-full grid-cols-2 rounded-xl bg-zinc-100 p-1">
+              <TabsList className="grid h-11 w-full grid-cols-2 rounded-xl bg-muted p-1">
                 <TabsTrigger value="login" className="rounded-lg data-[state=active]:text-emerald-700">
                   Login
                 </TabsTrigger>
@@ -225,17 +350,22 @@ export default function AuthView() {
                       required
                     />
                   </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="login-password">Password</Label>
-                    <Input
-                      id="login-password"
-                      type="password"
-                      autoComplete="current-password"
-                      placeholder="••••••••"
-                      value={loginPassword}
-                      onChange={(e) => setLoginPassword(e.target.value)}
-                      required
-                    />
+                  <PasswordField
+                    id="login-password"
+                    value={loginPassword}
+                    onChange={setLoginPassword}
+                    autoComplete="current-password"
+                    placeholder="••••••••"
+                  />
+
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => setForgotOpen(true)}
+                      className="text-xs font-medium text-emerald-700 hover:underline"
+                    >
+                      Forgot password?
+                    </button>
                   </div>
 
                   {error ? (
@@ -254,24 +384,6 @@ export default function AuthView() {
                     {busy ? "Logging in…" : "Log In"}
                   </Button>
 
-                  {/* Demo credential hint */}
-                  <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
-                    <p className="text-xs font-semibold text-amber-900">Try the demo</p>
-                    <p className="mt-1 text-xs leading-relaxed text-amber-800">
-                      Demo: demo@websetu.in / demo1234
-                      <br />
-                      Admin: admin@websetu.in / admin1234
-                    </p>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={fillDemo}
-                      className="mt-2.5 h-8 border-amber-300 bg-white text-xs text-amber-900 hover:bg-amber-100"
-                    >
-                      Fill demo
-                    </Button>
-                  </div>
                 </form>
               </TabsContent>
 
@@ -302,20 +414,15 @@ export default function AuthView() {
                       required
                     />
                   </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="reg-password">Password</Label>
-                    <Input
-                      id="reg-password"
-                      type="password"
-                      autoComplete="new-password"
-                      placeholder="At least 6 characters"
-                      value={regPassword}
-                      onChange={(e) => setRegPassword(e.target.value)}
-                      required
-                      minLength={6}
-                    />
-                    <p className="text-xs text-zinc-400">Minimum 6 characters.</p>
-                  </div>
+                  <PasswordField
+                    id="reg-password"
+                    value={regPassword}
+                    onChange={setRegPassword}
+                    autoComplete="new-password"
+                    placeholder="At least 8 characters"
+                    minLength={8}
+                    hint="Minimum 8 characters, with at least one letter and one number."
+                  />
 
                   {error ? (
                     <Alert variant="destructive">
@@ -335,21 +442,53 @@ export default function AuthView() {
                 </form>
               </TabsContent>
             </Tabs>
+            </>
+            )}
           </div>
 
-          <p className="mt-6 text-center text-xs text-zinc-400">
+          <p className="mt-6 text-center text-xs text-muted-foreground">
             By continuing, you agree to our{" "}
-            <a href="#" className="underline underline-offset-2 hover:text-emerald-700">
+            <button
+              type="button"
+              onClick={() => setLegal("terms")}
+              className="underline underline-offset-2 hover:text-emerald-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600"
+            >
               Terms of Service
-            </a>{" "}
+            </button>{" "}
             and{" "}
-            <a href="#" className="underline underline-offset-2 hover:text-emerald-700">
+            <button
+              type="button"
+              onClick={() => setLegal("privacy")}
+              className="underline underline-offset-2 hover:text-emerald-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600"
+            >
               Privacy Policy
-            </a>
+            </button>
             .
           </p>
         </div>
-      </div>
+      </main>
+
+      <Dialog open={legal !== null} onOpenChange={(open) => !open && setLegal(null)}>
+        <DialogContent className="max-h-[80vh] overflow-y-auto rounded-2xl sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{legal === "terms" ? "Terms of Service" : "Privacy Policy"}</DialogTitle>
+            <DialogDescription>
+              {legal === "terms"
+                ? "The short version of what you agree to when you use WebSetu."
+                : "What we collect, why we collect it, and what we never do with it."}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 text-sm leading-relaxed text-muted-foreground">
+            {(legal === "terms" ? TERMS : PRIVACY).map((item) => (
+              <div key={item.heading}>
+                <p className="font-semibold text-foreground">{item.heading}</p>
+                <p className="mt-1">{item.body}</p>
+              </div>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
+    </>
   );
 }

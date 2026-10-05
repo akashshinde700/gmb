@@ -6,13 +6,24 @@ interface ContentCounts {
   services: number; products: number; gallery: number; testimonials: number; faqs: number; blogPosts: number;
 }
 
+function asRecord(value: unknown): Record<string, string> {
+  if (!value) return {};
+  if (typeof value === "string") return parseJson<Record<string, string>>(value, {});
+  if (typeof value === "object") return value as Record<string, string>;
+  return {};
+}
+
 export function computeHealth(
   business: Business,
   website: WebsiteData | null,
   counts: ContentCounts,
 ): HealthReport {
-  const hours = parseJson<Record<string, string>>(business.hours as unknown as string, {});
-  const socials = parseJson<Record<string, string>>(business.socials as unknown as string, {});
+  // `hours`/`socials` arrive already parsed from the API but as raw JSON strings
+  // from a Prisma row, so both shapes have to work — passing an object through
+  // parseJson used to throw and silently fail the "business hours" check for
+  // every tenant, understating the health score.
+  const hours = asRecord(business.hours);
+  const socials = asRecord(business.socials);
 
   const checks: HealthCheck[] = [
     { key: "logo", label: "Logo uploaded", pass: !!business.logoUrl, weight: 6 },
