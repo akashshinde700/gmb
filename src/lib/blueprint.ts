@@ -23,6 +23,7 @@ import { industryFor, resolveIndustry, type IndustryPreset } from "@/lib/industr
 import { pick, rng, seedFrom, shuffle, variantsFor, type Palette } from "@/lib/variants";
 import { designDnaFor, type DesignDna } from "@/lib/design-dna";
 import { paletteSimilarity } from "@/lib/uniqueness";
+import { expandPaletteFamily } from "@/lib/palette-family";
 import { directPageOrder, directorBrief, goalFor, type DirectorBrief, type GoalPlan } from "@/lib/director";
 
 export interface BlueprintService {
@@ -65,6 +66,12 @@ export interface SiteBlueprint {
   imageQueries: string[];
   /** Running order for the middle of the page. */
   sectionOrder: readonly SectionType[];
+  /**
+   * Sections this business's page leaves off altogether. The builder drops
+   * them before it arranges the rest, so two sites in one trade differ in what
+   * is on the page, not only in the order it is in.
+   */
+  omit: readonly SectionType[];
   /**
    * What this site is for — the action it is built to earn — and the order of
    * the page that follows from it. A clinic and a manufacturer get different
@@ -127,15 +134,49 @@ function scoreByDescription(services: BlueprintService[], description: string): 
   return [...services].sort((a, b) => score(b) - score(a));
 }
 
-const SECTION_ORDERS: readonly (readonly SectionType[])[] = [
-  ["stats", "about", "services", "whyUs", "gallery", "testimonials", "faq", "blog", "cta", "payment", "hours"],
-  ["about", "services", "stats", "gallery", "whyUs", "testimonials", "cta", "faq", "blog", "hours", "payment"],
-  ["services", "about", "whyUs", "stats", "testimonials", "gallery", "cta", "blog", "faq", "payment", "hours"],
-  ["about", "stats", "services", "testimonials", "whyUs", "cta", "gallery", "faq", "hours", "blog", "payment"],
-  ["services", "stats", "whyUs", "about", "gallery", "cta", "testimonials", "faq", "payment", "blog", "hours"],
-  ["about", "whyUs", "services", "gallery", "stats", "cta", "testimonials", "blog", "faq", "hours", "payment"],
-  ["stats", "services", "about", "testimonials", "gallery", "whyUs", "faq", "cta", "blog", "payment", "hours"],
+/**
+ * Sections a business may leave off its page entirely.
+ *
+ * A page is not a fixed list of blocks that everybody gets a copy of: a
+ * two-helper electrician does not publish a blog, a shop that takes orders on
+ * WhatsApp does not need a payment QR, and a chemist's opening hours are worth
+ * a band on the homepage while a plumber's are not. What must stay is the spine
+ * — what the business does, who it is, why it can be trusted, the ask and the
+ * form — so the omissions below are drawn from the sections that add to a page
+ * without being the reason someone came to it.
+ *
+ * `products` is deliberately absent: a shop's catalogue is its page.
+ */
+const OPTIONAL_SECTIONS: readonly SectionType[] = [
+  "blog", "faq", "hours", "payment", "testimonials", "gallery", "stats",
 ];
+
+/**
+ * What this business's page is made of, and in what order.
+ *
+ * The order is a shuffle of this business's own seed rather than one of a
+ * handful of canned orders. Seven canned orders meant a thousand businesses
+ * shared seven pages: whichever one they drew, the middle of every site ran
+ * through the same blocks in one of seven sequences, and two plumbers were
+ * always a near-miss of each other. A shuffle of the business's own stream
+ * gives every signup its own sequence, and dropping one to three optional
+ * sections gives it its own composition — which is the part a visitor actually
+ * notices, because the first thing they do is scroll.
+ *
+ * The hero still opens the page and the contact form still closes it (see
+ * `arrangeSections`), and the director still pulls this goal's two most
+ * important sections to the front (see `directPageOrder`).
+ */
+function pageComposition(seed: string): { order: SectionType[]; omit: SectionType[] } {
+  const draw = rng(seedFrom(`${seed}::layout`));
+  const candidates = shuffle(draw, [...OPTIONAL_SECTIONS]);
+  const omitted = 1 + Math.floor(draw() * 3);
+  const omit = candidates.slice(0, Math.min(omitted, candidates.length - 3));
+  const middle = DNA_SECTION_TYPES.filter(
+    (type) => type !== "hero" && type !== "contact" && !omit.includes(type),
+  );
+  return { order: shuffle(draw, middle), omit };
+}
 
 export interface BlueprintInput {
   /**
@@ -191,7 +232,6 @@ export function blueprintFor(input: BlueprintInput): SiteBlueprint {
   // keeps the original stream, so nothing already built changes.
   const attemptTag = input.attempt ? `:${input.attempt}` : "";
   const drawPalette = rng(seedFrom(`${seed}::palette${attemptTag}`));
-  const drawOrder = rng(seedFrom(`${seed}::order`));
   const drawServices = rng(seedFrom(`${seed}::services`));
 
   // Everything visual comes from the genome: typography, corners, shadows,
@@ -215,25 +255,48 @@ export function blueprintFor(input: BlueprintInput): SiteBlueprint {
   // The picker shows a short, trade-appropriate row rather than every palette
   // that exists: the trade's own colours first, then any Stitch-designed ones.
   const paletteChoices = [...variants.palettes].slice(0, 8);
-  // The rotation pool is the whole trade list, so "this colour is taken" can be
-  // answered for years of sign-ups before anything has to repeat.
-  const palettePool = [...variants.palettes];
-  const drawn = Math.floor(drawPalette() * paletteChoices.length) % paletteChoices.length;
+  // The rotation pool is the trade's whole family — its curated palettes plus
+  // the deterministic rotations of them (see lib/palette-family.ts). A curated
+  // list is deliberately short, and a short list is how a thousand businesses
+  // in one trade end up on the same blue: expanding it is what lets "this
+  // colour is taken" be answered honestly at scale.
+  const palettePool = expandPaletteFamily([...variants.palettes]);
+  // Drawn from the family, not from the eight the picker shows: the picker is a
+  // short, tidy row for the owner, and using its length here was what pinned
+  // the whole trade to eight starting points no matter how big the family was.
+  const drawn = Math.floor(drawPalette() * palettePool.length) % palettePool.length;
   // Which palettes the trade is already using. "Already used" has to mean
   // "looks the same", not "is the same three hex codes": most palettes in the
   // shared list carry the same amber accent and a near-black secondary, so
   // exact matching let two businesses end up on pages that felt identical.
   const taken = (input.taken ?? []).map((t) => t.split(","));
+  // The shortlist is spread across the whole family rather than walking it from
+  // one place: the pool is ordered base-by-base, so six consecutive entries are
+  // six rotations of the *same* colour, and the "least similar" of six
+  // near-identical blues is still that blue. Stepping by a stride coprime with
+  // the pool's length samples the family instead — deterministic, so the same
+  // business always considers the same six.
+  const poolSize = palettePool.length || 1;
+  const stride = (() => {
+    for (const candidate of [7, 11, 13, 17, 19, 23, 29, 31]) {
+      if (poolSize % candidate !== 0 && candidate < poolSize) return candidate;
+    }
+    return 1;
+  })();
+  const shortlist = Array.from(
+    { length: Math.min(8, poolSize) },
+    (_, k) => palettePool[(drawn * stride + k * stride) % poolSize] ?? paletteChoices[drawn % paletteChoices.length],
+  );
+  const closestTaken = (candidate: Palette) =>
+    taken.reduce((worst, t) => Math.max(worst, paletteSimilarity(candidate, t)), 0);
   // A shortlist of six drawn from the business's own starting point, then the
   // least-similar one wins. Deterministic for a given database state, so a
   // re-generate does not shuffle a live site, and a business whose palette is
   // not close to anything keeps the palette it was drawn.
-  const shortlist = Array.from(
-    { length: Math.min(6, palettePool.length || 1) },
-    (_, k) => palettePool[(drawn + k) % palettePool.length] ?? paletteChoices[drawn],
-  );
-  const closestTaken = (candidate: Palette) =>
-    taken.reduce((worst, t) => Math.max(worst, paletteSimilarity(candidate, t)), 0);
+  //
+  // (Three concepts for one business are kept different from each other by
+  // candidateBlueprints below, which is the batch that can act on it: what one
+  // business draws on its own must not depend on who else is being drawn.)
   const palette = shortlist.reduce(
     (best, candidate) => (closestTaken(candidate) < closestTaken(best) - 0.001 ? candidate : best),
     shortlist[0],
@@ -278,7 +341,11 @@ export function blueprintFor(input: BlueprintInput): SiteBlueprint {
     description: input.description,
     services: services.map((sv) => sv.name),
   });
-  const sectionOrder = directPageOrder(pick(drawOrder, SECTION_ORDERS), goal);
+  // Each of the three concepts offered to one business also composes its page
+  // differently, so "pick a direction" is a choice between three layouts rather
+  // than three colourways of one.
+  const composition = pageComposition(attemptTag ? `${seed}${attemptTag}` : seed);
+  const sectionOrder = directPageOrder(composition.order, goal);
   const brief = directorBrief({
     name: input.name,
     city: input.city,
@@ -304,11 +371,23 @@ export function blueprintFor(input: BlueprintInput): SiteBlueprint {
     suggestedServices: tradeServices,
     imageQueries: [...variants.imageQueries],
     sectionOrder,
+    omit: composition.omit,
     goal,
     brief,
     dna,
   };
 }
+
+/**
+ * When two palettes look like the same colours used twice.
+ *
+ * The primary paints every button, heading and the moving band, so a shared
+ * primary is the one thing that makes two concepts read as one website twice;
+ * sharing only the near-black secondary or the accent is normal inside a trade
+ * (most palettes carry the same amber). 0.5 is exactly "the primary is
+ * identical and nothing else is", so anything above it is closer than that.
+ */
+const SIBLING_SAME = 0.5;
 
 /** Hex-colour guard shared by every caller that accepts colours from a client. */
 /**
@@ -320,6 +399,11 @@ export function blueprintFor(input: BlueprintInput): SiteBlueprint {
  * not a choice. Both the concept preview and the signup that rebuilds the
  * chosen one call this, so "they picked concept 2" always means the same
  * genome.
+ *
+ * A trade's palette list is finite and a busy trade has all of it in use, so
+ * after the "already taken" hint the later concepts are also checked against
+ * their siblings — and moved to the pool entry furthest from them, but only
+ * when that is actually further than what was drawn.
  */
 export function candidateBlueprints(
   input: Omit<BlueprintInput, "attempt" | "taken"> & { taken?: readonly string[] },
@@ -329,6 +413,18 @@ export function candidateBlueprints(
   const out: SiteBlueprint[] = [];
   for (let attempt = 0; attempt < count; attempt++) {
     const blueprint = blueprintFor({ ...input, taken, attempt });
+    const closestSibling = (candidate: readonly string[]) =>
+      out.reduce((worst, other) => Math.max(worst, paletteSimilarity(candidate, other.palette)), 0);
+    if (out.length && closestSibling(blueprint.palette) >= SIBLING_SAME) {
+      // The best of a finite list, not the first acceptable one: with two or
+      // three siblings already chosen, the first acceptable entry can be much
+      // closer than another one sitting further along the pool.
+      const best = blueprint.palettePool.reduce(
+        (winner, candidate) => (closestSibling(candidate) < closestSibling(winner) ? candidate : winner),
+        blueprint.palette,
+      );
+      if (closestSibling(best) < closestSibling(blueprint.palette)) blueprint.palette = [...best];
+    }
     taken.push(blueprint.palette.join(","));
     out.push(blueprint);
   }

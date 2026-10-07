@@ -1,5 +1,8 @@
 import { db } from "@/lib/db";
-import { posterSvg, type ArtRadius, type ArtRatio, type ArtTreatment } from "@/lib/site-art";
+import {
+  posterSvg, variantsFor, ART_SECTIONS, ratioForSection,
+  type ArtRadius, type ArtRatio, type ArtSection, type ArtTreatment,
+} from "@/lib/site-art";
 import { industryFor } from "@/lib/industries";
 
 /**
@@ -36,7 +39,16 @@ export async function GET(req: Request, { params }: { params: Promise<{ slug: st
   if (!slug || !/^[a-z0-9-]{1,80}$/.test(slug)) return notFound();
 
   const url = new URL(req.url);
-  const ratioParam = url.searchParams.get("r") || "wide";
+  // Where the picture is used, and which drawing to use, are both validated
+  // against fixed lists: they end up in the seed (so the same URL always draws
+  // the same picture) and this route is public, so an open-ended value would be
+  // an unbounded number of cacheable posters.
+  const sectionParam = url.searchParams.get("s") || "";
+  const section = (ART_SECTIONS as readonly string[]).includes(sectionParam)
+    ? (sectionParam as ArtSection)
+    : undefined;
+  const askedVariant = (url.searchParams.get("v") || "").slice(0, 20);
+  const ratioParam = url.searchParams.get("r") || (section ? ratioForSection(section) : "wide");
   const ratio: ArtRatio = ratioParam === "square" || ratioParam === "portrait" ? ratioParam : "wide";
   const index = Math.min(9, Math.max(0, Number(url.searchParams.get("i") || 0) || 0));
 
@@ -81,6 +93,10 @@ export async function GET(req: Request, { params }: { params: Promise<{ slug: st
     // unreadable theme — the category's scene and the plain finish are fine
   }
 
+  // A variant that belongs to another scene is still drawn (both are abstract
+  // geometry), but anything unknown falls back to this scene's own drawings.
+  const variant = variantsFor(scene).includes(askedVariant) ? askedVariant : undefined;
+
   const svg = posterSvg({
     seed: business.slug,
     scene,
@@ -90,10 +106,12 @@ export async function GET(req: Request, { params }: { params: Promise<{ slug: st
     treatment,
     radius,
     motion,
+    variant,
+    section,
   });
 
   // The inputs that change the picture, so a palette edit invalidates it.
-  const etag = `W/"${business.updatedAt.getTime()}-${business.website?.updatedAt?.getTime() ?? 0}-${ratio}-${index}-${scene}-${treatment}-${radius}-${motion}"`;
+  const etag = `W/"${business.updatedAt.getTime()}-${business.website?.updatedAt?.getTime() ?? 0}-${ratio}-${index}-${scene}-${treatment}-${radius}-${motion}-${section ?? ""}-${variant ?? ""}"`;
   if (req.headers.get("if-none-match") === etag) {
     return new Response(null, { status: 304, headers: { ETag: etag, "Cache-Control": "public, max-age=3600, s-maxage=86400" } });
   }

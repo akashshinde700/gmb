@@ -15,6 +15,7 @@ import HeroScene from "@/components/site/hero-scene";
 import { SITE_ICONS } from "@/components/site/industry-icons";
 import type { SceneKind } from "@/lib/industries";
 import { isToday } from "@/lib/hours";
+import { sectionArt } from "@/lib/site-art";
 
 const ICONS: Record<string, React.ComponentType<{ className?: string }>> = SITE_ICONS;
 
@@ -22,8 +23,8 @@ function SectionTitle({ title, subtitle, center = true }: { title?: string; subt
   if (!title && !subtitle) return null;
   return (
     <div className={`ws-reveal mb-10 ${center ? "text-center mx-auto max-w-2xl" : ""}`}>
-      {title && <h2 className="text-3xl md:text-4xl font-bold tracking-tight text-[var(--brand-secondary)]">{title}</h2>}
-      {subtitle && <p className="mt-3 text-base md:text-lg text-[var(--brand-muted)]">{subtitle}</p>}
+      {title && <h2 className="text-3xl md:text-4xl font-bold tracking-tight text-[var(--brand-heading,var(--brand-secondary))]">{title}</h2>}
+      {subtitle && <p className="mt-3 text-base md:text-lg text-[var(--brand-subheading,var(--brand-muted))]">{subtitle}</p>}
       <div className={`mt-4 h-1 w-16 rounded-full bg-[var(--brand-primary)] ${center ? "mx-auto" : ""}`} />
     </div>
   );
@@ -494,9 +495,11 @@ function About({ section, layout = 0 }: { section: SiteSection; layout?: number 
 }
 
 // ---------- SERVICES ----------
-function Services({ section, services, onCta, onEnquire, layout = 0 }: {
+function Services({ section, services, onCta, onEnquire, layout = 0, business }: {
   section: SiteSection; services: Service[]; onCta: (t: string) => void; onEnquire: (subject: string) => void;
   layout?: number;
+  /** The business, so a service without a photo still gets its own drawing. */
+  business?: Business;
 }) {
   const c = section.content as { title?: string; subtitle?: string };
   const variant = (section.content?.variant as string) || "cards";
@@ -578,8 +581,11 @@ function Services({ section, services, onCta, onEnquire, layout = 0 }: {
       <div className="mx-auto max-w-6xl px-4 sm:px-6">
         <SectionTitle title={c.title} subtitle={c.subtitle} center={centred} />
         <div className={`grid gap-6 ${cols}`}>
-          {services.map((s) => {
+          {services.map((s, si) => {
             const Icon = ICONS[s.icon] || Sparkles;
+            // A service with no photo of its own still gets a real picture:
+            // this business's own generated drawing, walking forward per card.
+            const art = s.image ? null : sectionArt(business, "services", si);
             return (
               <div
                 key={s.id}
@@ -596,6 +602,25 @@ function Services({ section, services, onCta, onEnquire, layout = 0 }: {
                       className="ws-zoom object-cover"
                       sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
                     />
+                  </div>
+                ) : art ? (
+                  <div className="relative aspect-[16/9] overflow-hidden bg-[var(--brand-primary)]/10">
+                    { }
+                    <img
+                      src={art}
+                      alt=""
+                      aria-hidden="true"
+                      loading="lazy"
+                      decoding="async"
+                      className="ws-zoom h-full w-full object-cover"
+                    />
+                    <div
+                      className="absolute inset-0"
+                      style={{ background: "linear-gradient(180deg, transparent 40%, color-mix(in srgb, var(--brand-surface) 82%, transparent) 100%)" }}
+                    />
+                    <div className="absolute bottom-3 left-6 flex h-11 w-11 items-center justify-center rounded-[var(--brand-radius)] bg-white/90 text-[var(--brand-primary)] shadow-sm transition duration-300 group-hover:scale-110 group-hover:bg-[var(--brand-primary)] group-hover:text-white">
+                      <Icon className="h-5 w-5" />
+                    </div>
                   </div>
                 ) : (
                   <div className="px-6 pt-6">
@@ -628,8 +653,18 @@ function Services({ section, services, onCta, onEnquire, layout = 0 }: {
 }
 
 // ---------- PRODUCTS ----------
-function Products({ section, products, onCta, onEnquire }: {
+function Products({ section, products, onCta, onEnquire, business, onAdd, inCart }: {
   section: SiteSection; products: Product[]; onCta: (t: string) => void; onEnquire: (subject: string) => void;
+  /** The business, so a product without a photo still gets its own drawing. */
+  business?: Business;
+  /**
+   * Present only when the shop is taking orders online. An "Add to cart" button
+   * on a site with no shop to put it in is the worst kind of dead end, so it is
+   * not rendered at all — those businesses sell the priced ones by enquiry.
+   */
+  onAdd?: (productId: string) => void;
+  /** How many of each product are already in the cart, for the button label. */
+  inCart?: Record<string, number>;
 }) {
   const c = section.content as { title?: string; subtitle?: string };
   const [videoProduct, setVideoProduct] = useState<Product | null>(null);
@@ -672,8 +707,12 @@ function Products({ section, products, onCta, onEnquire }: {
           </div>
         )}
         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-          {filteredProducts.map((p) => {
+          {filteredProducts.map((p, pi) => {
             const vid = p.videoUrl ? youtubeId(p.videoUrl) : null;
+            // No photo from the owner: show this business's own generated
+            // drawing rather than a grey box, so a catalogue page never looks
+            // half-finished. The owner's own photo always wins when there is one.
+            const art = p.image ? null : sectionArt(business, "products", pi);
             return (
               <div key={p.id} className="ws-reveal ws-card group flex flex-col overflow-hidden rounded-[var(--brand-radius-lg)] bg-white shadow-sm ring-1 ring-[var(--brand-border)] hover:shadow-xl hover:ring-[var(--brand-primary)]/40">
                 <div className="relative aspect-[4/3] bg-[var(--brand-primary)]/10 flex items-center justify-center overflow-hidden">
@@ -685,6 +724,15 @@ function Products({ section, products, onCta, onEnquire }: {
                       wrapperClassName="h-full w-full"
                       className="object-cover"
                       sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
+                    />
+                  ) : art ? (
+                    <img
+                      src={art}
+                      alt=""
+                      aria-hidden="true"
+                      loading="lazy"
+                      decoding="async"
+                      className="ws-zoom h-full w-full object-cover"
                     />
                   ) : (
                     <Package className="h-10 w-10 text-[var(--brand-primary)]/50" />
@@ -717,13 +765,24 @@ function Products({ section, products, onCta, onEnquire }: {
                   )}
                   <div className="mt-3 flex items-center justify-between">
                     <span className="text-base">{fmt(p) ?? <span className="text-sm font-semibold text-[var(--brand-primary)]">Enquire for price</span>}</span>
-                    <button
-                      type="button"
-                      onClick={() => { onCta("CTA_CALL"); onEnquire(p.name); }}
-                      className="rounded-[var(--brand-radius)] bg-[var(--brand-primary)] px-3 py-1.5 text-xs font-semibold text-white transition hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-primary)] focus-visible:ring-offset-2"
-                    >
-                      Enquire
-                    </button>
+                    <div className="flex items-center gap-2">
+                      {onAdd && !p.hidePrice && (Number(p.salePrice) > 0 || Number(p.price) > 0) && (
+                        <button
+                          type="button"
+                          onClick={() => onAdd(p.id)}
+                          className="rounded-[var(--brand-radius)] border border-[var(--brand-primary)] px-3 py-1.5 text-xs font-semibold text-[var(--brand-primary)] transition hover:bg-[var(--brand-primary)] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-primary)] focus-visible:ring-offset-2"
+                        >
+                          {(inCart?.[p.id] ?? 0) > 0 ? `In cart · ${inCart?.[p.id]}` : "Add to cart"}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => { onCta("CTA_CALL"); onEnquire(p.name); }}
+                        className="rounded-[var(--brand-radius)] bg-[var(--brand-primary)] px-3 py-1.5 text-xs font-semibold text-white transition hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-primary)] focus-visible:ring-offset-2"
+                      >
+                        Enquire
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1263,9 +1322,10 @@ function FaqSection({ section }: { section: SiteSection }) {
 function CtaBanner({ section, business, onCta }: { section: SiteSection; business: Business; onCta: (t: string) => void }) {
   const c = section.content as {
     title?: string; subtitle?: string; primary?: string; secondary?: string;
-    primaryAction?: string; secondaryAction?: string;
+    primaryAction?: string; secondaryAction?: string; image?: string;
   };
   const variant = (section.content?.variant as string) || "band";
+  const art = (c.image || "").trim();
   const waNumber = toWaNumber(business.whatsapp || business.phone || "");
   // The band repeats the goal, in the same direction the hero pointed: a
   // quotation-first business should not end its page with "Call Now".
@@ -1279,14 +1339,23 @@ function CtaBanner({ section, business, onCta }: { section: SiteSection; busines
       <section className="py-16 md:py-20">
         <div className="mx-auto max-w-6xl px-4 sm:px-6">
           <div
-            className="flex flex-col gap-8 rounded-[var(--brand-radius-lg)] px-6 py-10 md:flex-row md:items-center md:justify-between md:px-12"
+            className="relative overflow-hidden flex flex-col gap-8 rounded-[var(--brand-radius-lg)] px-6 py-10 md:flex-row md:items-center md:justify-between md:px-12"
             style={{ background: `linear-gradient(120deg, var(--brand-secondary), var(--brand-primary))` }}
           >
-            <div className="max-w-xl">
+            {/* The band's own generated artwork sits behind the words at low
+                opacity: enough to make the last block feel designed, never
+                enough to fight the button. */}
+            {art && (
+              <div className="absolute inset-0" aria-hidden="true">
+                <SiteImage src={art} alt="" wrapperClassName="h-full w-full" className="object-cover opacity-35" sizes="100vw" />
+                <div className="absolute inset-0" style={{ background: "linear-gradient(120deg, color-mix(in srgb, var(--brand-secondary) 78%, transparent), color-mix(in srgb, var(--brand-primary) 62%, transparent))" }} />
+              </div>
+            )}
+            <div className="relative max-w-xl">
               <h2 className="text-2xl font-bold text-white md:text-3xl">{c.title}</h2>
               {c.subtitle && <p className="mt-3 text-white/85">{c.subtitle}</p>}
             </div>
-            <div className="flex flex-wrap gap-3">
+            <div className="relative flex flex-wrap gap-3">
               <a href={primary.href} {...(primary.external ? { target: "_blank", rel: "noreferrer" } : {})} onClick={() => onCta(primary.event)} className="ws-shine inline-flex items-center gap-2 bg-[var(--brand-accent)] px-7 py-3 font-semibold text-[#1c1917] transition hover:-translate-y-0.5 hover:brightness-110 active:scale-95" style={{ borderRadius: "var(--brand-button-radius)", boxShadow: "var(--brand-button-shadow)" }}>
                 <Phone className="h-4 w-4" aria-hidden="true" />{c.primary || "Call Now"}
               </a>
@@ -1305,10 +1374,16 @@ function CtaBanner({ section, business, onCta }: { section: SiteSection; busines
   return (
     <section className="py-16 md:py-20">
       <div className="mx-auto max-w-6xl px-4 sm:px-6">
-        <div className="rounded-[var(--brand-radius-lg)] px-6 py-12 md:px-12 text-center shadow-xl" style={{ background: `linear-gradient(120deg, var(--brand-primary), var(--brand-secondary))` }}>
-          <h2 className="text-2xl md:text-3xl font-bold text-white">{c.title}</h2>
-          {c.subtitle && <p className="mx-auto mt-3 max-w-xl text-white/85">{c.subtitle}</p>}
-          <div className="mt-7 flex flex-wrap justify-center gap-3">
+        <div className="relative overflow-hidden rounded-[var(--brand-radius-lg)] px-6 py-12 md:px-12 text-center shadow-xl" style={{ background: `linear-gradient(120deg, var(--brand-primary), var(--brand-secondary))` }}>
+          {art && (
+            <div className="absolute inset-0" aria-hidden="true">
+              <SiteImage src={art} alt="" wrapperClassName="h-full w-full" className="object-cover opacity-35" sizes="100vw" />
+              <div className="absolute inset-0" style={{ background: "linear-gradient(120deg, color-mix(in srgb, var(--brand-primary) 72%, transparent), color-mix(in srgb, var(--brand-secondary) 60%, transparent))" }} />
+            </div>
+          )}
+          <h2 className="relative text-2xl md:text-3xl font-bold text-white">{c.title}</h2>
+          {c.subtitle && <p className="relative mx-auto mt-3 max-w-xl text-white/85">{c.subtitle}</p>}
+          <div className="relative mt-7 flex flex-wrap justify-center gap-3">
             <a href={`tel:${business.phone}`} onClick={() => onCta("CTA_CALL")} className="ws-shine bg-[var(--brand-accent)] px-7 py-3 font-semibold text-[#1c1917] transition hover:-translate-y-0.5 hover:brightness-110 hover:shadow-xl active:scale-95" style={{ borderRadius: "var(--brand-button-radius)", boxShadow: "var(--brand-button-shadow)" }}>
               <span className="inline-flex items-center gap-2"><Phone className="h-4 w-4" />{c.primary || "Call Now"}</span>
             </a>

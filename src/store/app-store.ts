@@ -9,7 +9,8 @@ import { DEFAULT_PLATFORM_THEME, type PlatformTheme } from "@/lib/platform-theme
 export type View = "home" | "auth" | "onboarding" | "dashboard" | "admin" | "site";
 export type DashboardTab =
   | "overview" | "builder" | "business" | "services" | "products" | "gallery"
-  | "testimonials" | "faqs" | "blog" | "leads" | "seo" | "analytics" | "subscription" | "settings";
+  | "testimonials" | "faqs" | "blog" | "leads" | "orders" | "seo" | "analytics"
+  | "hosting" | "subscription" | "settings";
 export type AdminTab = "overview" | "customers" | "plans" | "templates" | "coupons" | "leads" | "blog" | "appearance" | "domains" | "ai";
 
 export interface BusinessWithMeta extends Business {

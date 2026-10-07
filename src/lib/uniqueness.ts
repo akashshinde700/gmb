@@ -251,6 +251,60 @@ export function bestCandidate<T>(
   return { chosen: best, score: bestScore, tried };
 }
 
+/**
+ * The score a new site has to beat — which is not the same number in a young
+ * trade as in a crowded one.
+ *
+ * 0.45 is the right bar while a trade is small: below it, two pages read as
+ * different, and a site that scores higher than that should be re-rolled. It
+ * cannot be the bar forever, because of what a closest neighbour *is*: the
+ * maximum over every site already there. A maximum grows with the number of
+ * comparisons even when every comparison is a fresh draw, so in a trade of a
+ * thousand the closest of five hundred neighbours sits around 0.6 for the same
+ * engine that scores 0.36 on an average pair — and a fixed 0.45 would make the
+ * engine regenerate forever while telling every owner their brand-new site is
+ * "40% unlike" the others.
+ *
+ * So the bar a crowded trade sets is its own, taken from the weak end of it:
+ * the trade asks a new site not to be as distinct as its *typical* member —
+ * the members already there are a set this same engine spread out, so their
+ * mutual distances are better than a fresh draw can generally manage, and a
+ * median bar would mean asking every new signup for a page unlike anything in a
+ * trade it is now joining. The bar is the trade's *weakest quarter* instead:
+ * "do not be among the most alike sites here". A candidate above it gets
+ * another direction; the fixed 0.45 stays as the floor, so a young trade still
+ * asks for genuinely different pages rather than merely "better than the one
+ * other plumber".
+ *
+ * Deterministic, and sampled: the median is taken over every `step`-th existing
+ * site, so the cost is bounded (32 × 500 comparisons) no matter how large the
+ * trade grows, and the same trade always asks for the same bar.
+ */
+export function tradeThreshold(
+  existing: readonly SiteProfile[],
+  {
+    sample = 32,
+    baseline = 0.45,
+    quantile = 0.75,
+  }: { sample?: number; baseline?: number; quantile?: number } = {},
+): number {
+  if (existing.length < 4) return baseline;
+  const step = Math.max(1, Math.floor(existing.length / sample));
+  const nearest: number[] = [];
+  for (let i = 0; i < existing.length && nearest.length < sample; i += step) {
+    let worst = 0;
+    for (let j = 0; j < existing.length; j++) {
+      if (i === j) continue;
+      const score = similarity(existing[i], existing[j]).overall;
+      if (score > worst) worst = score;
+    }
+    nearest.push(worst);
+  }
+  nearest.sort((a, b) => a - b);
+  const at = nearest[Math.min(nearest.length - 1, Math.floor(quantile * nearest.length))];
+  return Math.max(baseline, at);
+}
+
 /** The profile of a site as it exists in the database. */
 export function profileFromSite(site: {
   brandPrimary?: string;

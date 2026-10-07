@@ -1,8 +1,12 @@
 // WebSetu seed — plans, templates, coupons, demo customers with full published sites
 import { PrismaClient } from "@prisma/client";
+import { PrismaLibSQL } from "@prisma/adapter-libsql";
 import { randomBytes, scryptSync } from "crypto";
 
-const db = new PrismaClient();
+// Sandbox-only: the local client runs with a driver adapter (see src/lib/db.ts).
+const db = new PrismaClient({
+  adapter: new PrismaLibSQL({ url: process.env.DATABASE_URL ?? "file:../db/custom.db" }) as never,
+});
 
 function hash(password: string): string {
   // mirrors src/lib/auth.ts (scrypt) — keep in sync

@@ -2,6 +2,7 @@ import { db } from "@/lib/db";
 import type { AnalyticsSummary } from "@/lib/types";
 import { ok, requireBusiness, requireUser, route } from "@/lib/api";
 import { dayKey, sweepAnalytics } from "@/lib/analytics";
+import { distinctVisits } from "@/lib/visits";
 
 /**
  * GET /api/analytics/summary — aggregated stats for the tenant dashboard.
@@ -31,7 +32,7 @@ export const GET = route(async (req: Request) => {
   const sinceDay = dayKey(since);
   const chartSinceDay = dayKey(chartSince);
 
-  const [rawByType, rolledByType, leadCount, rawVisits, rolledDaily] = await Promise.all([
+  const [rawByType, rolledByType, leadCount, orderCount, orderValue, rawVisits, rolledDaily] = await Promise.all([
     db.analyticsEvent.groupBy({
       by: ["type"],
       where: { businessId: business.id, createdAt: { gte: since } },
@@ -43,11 +44,19 @@ export const GET = route(async (req: Request) => {
       _sum: { count: true, uniquePaths: true },
     }),
     db.lead.count({ where: { businessId: business.id, createdAt: { gte: since } } }),
+    // The shop, counted the same window as everything else. Cancelled orders are
+    // excluded: a number an owner reads as "orders" must not include the ones
+    // that were called off.
+    db.order.count({ where: { businessId: business.id, createdAt: { gte: since }, status: { not: "CANCELLED" } } }),
+    db.order.aggregate({
+      where: { businessId: business.id, createdAt: { gte: since }, status: "DELIVERED" },
+      _sum: { total: true },
+    }),
     // Raw visits are fetched with their day and path so "unique" can be counted
     // the same way it always was: distinct (day, path) pairs.
     db.analyticsEvent.findMany({
       where: { businessId: business.id, type: "VISIT", createdAt: { gte: since } },
-      select: { path: true, createdAt: true },
+      select: { path: true, meta: true, type: true, createdAt: true },
       take: 50_000,
     }),
     db.analyticsDaily.findMany({
@@ -66,7 +75,12 @@ export const GET = route(async (req: Request) => {
     return raw + rolled;
   };
 
-  const uniqueRaw = new Set(rawVisits.map((v) => `${dayKey(v.createdAt)} ${v.path}`)).size;
+  // Unique used to mean "distinct (day, path)" — the best available before
+  // visits had ids. Once a site's pages carry visit ids, "unique" means what an
+  // owner reads it as: distinct visits. Rows from before (and the rollups) keep
+  // the old measure, so the number never silently drops.
+  const uniqueTracked = distinctVisits(rawVisits);
+  const uniqueRaw = uniqueTracked || new Set(rawVisits.map((v) => `${dayKey(v.createdAt)} ${v.path}`)).size;
   const uniqueRolled =
     rolledByType.find((r) => r.type === "VISIT")?._sum.uniquePaths ?? 0;
 
@@ -106,6 +120,9 @@ export const GET = route(async (req: Request) => {
     ctaWhatsapp: count("CTA_WHATSAPP"),
     ctaEmail: count("CTA_EMAIL"),
     formSubmits: count("FORM_SUBMIT"),
+    cartAdds: count("CART_ADD"),
+    orders: orderCount,
+    orderValue: Math.round((orderValue._sum.total ?? 0) * 100) / 100,
     daily,
   };
   return ok(summary);

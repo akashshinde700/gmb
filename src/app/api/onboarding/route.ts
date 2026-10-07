@@ -10,7 +10,7 @@ import { starterFaqs, starterPosts } from "@/lib/starter-content";
 import { fallbackServices, fillCopy, industryServices, isPresetCategory, resolveIndustry } from "@/lib/industries";
 import { fetchStockPhotos, searchesFor } from "@/lib/stock-images";
 import { candidateBlueprints, resolveColors, designSeed } from "@/lib/blueprint";
-import { bestCandidate, profileFromSite, uniquenessPercent, type SiteProfile } from "@/lib/uniqueness";
+import { bestCandidate, profileFromSite, tradeThreshold, uniquenessPercent, type SiteProfile } from "@/lib/uniqueness";
 import { checkSite } from "@/lib/site-quality";
 import { recordVersion } from "@/lib/site-history";
 import { posterUrl } from "@/lib/site-art";
@@ -180,14 +180,17 @@ export const POST = route(async (req: Request) => {
   // A brand-new site with no photos still needs a cover for link previews, the
   // dashboard card and the OG tags — its own generated poster, which is
   // different for every business and matches the chosen palette.
-  const finalCover = coverUrl || posterUrl(slug);
-  const aboutImage = stock[0]?.url;
+  const finalCover = coverUrl || posterUrl(slug, "wide", 0, { section: "cover" });
+  // Every image a generated page shows is its own drawing: the hero, the about
+  // block and each gallery tile carry a different picture of the same business,
+  // rather than one picture cropped four ways.
+  const aboutImage = stock[0]?.url ?? posterUrl(slug, "portrait", 0, { section: "about" });
   // Gallery: real photos first, then generated posters of this business so a
   // thin photo search never leaves the section empty or repeated.
   const galleryPhotos = [
     ...stock.slice(1),
     ...Array.from({ length: Math.max(0, 3 - stock.slice(1).length) }, (_, i) => ({
-      url: posterUrl(slug, "square", i + 1),
+      url: posterUrl(slug, "square", i + 1, { section: "gallery" }),
       alt: `${name} — ${category} in ${city || "India"}`.trim(),
     })),
   ];
@@ -204,6 +207,9 @@ export const POST = route(async (req: Request) => {
     business: {
       name, category, tagline, description, city, phone, whatsapp, email, address,
       establishedYear: str(body.establishedYear, 4),
+      // The slug is what makes every generated picture this business's own: the
+      // section artwork is addressed by it.
+      slug,
       brandPrimary: firstDraft.palette[0], brandSecondary: firstDraft.palette[1], brandAccent: firstDraft.palette[2],
       coverUrl, mapsUrl,
       state: str(body.state, 100),
@@ -287,7 +293,13 @@ export const POST = route(async (req: Request) => {
   const chosenKey = Number(body.concept);
   const chosen = Number.isInteger(chosenKey) && candidates[chosenKey] ? candidates[chosenKey] : null;
 
-  const picked = bestCandidate(candidates, profileOf, existingProfiles);
+  // "Too similar" is a moving bar: 0.45 in a young trade, this trade's own
+  // median once it is crowded enough that the closest of 500 neighbours is
+  // always closer than that. Without this a busy trade regenerates forever and
+  // every owner is shown a uniqueness number that only reflects how many
+  // businesses signed up before them.
+  const tradeBar = tradeThreshold(existingProfiles);
+  const picked = bestCandidate(candidates, profileOf, existingProfiles, tradeBar);
 
   // The winner is rebuilt properly — its own colours, section order and copy.
   const blueprint = chosen ?? picked.chosen;
@@ -301,6 +313,7 @@ export const POST = route(async (req: Request) => {
     business: {
       name, category, tagline, description, city, phone, whatsapp, email, address,
       establishedYear: str(body.establishedYear, 4),
+      slug,
       brandPrimary, brandSecondary, brandAccent, coverUrl, mapsUrl,
       state: str(body.state, 100),
       pincode: str(body.pincode, 10),

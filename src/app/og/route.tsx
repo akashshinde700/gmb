@@ -1,5 +1,7 @@
+import { headers } from "next/headers";
 import { ImageResponse } from "next/og";
 import { SITE_DESCRIPTION } from "@/lib/marketing-flags";
+import { brandForHost } from "@/lib/reseller";
 
 /**
  * GET /og — the link preview card for WebSetu's own pages.
@@ -14,13 +16,19 @@ import { SITE_DESCRIPTION } from "@/lib/marketing-flags";
  * and nobody has to keep a 1200x630 PNG in sync by hand.
  */
 export const runtime = "nodejs";
-// The card only changes when this file does, so let it be cached hard.
-export const revalidate = 86400;
+// This used to be cached hard, because the card only changed when this file
+// did. It is per-host now — a reseller's link preview carries the reseller's
+// name, never the platform's — so it is rendered per request instead.
 
 const WIDTH = 1200;
 const HEIGHT = 630;
 
 export async function GET() {
+  const brand = await brandForHost((await headers()).get("host"));
+  const name = brand.whiteLabel ? brand.name : "WebSetu";
+  const accent = brand.whiteLabel && brand.primaryColor ? brand.primaryColor : "#059669";
+  const site = brand.whiteLabel ? brand.hostname : "websetu.instantqr.tech";
+
   return new ImageResponse(
     (
       <div
@@ -31,7 +39,7 @@ export async function GET() {
           flexDirection: "column",
           justifyContent: "space-between",
           padding: 72,
-          background: "linear-gradient(135deg, #064e3b 0%, #059669 100%)",
+          background: `linear-gradient(135deg, #0b1220 0%, ${accent} 100%)`,
           color: "white",
           fontFamily: "sans-serif",
         }}
@@ -43,7 +51,7 @@ export async function GET() {
               height: 72,
               borderRadius: 20,
               background: "white",
-              color: "#059669",
+              color: accent,
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -51,9 +59,9 @@ export async function GET() {
               fontWeight: 700,
             }}
           >
-            W
+            {name.slice(0, 1).toUpperCase()}
           </div>
-          <div style={{ fontSize: 40, fontWeight: 700, letterSpacing: -0.5 }}>WebSetu</div>
+          <div style={{ fontSize: 40, fontWeight: 700, letterSpacing: -0.5 }}>{name}</div>
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
@@ -61,12 +69,14 @@ export async function GET() {
             Your Business, Online in 15 Minutes
           </div>
           <div style={{ fontSize: 28, lineHeight: 1.4, color: "rgba(255,255,255,0.85)" }}>
-            {SITE_DESCRIPTION.slice(0, 140)}
+            {brand.whiteLabel
+              ? `${name} builds and runs websites for local businesses.`
+              : SITE_DESCRIPTION.slice(0, 140)}
           </div>
         </div>
 
         <div style={{ fontSize: 24, color: "rgba(255,255,255,0.75)" }}>
-          websetu.instantqr.tech
+          {site}
         </div>
       </div>
     ),

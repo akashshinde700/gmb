@@ -1,5 +1,7 @@
 // WebSetu — Shared helpers for UPI payments + YouTube embeds on tenant sites.
 
+import { nextVisit } from "@/lib/visits";
+
 /** Build a UPI deep link that any Indian payments app (GPay/PhonePe/Paytm) understands. */
 export function upiDeepLink(upiId: string, payeeName: string, note = "Payment"): string {
   const params = new URLSearchParams({
@@ -98,6 +100,39 @@ export function tenantBaseUrl(slug: string, primaryHost?: string | null): string
  * clears their storage simply joins whichever variant the hash gives them next
  * time.
  */
+/**
+ * This visit's id, and the visitor it belongs to.
+ *
+ * A visit lasts half an hour past the last page — the idle window analytics has
+ * used for years — so a returning visitor is a new visit with a new id, while
+ * everything a person does in one sitting (the call tap, the WhatsApp tap, the
+ * enquiry form) carries the same id. That is what lets the owner read a lead as
+ * a journey: "looked at the gallery, tapped WhatsApp, then filled the form".
+ *
+ * Stored next to the visitor id in the same local storage, for the same reason:
+ * it is the visitor's own browser keeping its own note, not a tracking cookie
+ * the platform plants.
+ */
+export function visitMeta(): { visitor: string; visit: string } {
+  const visitor = visitorId();
+  if (typeof window === "undefined") return { visitor, visit: "" };
+  try {
+    const raw = window.localStorage.getItem("ws_visit");
+    const parsed = raw ? (JSON.parse(raw) as { id?: unknown; at?: unknown }) : null;
+    const stored =
+      parsed && typeof parsed.id === "string" && typeof parsed.at === "number"
+        ? { id: parsed.id, at: parsed.at }
+        : null;
+    const fresh = `s${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`;
+    const next = nextVisit(stored, Date.now(), fresh);
+    window.localStorage.setItem("ws_visit", JSON.stringify({ id: next.id, at: next.at }));
+    return { visitor, visit: next.id };
+  } catch {
+    // Storage disabled: the page still works, the visit is simply not joined up.
+    return { visitor, visit: "" };
+  }
+}
+
 export function visitorId(): string {
   if (typeof window === "undefined") return "";
   try {

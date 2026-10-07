@@ -1,9 +1,11 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import AuthView from "@/components/views/auth-view";
 import RouteSync from "@/components/route-sync";
 import { currentUser } from "@/lib/guard";
 import { readPlatformTheme } from "@/lib/platform-theme-server";
+import { brandForHost } from "@/lib/reseller";
 
 /**
  * Sign in / register.
@@ -16,7 +18,7 @@ import { readPlatformTheme } from "@/lib/platform-theme-server";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "Sign in — WebSetu",
+  title: "Sign in",
   robots: { index: false, follow: false },
 };
 
@@ -38,10 +40,13 @@ export default async function LoginPage({ searchParams }: Params) {
     }
   }
 
+  const host = (await headers()).get("host");
+  const [platformTheme, brand] = await Promise.all([readPlatformTheme(host), brandForHost(host)]);
+
   return (
     <>
       <RouteSync view="auth" />
-      <AuthView platformTheme={await readPlatformTheme()} />
+      <AuthView platformTheme={platformTheme} brand={brand} />
     </>
   );
 }

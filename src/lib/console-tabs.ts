@@ -9,8 +9,8 @@
 
 export const DASHBOARD_TABS = [
   "overview", "builder", "business", "services", "products", "gallery",
-  "testimonials", "faqs", "blog", "leads", "seo", "analytics",
-  "subscription", "settings",
+  "testimonials", "faqs", "blog", "leads", "orders", "seo", "analytics",
+  "hosting", "subscription", "settings",
 ] as const;
 
 export const ADMIN_TABS = [
@@ -41,8 +41,10 @@ const TITLES: Record<string, string> = {
   faqs: "FAQs",
   blog: "Blog",
   leads: "Leads",
+  orders: "Orders",
   seo: "SEO",
   analytics: "Analytics",
+  hosting: "Hosting & Email",
   subscription: "Subscription",
   settings: "Settings",
   customers: "Customers",

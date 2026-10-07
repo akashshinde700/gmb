@@ -8,6 +8,8 @@ import { db } from "@/lib/db";
 import { serializeBusiness, serializeWebsite } from "@/lib/serialize";
 import type { SitePayload } from "@/lib/types";
 import { subscriptionServesSite } from "@/lib/expiry";
+import { brandForBusiness } from "@/lib/reseller";
+import { readCommerce } from "@/lib/commerce";
 
 // Re-exported so the existing server-side callers keep their import path; the
 // definition moved to site-utils, which client components can also import.
@@ -63,6 +65,10 @@ export async function loadPublishedSite(slug: string): Promise<SitePayload | nul
       cover: p.cover, publishedAt: p.publishedAt?.toISOString() ?? null,
     })),
     primaryDomain: business.domains[0]?.hostname ?? null,
+    // The storefront needs the shop's rules before checkout: the delivery charge
+    // has to be visible on the cart bar, not discovered at the last step.
+    commerce: readCommerce(business.commerceJson),
+    credit: (await brandForBusiness(business.resellerId)).name,
     subscriptionStatus: business.subscription?.status ?? "NONE",
     trialMode: business.subscription?.status === "TRIALING",
     published: true,

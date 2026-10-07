@@ -84,7 +84,11 @@ function PasswordField({
 
 /** @param serverTheme the platform palette, resolved on the server — see the
  *  note in landing-view: nothing on a signed-out page hydrates the store. */
-export default function AuthView({ platformTheme: serverTheme }: { platformTheme?: PlatformTheme }) {
+export default function AuthView({ platformTheme: serverTheme, brand }: {
+  platformTheme?: PlatformTheme;
+  /** A reseller's brand when this page is served on their domain. */
+  brand?: { name: string; logoUrl: string; whiteLabel: boolean };
+}) {
   const router = useRouter();
   const authMode = useApp((s) => s.authMode);
   const storeTheme = useApp((s) => s.platformTheme);
@@ -255,7 +259,7 @@ export default function AuthView({ platformTheme: serverTheme }: { platformTheme
           <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-card/15 text-xl font-bold backdrop-blur">
             W
           </span>
-          <span className="text-xl font-bold tracking-tight">WebSetu</span>
+          <span className="text-xl font-bold tracking-tight">{brand?.name ?? "WebSetu"}</span>
         </div>
 
         <div className="relative max-w-md">
@@ -305,7 +309,7 @@ export default function AuthView({ platformTheme: serverTheme }: { platformTheme
               <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500 to-teal-700 text-lg font-bold text-white">
                 W
               </span>
-              <span className="text-lg font-bold tracking-tight text-foreground">WebSetu</span>
+              <span className="text-lg font-bold tracking-tight text-foreground">{brand?.name ?? "WebSetu"}</span>
             </div>
 
             {resetToken ? (
@@ -474,7 +478,7 @@ export default function AuthView({ platformTheme: serverTheme }: { platformTheme
             <DialogTitle>{legal === "terms" ? "Terms of Service" : "Privacy Policy"}</DialogTitle>
             <DialogDescription>
               {legal === "terms"
-                ? "The short version of what you agree to when you use WebSetu."
+                ? `The short version of what you agree to when you use ${brand?.name ?? "WebSetu"}.`
                 : "What we collect, why we collect it, and what we never do with it."}
             </DialogDescription>
           </DialogHeader>

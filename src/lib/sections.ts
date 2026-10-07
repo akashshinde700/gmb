@@ -7,6 +7,7 @@ import {
 } from "@/lib/variants";
 import type { SiteBlueprint } from "@/lib/blueprint";
 import { motionLabel, type DesignDna } from "@/lib/design-dna";
+import { posterUrl } from "@/lib/site-art";
 
 export const SECTION_LIBRARY: {
   type: SectionType; name: string; description: string; icon: string;
@@ -54,6 +55,12 @@ interface BuildInput {
     brandPrimary: string; brandSecondary: string; brandAccent: string; coverUrl: string; mapsUrl: string;
     upiId?: string; paymentQrUrl?: string;
     state?: string; pincode?: string;
+    /**
+     * The business's slug. Only used to address its generated artwork — every
+     * picture a new page shows is drawn for this business, so the section images
+     * need its name before it has an id.
+     */
+    slug?: string;
   };
   ai?: AiSiteContent | null;
   /** Preset key chosen for an unlisted trade; wins over the category match. */
@@ -220,6 +227,11 @@ export function generateSite({ business, ai, industry, aboutImage, heroImage, bl
       id: sid(), type: "cta", visible: true,
       content: {
         title: fill(preset.ctaTitle),
+        // The band carries its own generated picture — a different drawing of
+        // the business than the hero, the about block and each gallery tile.
+        // It is decorative (a low-opacity background) and the owner can take it
+        // out from the section editor like any other image.
+        image: business.slug ? posterUrl(business.slug, "wide", 0, { section: "cta" }) : undefined,
         subtitle: "Get in touch today — call, WhatsApp or send an enquiry. We respond fast.",
         // The band is the last thing before the footer, so it repeats the goal
         // rather than a generic "Call Now" that ignores what the business sells.
@@ -300,8 +312,15 @@ export function generateSite({ business, ai, industry, aboutImage, heroImage, bl
     business.city, `${business.category} in ${business.city}`, business.state,
   ].filter(Boolean).join(", ").toLowerCase();
 
+  // What this business's page leaves off, before anything is arranged: one
+  // electrician runs a blog and a FAQ, the next runs neither, and the two pages
+  // then differ in what is on them rather than only in what order.
+  const kept = blueprint?.omit?.length
+    ? sections.filter((section) => !blueprint.omit.includes(section.type))
+    : sections;
+
   return {
-    sections: arrangeSections(withVariant(sections), blueprint?.sectionOrder ?? pick(draw("order"), SECTION_ORDERS)),
+    sections: arrangeSections(withVariant(kept), blueprint?.sectionOrder ?? pick(draw("order"), SECTION_ORDERS)),
     theme,
     seoTitle,
     seoDescription,

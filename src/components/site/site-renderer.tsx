@@ -8,10 +8,14 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { openStatus } from "@/lib/hours";
-import { jsonLdScript, siteOrigin, usableTagline, visitorId } from "@/lib/site-utils";
+import { jsonLdScript, siteOrigin, usableTagline, visitMeta, visitorId } from "@/lib/site-utils";
 import { applyVariant } from "@/lib/experiments";
 import { schemaTypeFor } from "@/lib/schema-types";
 import { resolveIndustry, type SceneKind } from "@/lib/industries";
+import { readSectionStyle, styleAttributes } from "@/lib/section-style";
+import { typeLabel } from "@/lib/editor";
+import { readCommerce } from "@/lib/commerce";
+import { CartBar, CheckoutSheet, useCart } from "@/components/site/cart";
 import SiteReveal from "@/components/site/site-reveal";
 import { seedFrom } from "@/lib/variants";
 import SiteImage from "@/components/site/site-image";
@@ -287,9 +291,21 @@ interface SiteRendererProps {
   payload: SitePayload;
   mode?: "live" | "preview";
   device?: Device;
+  /**
+   * The freeform editor renders the very same page it will publish, with each
+   * section outlined and clickable. Nothing about the markup changes except the
+   * outline and the link behaviour — editing what you see is only honest if what
+   * you see is what ships.
+   */
+  editing?: boolean;
+  /** The section the inspector is currently editing. */
+  selectedId?: string | null;
+  onSelect?: (id: string | null) => void;
 }
 
-export default function SiteRenderer({ payload, mode = "live", device = "desktop" }: SiteRendererProps) {
+export default function SiteRenderer({
+  payload, mode = "live", device = "desktop", editing = false, selectedId = null, onSelect,
+}: SiteRendererProps) {
   const { business, website, services, products, gallery, testimonials, faqs, blogPosts } = payload;
   const baseSections = useMemo(
     () =>
@@ -316,13 +332,20 @@ export default function SiteRenderer({ payload, mode = "live", device = "desktop
   // that go with it.
   const [ab, setAb] = useState<{ key: string; variant: "a" | "b"; sections: SiteSection[] } | null>(null);
   /**
-   * The test this visitor is in, attached to every event they generate — the
-   * visit, the call tap, the enquiry. Without it the owner would see two
-   * headlines in a dashboard and no way to tell which one earned the work.
+   * What every event from this page carries: the A/B test the visitor is in
+   * (without it the owner would see two headlines in the dashboard and no way
+   * to tell which one earned the work) and which visit it happened in (without
+   * it the dashboard can count actions but cannot say that one visit did four
+   * of them, or that the enquiry came from the visit that tapped WhatsApp).
    */
   const abMeta = useCallback(
-    (): { experiment?: string; variant?: string } =>
-      experiment && ab ? { experiment: String(experiment.key), variant: ab.variant } : {},
+    (): { experiment?: string; variant?: string; visitor?: string; visit?: string } => {
+      const ids = visitMeta();
+      return {
+        ...(experiment && ab ? { experiment: String(experiment.key), variant: ab.variant } : {}),
+        ...(ids.visit ? { visitor: ids.visitor, visit: ids.visit } : {}),
+      };
+    },
     [experiment, ab],
   );
   // Until the visitor's variant is known, the page renders exactly what the
@@ -377,6 +400,12 @@ export default function SiteRenderer({ payload, mode = "live", device = "desktop
       "--brand-border": "#e7e5e4",
       "--brand-muted": "#78716c",
       "--brand-body": "#44403c",
+      // Section headings read from their own tokens so a section the owner has
+      // painted dark can flip just the heading colours — the card copy inside it
+      // keeps using --brand-secondary / --brand-muted and stays readable on the
+      // white cards it actually sits on.
+      "--brand-heading": business.brandSecondary,
+      "--brand-subheading": "#78716c",
       // Design DNA
       "--brand-shadow": shadow,
       "--brand-card-shadow": website.theme?.cardStyle === "flat" ? "none" : shadow,
@@ -413,7 +442,13 @@ export default function SiteRenderer({ payload, mode = "live", device = "desktop
       return null; // simulate success in preview
     }
     try {
-      await api.post("/api/leads", { slug: business.slug, ...data, source: "FORM" });
+      // The visit the enquiry came from travels with it, so the owner can see
+      // what this person looked at before writing in.
+      const ids = visitMeta();
+      await api.post("/api/leads", {
+        slug: business.slug, ...data, source: "FORM",
+        ...(ids.visit ? { visitor: ids.visitor, visit: ids.visit } : {}),
+      });
       return null;
     } catch (e) {
       return e instanceof Error ? e.message : "Could not submit enquiry";
@@ -421,6 +456,19 @@ export default function SiteRenderer({ payload, mode = "live", device = "desktop
   }
 
   const waNumber = toWaNumber(business.whatsapp || business.phone || "");
+  /**
+   * The shop, when this business has one. `readCommerce` is the same reader the
+   * API validates against, so the delivery charge shown here is the charge the
+   * server will apply — an owner cannot configure a rule the cart renders
+   * differently, because there is exactly one implementation of that rule.
+   */
+  const commerce = useMemo(() => payload.commerce ?? readCommerce(undefined), [payload.commerce]);
+  const cart = useCart(business.slug, products, commerce);
+  const [cartOpen, setCartOpen] = useState(false);
+  const inCart = useMemo(
+    () => Object.fromEntries(cart.lines.map((line) => [line.productId, line.qty])),
+    [cart.lines],
+  );
   const containerWidth = website.theme?.containerWidth === "wide" ? "max-w-7xl" : "max-w-6xl";
   const hasPayment = Boolean(business.upiId || business.paymentQrUrl);
   /**
@@ -632,7 +680,13 @@ export default function SiteRenderer({ payload, mode = "live", device = "desktop
           gets a plain container while the live site keeps the landmark. */}
       <SiteReveal />
       <SectionsRoot id="top">
-        {sections.map((section) => renderSection(section, {
+        {sections.map((section) => {
+          // The owner's own style for this section, if they set one. It travels
+          // with the published page, so the wrapper is not an editing artifact:
+          // it is where the background, the padding and the column count live.
+          const style = readSectionStyle(section);
+          const attrs = styleAttributes(style);
+          const body = renderSection(section, {
           business, services, products, gallery, testimonials, faqs, track, submitLead,
           blogPosts, businessSlug: business.slug,
           heroStyle: website.theme?.heroStyle || "gradient",
@@ -649,8 +703,81 @@ export default function SiteRenderer({ payload, mode = "live", device = "desktop
           },
           enquirySubject,
           hoursLabel: hours.detail,
-        }))}
+          onAddToCart: commerce.enabled
+            ? (productId: string) => {
+                cart.add(productId);
+                track("CART_ADD");
+                setCartOpen(true);
+              }
+            : undefined,
+          inCart,
+          });
+          if (!editing && Object.keys(attrs).length === 0) return body;
+          const selected = editing && selectedId === section.id;
+          return (
+            <div
+              key={section.id}
+              data-ws-section={editing ? section.id : undefined}
+              {...attrs}
+              className={
+                editing
+                  ? `relative outline-dashed outline-1 transition-[outline-color] ${
+                      selected
+                        ? "outline-2 outline-emerald-500"
+                        : "outline-zinc-400/50 hover:outline-emerald-400"
+                    }`
+                  : undefined
+              }
+              onClick={
+                editing
+                  ? (e) => {
+                      e.preventDefault();
+                      onSelect?.(section.id);
+                    }
+                  : undefined
+              }
+              // In the editor a click is a selection, never a navigation — a link
+              // that opened WhatsApp mid-edit would be a trap.
+              onClickCapture={
+                editing
+                  ? (e) => {
+                      const anchor = (e.target as HTMLElement).closest("a");
+                      if (anchor) e.preventDefault();
+                    }
+                  : undefined
+              }
+            >
+              {body}
+              {editing && (
+                <span
+                  className={`pointer-events-none absolute left-2 top-2 z-20 rounded-md px-2 py-0.5 text-[11px] font-semibold shadow-sm ${
+                    selected ? "bg-emerald-600 text-white" : "bg-white/90 text-zinc-600"
+                  }`}
+                >
+                  {typeLabel(section.type)}
+                </span>
+              )}
+            </div>
+          );
+        })}
       </SectionsRoot>
+
+      {commerce.enabled && (
+        <>
+          <CartBar cart={cart} onOpen={() => setCartOpen(true)} onTrack={`/s/${business.slug}/order`} />
+          <CheckoutSheet
+            open={cartOpen}
+            onClose={() => setCartOpen(false)}
+            cart={cart}
+            business={business}
+            products={products}
+            settings={commerce}
+            slug={business.slug}
+            preview={mode === "preview"}
+            onPlaced={() => setCartOpen(true)}
+          />
+        </>
+      )}
 
       {/* FOOTER */}
       <footer className="bg-[var(--brand-secondary)] text-white">
@@ -697,6 +824,15 @@ export default function SiteRenderer({ payload, mode = "live", device = "desktop
                     <a href={l.href} onClick={(e) => jump(e, l.href)} className="hover:text-white">{l.label}</a>
                   </li>
                 ))}
+                {/* Where a customer who has already ordered finds their order
+                    again. The cart bar only exists while the cart has items, so
+                    without this the tracking page would be reachable exactly
+                    once - on the confirmation screen of the order itself. */}
+                {commerce.enabled && (
+                  <li>
+                    <a href={`/s/${business.slug}/order`} className="hover:text-white">Track your order</a>
+                  </li>
+                )}
               </ul>
             </div>
             <div>
@@ -719,7 +855,7 @@ export default function SiteRenderer({ payload, mode = "live", device = "desktop
             <p>© {new Date().getFullYear()} {business.name}. All rights reserved.</p>
             <p className="inline-flex items-center gap-1.5">
               {payload.trialMode && <><Moon className="h-3.5 w-3.5" /> Trial mode • </>}
-              Built with <span className="font-semibold text-white/80">WebSetu</span>
+              Built with <span className="font-semibold text-white/80">{payload.credit ?? "WebSetu"}</span>
             </p>
           </div>
         </div>
@@ -845,6 +981,9 @@ function renderSection(
     faqs: SitePayload["faqs"];
     blogPosts: SitePayload["blogPosts"];
     businessSlug: string;
+    /** Present only when the shop takes orders online. */
+    onAddToCart?: (productId: string) => void;
+    inCart?: Record<string, number>;
     track: (type: string) => void;
     submitLead: (data: {
       name: string; phone: string; email: string; message: string; website: string; serviceName?: string;
@@ -875,8 +1014,21 @@ function renderSection(
       );
     case "stats": return <Stats key={section.id} section={section} />;
     case "about": return <About key={section.id} section={section} layout={ctx.layout} />;
-    case "services": return <Services key={section.id} section={section} services={ctx.services} onCta={ctx.track} onEnquire={ctx.onEnquire} layout={ctx.layout} />;
-    case "products": return <Products key={section.id} section={section} products={ctx.products} onCta={ctx.track} onEnquire={ctx.onEnquire} />;
+    case "services": return <Services key={section.id} section={section} services={ctx.services} onCta={ctx.track} onEnquire={ctx.onEnquire} layout={ctx.layout} business={ctx.business} />;
+    case "products":
+      return (
+        <Products
+          key={section.id}
+          section={section}
+          products={ctx.products}
+          onCta={ctx.track}
+          onEnquire={ctx.onEnquire}
+          business={ctx.business}
+          // No shop, no button: `undefined` is how the section knows.
+          onAdd={ctx.onAddToCart}
+          inCart={ctx.inCart}
+        />
+      );
     case "whyUs": return <WhyUs key={section.id} section={section} />;
     case "gallery": return <Gallery key={section.id} section={section} gallery={ctx.gallery} />;
     case "testimonials": return <Testimonials key={section.id} section={section} testimonials={ctx.testimonials} />;
