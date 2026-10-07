@@ -9,6 +9,7 @@ import {
 import QRCode from "react-qr-code";
 import type { Business, Service, Product, SiteSection, Testimonial, GalleryItem } from "@/lib/types";
 import { upiDeepLink, youtubeId } from "@/lib/site-utils";
+import { toWaNumber } from "@/lib/phone-format";
 import SiteImage from "@/components/site/site-image";
 import HeroScene from "@/components/site/hero-scene";
 import { SITE_ICONS } from "@/components/site/industry-icons";
@@ -666,7 +667,7 @@ function FaqSection({ section }: { section: SiteSection }) {
 // ---------- CTA BANNER ----------
 function CtaBanner({ section, business, onCta }: { section: SiteSection; business: Business; onCta: (t: string) => void }) {
   const c = section.content as { title?: string; subtitle?: string; primary?: string; secondary?: string };
-  const waNumber = (business.whatsapp || business.phone || "").replace(/[^\d]/g, "");
+  const waNumber = toWaNumber(business.whatsapp || business.phone || "");
   return (
     <section className="py-16 md:py-20">
       <div className="mx-auto max-w-6xl px-4 sm:px-6">
@@ -856,7 +857,7 @@ function Contact({ section, business, onCta, submitLead, subject }: {
     setDone(true);
   }
 
-  const waNumber = (business.whatsapp || business.phone || "").replace(/[^\d]/g, "");
+  const waNumber = toWaNumber(business.whatsapp || business.phone || "");
   const mapsHref = business.mapsUrl || c.mapUrl || `https://maps.google.com/?q=${encodeURIComponent(`${business.address} ${business.city} ${business.pincode}`)}`;
   // The embed needs a place to point at; with no address there is nothing to show.
   const mapQuery = [business.name, business.address, business.city, business.pincode]

@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { mailConfigured } from "@/lib/mailer";
 import { smsConfigured, smsQuota } from "@/lib/sms";
+import { FREEMODELS_UPSTREAM_URL } from "@/lib/freemodels";
 
 /**
  * GET /api/health — liveness + dependency probe.
@@ -30,6 +31,19 @@ export async function GET() {
   const sms = smsConfigured();
   const smsRemaining = sms && database ? (await smsQuota().catch(() => null))?.remaining ?? null : null;
 
+  let freeModels = false;
+  try {
+    const response = await fetch(FREEMODELS_UPSTREAM_URL, {
+      method: "HEAD",
+      cache: "no-store",
+      redirect: "error",
+      signal: AbortSignal.timeout(4_000),
+    });
+    freeModels = response.status < 500;
+  } catch (e) {
+    console.error("[health] FreeModels upstream probe failed:", e);
+  }
+
   const body = {
     ok: database,
     checks: {
@@ -41,6 +55,7 @@ export async function GET() {
       mail: mailConfigured(),
       sms,
       smsRemaining,
+      freeModels,
     },
     uptimeSeconds: Math.round(process.uptime()),
     tookMs: Date.now() - startedAt,

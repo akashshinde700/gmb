@@ -29,3 +29,16 @@ export function toE164(raw: string, defaultCountry = "91"): string {
   if (digits.length >= 11 && digits.length <= 15) return `+${digits}`;
   return "";
 }
+
+/**
+ * The number as wa.me wants it: country code, no "+", no spaces.
+ *
+ * Stripping non-digits is not enough. A shopkeeper types "83294 23865" and
+ * wa.me/8329423865 makes WhatsApp answer "Couldn't look up phone number …
+ * because it's either missing a country code or has the wrong one" — the
+ * visitor never reaches the shop. Returns "" when the number cannot be read,
+ * so the button is hidden rather than leading to that dialog.
+ */
+export function toWaNumber(raw: string): string {
+  return toE164(raw).replace(/^\+/, "");
+}

@@ -122,6 +122,13 @@ export function openStatus(hours: unknown, now: Date = new Date()): OpenStatus {
   }
 
   if (today && today !== "closed") {
+    // A place that never shuts has no closing time to announce. Formatting the
+    // end of the day gave "closes at 12 AM", which reads as "shuts at midnight"
+    // to anyone glancing at it — the opposite of what the owner set.
+    const allDay = today.opens === 0 && today.closes >= 24 * 60;
+    if (allDay) {
+      return { state: "open", label: "Open 24 hours", detail: "Open 24 hours, every day" };
+    }
     if (minutesNow >= today.opens && minutesNow < today.closes) {
       const closingSoon = today.closes - minutesNow <= 60;
       return {

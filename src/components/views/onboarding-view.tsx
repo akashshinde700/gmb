@@ -9,8 +9,8 @@ import { useUnsavedChanges } from "@/hooks/use-unsaved-changes";
 import { useRouter } from "next/navigation";
 import { TRIAL_LABEL } from "@/lib/trial";
 import {
-  AlertCircle, ArrowLeft, ArrowRight, Building2, Check, Globe, Loader2, LogOut, MapPin, Phone,
-  Rocket, Search,
+  AlertCircle, ArrowLeft, ArrowRight, Briefcase, Building2, Check, Globe, Loader2, LogOut, MapPin,
+  Phone, Plus, Rocket, Search, X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,8 +34,8 @@ import type { BusinessWithMeta } from "@/store/app-store";
 
 // v2: the wizard shrank from 7 steps to 3, so older drafts are not restored.
 const DRAFT_KEY = "websetu_onboarding_draft_v2";
-const TOTAL_STEPS = 3;
-const STEP_LABELS = ["Business", "Contact", "Create"];
+const TOTAL_STEPS = 4;
+const STEP_LABELS = ["Business", "Services", "Contact", "Create"];
 
 const CATEGORIES = [
   "Manufacturer", "Distributor", "Wholesaler", "Retailer", "Trading",
@@ -182,6 +182,7 @@ export default function OnboardingView() {
   const [shaking, setShaking] = useState(false);
   const [catSearch, setCatSearch] = useState("");
   const [industryLoading, setIndustryLoading] = useState(false);
+  const [svcName, setSvcName] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState<BusinessWithMeta | null>(null);
 
@@ -229,7 +230,10 @@ export default function OnboardingView() {
       if (form.name.trim().length < 2) return "Please enter your business name.";
       if (!finalCategory) return "Please choose a business category.";
     }
-    if (n === 2) {
+    if (n === 2 && form.services.length === 0) {
+      return "Add at least one service — it is what your website is built around.";
+    }
+    if (n === 3) {
       if (!form.phone.trim()) return "Phone number is required.";
       if (!form.city.trim()) return "City is required.";
       if (form.address.trim().length < 5)
@@ -310,11 +314,35 @@ export default function OnboardingView() {
     setForm((f) => ({ ...f, [key]: value }));
   }
 
+  function addService(name: string) {
+    const n = name.trim();
+    if (!n) return;
+    if (form.services.some((s) => s.name.toLowerCase() === n.toLowerCase())) {
+      toast({ title: "Already on the list", description: `"${n}" is already there.` });
+      return;
+    }
+    setForm((f) => ({
+      ...f,
+      services: [...f.services, { id: `own_${Date.now().toString(36)}`, name: n, description: "" }],
+    }));
+  }
+
+  function updateService(id: string, field: "name" | "description", value: string) {
+    setForm((f) => ({
+      ...f,
+      services: f.services.map((s) => (s.id === id ? { ...s, [field]: value } : s)),
+    }));
+  }
+
+  function removeService(id: string) {
+    setForm((f) => ({ ...f, services: f.services.filter((s) => s.id !== id) }));
+  }
+
   // ---- final submit -------------------------------------------------------
 
   async function submitOnboarding() {
     if (submitting) return;
-    const msg = validateStep(1) || validateStep(2);
+    const msg = validateStep(1) || validateStep(2) || validateStep(3);
     if (msg) {
       fail(msg);
       return;
@@ -660,17 +688,18 @@ export default function OnboardingView() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="biz-desc">Short description</Label>
+                  <Label htmlFor="biz-desc">Tell us about your business</Label>
                   <Textarea
                     id="biz-desc"
-                    rows={3}
-                    placeholder="What do you do? What makes you special?"
+                    rows={4}
+                    placeholder="What do you sell or do? Who are your customers? What makes you different? e.g. We sell gold and diamond bridal jewellery, with in-house designers and BIS-hallmarked pieces."
                     value={form.description}
                     onChange={(e) => setField("description", e.target.value)}
                     className="rounded-xl"
                   />
                   <p className="text-xs text-muted-foreground">
-                    Optional — leave it blank and we will write it for you.
+                    The more you write here, the better your website text and photos will match your
+                    business. You can edit everything later.
                   </p>
                 </div>
 
@@ -691,8 +720,92 @@ export default function OnboardingView() {
               </div>
             )}
 
-            {/* ============================ STEP 2 — CONTACT */}
+            {/* ============================ STEP 2 — SERVICES */}
             {step === 2 && (
+              <div className="space-y-6">
+                <StepHeader
+                  icon={<Briefcase className="h-5 w-5 text-emerald-600" aria-hidden="true" />}
+                  title="What do you offer?"
+                  sub="We have filled these in for your trade — change them to match what you actually sell."
+                />
+
+                {industryLoading && (
+                  <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800" role="status">
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                    Writing services for {finalCategory || "your business"}…
+                  </div>
+                )}
+
+                {form.services.length > 0 && (
+                  <ul className="space-y-2">
+                    {form.services.map((sv) => (
+                      <li key={sv.id} className="rounded-xl border border-border bg-card p-3">
+                        <div className="flex items-start gap-2">
+                          <Input
+                            aria-label="Service name"
+                            value={sv.name}
+                            onChange={(e) => updateService(sv.id, "name", e.target.value)}
+                            className="rounded-lg font-medium"
+                          />
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            aria-label={`Remove ${sv.name}`}
+                            onClick={() => removeService(sv.id)}
+                            className="shrink-0 text-red-600 hover:bg-red-50"
+                          >
+                            <X className="h-4 w-4" aria-hidden="true" />
+                          </Button>
+                        </div>
+                        <Input
+                          aria-label="Short description"
+                          placeholder="One line about this (optional)"
+                          value={sv.description}
+                          onChange={(e) => updateService(sv.id, "description", e.target.value)}
+                          className="mt-2 rounded-lg text-sm"
+                        />
+                      </li>
+                    ))}
+                  </ul>
+                )}
+
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <Input
+                    placeholder="Add another — e.g. Bridal Collection"
+                    value={svcName}
+                    onChange={(e) => setSvcName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        addService(svcName);
+                        setSvcName("");
+                      }
+                    }}
+                    className="rounded-xl"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="rounded-xl"
+                    onClick={() => {
+                      addService(svcName);
+                      setSvcName("");
+                    }}
+                  >
+                    <Plus className="h-4 w-4" aria-hidden="true" /> Add
+                  </Button>
+                </div>
+
+                <p className="text-xs text-muted-foreground">
+                  These become the Services section on your website, and they shape the rest of the
+                  text too. Leave them as they are if they already fit.
+                </p>
+              </div>
+            )}
+
+            {/* ============================ STEP 3 — CONTACT */}
+            {step === 3 && (
               <div className="space-y-6">
                 <StepHeader
                   icon={<Phone className="h-5 w-5 text-emerald-600" aria-hidden="true" />}
@@ -885,8 +998,8 @@ export default function OnboardingView() {
               </div>
             )}
 
-            {/* ============================ STEP 3 — CREATE */}
-            {step === 3 && (
+            {/* ============================ STEP 4 — CREATE */}
+            {step === 4 && (
               <div className="space-y-6">
                 <StepHeader
                   icon={<Rocket className="h-5 w-5 text-emerald-600" aria-hidden="true" />}

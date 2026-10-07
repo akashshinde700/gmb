@@ -132,20 +132,78 @@ async function search(query: string, n: number, page: number): Promise<SearchRes
   }
 }
 
+/**
+ * Photo searches for one business, most specific first.
+ *
+ * The trade the owner typed is what they actually sell, so it leads: a
+ * jeweller searching the generic "shop" came back with other people's shops.
+ * Their own description is mined next for the words that name things, then the
+ * trade's audited searches as a safety net.
+ */
+export function searchesFor(opts: {
+  category: string;
+  description?: string;
+  curated?: readonly string[];
+}): string[] {
+  const out: string[] = [];
+  const add = (v: string) => {
+    const t = v.trim().toLowerCase();
+    if (t && !out.includes(t)) out.push(t);
+  };
+
+  add(opts.category);
+
+  // "We sell gold and diamond bridal jewellery" -> "gold diamond bridal".
+  // Only longer words, and only a few, so the search stays findable.
+  const words = (opts.description ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length > 3 && !DESCRIPTION_NOISE.has(w));
+  if (words.length) add(words.slice(0, 3).join(" "));
+  if (words.length) add(`${words[0]} ${opts.category}`.trim());
+
+  for (const c of opts.curated ?? []) add(c);
+  return out;
+}
+
+/** Words a business description is full of that say nothing about a picture. */
+const DESCRIPTION_NOISE = new Set([
+  "with", "that", "this", "from", "your", "our", "they", "their", "have", "been",
+  "best", "quality", "service", "services", "customer", "customers", "business",
+  "years", "experience", "trusted", "provide", "providing", "offer", "offering",
+  "also", "more", "than", "which", "where", "when", "will", "about", "india",
+  "price", "prices", "pricing", "work", "working", "team", "since", "well",
+]);
+
 /** Words too common to prove a photo is about the query. */
 const STOPWORDS = new Set(["the", "and", "for", "with", "a", "of", "in", "on"]);
 
 /**
- * Keep photos whose title or tags actually mention the search.
+ * Pictures of a thing, not pictures that merely mention it.
  *
- * Without this the gallery fills with whatever the provider returned when it
- * ran out of real matches — a gym that asked for "fitness" ended up with six
- * copies of "Modern Building".
+ * Matching the tags as well as the title let a photo called "Coffee &
+ * Biscuits" into a jeweller's gallery, and swatches called "Cement wall
+ * texture" into a cement dealer's. The title has to carry the search term, and
+ * swatches, mock-ups and clip art are refused outright — a shop would rather
+ * show four real photographs than eight that embarrass it.
  */
+const NOT_A_PHOTO = [
+  "texture", "wallpaper", "pattern", "background", "backdrop", "swatch",
+  "clipart", "clip art", "icon", "logo", "mockup", "mock-up", "template",
+  "illustration", "vector", "drawing", "sketch", "diagram", "chart", "font",
+  "screenshot", "map of", "coat of arms", "banknote", "stamp", "postcard",
+];
+
 function relevant(items: Candidate[], query: string): Candidate[] {
   const terms = query.split(/\s+/).filter((w) => w.length > 2 && !STOPWORDS.has(w));
   if (!terms.length) return items;
-  return items.filter((c) => terms.some((t) => c.text.includes(t)));
+  return items.filter((c) => {
+    const title = c.alt.toLowerCase();
+    if (NOT_A_PHOTO.some((bad) => title.includes(bad))) return false;
+    // The title is what the photograph is of; tags are a grab-bag.
+    return terms.some((t) => title.includes(t));
+  });
 }
 
 /** Download, re-encode and store one photo; null on any problem. */

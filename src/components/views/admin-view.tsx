@@ -1101,6 +1101,8 @@ function CustomersTab() {
     }
   }
 
+  const [activateTarget, setActivateTarget] = useState<CustomerRow | null>(null);
+
   async function subscriptionAction(row: CustomerRow, body: Record<string, unknown>, done: string) {
     if (!row.business) return;
     setBusyRow(row.id);
@@ -1328,9 +1330,9 @@ function CustomersTab() {
                             </DropdownMenuItem>
                             <DropdownMenuItem
                               disabled={!r.subscription || busyRow === r.id}
-                              onClick={() => void subscriptionAction(r, { markPaid: true }, "Payment recorded")}
+                              onClick={() => setActivateTarget(r)}
                             >
-                              <Wallet className="h-4 w-4" aria-hidden="true" /> Mark as paid
+                              <Wallet className="h-4 w-4" aria-hidden="true" /> Activate plan…
                             </DropdownMenuItem>
                             <DropdownMenuItem
                               disabled={!r.subscription || busyRow === r.id}
@@ -1487,6 +1489,18 @@ function CustomersTab() {
         </DialogContent>
       </Dialog>
       <CustomerPaletteDialog target={paletteTarget} onClose={() => setPaletteTarget(null)} />
+      <ActivatePlanDialog
+        // Remounted per customer so the length and amount never carry over.
+        key={activateTarget?.id ?? "none"}
+        row={activateTarget}
+        onClose={() => setActivateTarget(null)}
+        onConfirm={async (body, label) => {
+          const row = activateTarget;
+          setActivateTarget(null);
+          if (row) await subscriptionAction(row, body, label);
+        }}
+      />
+
       <DomainCreditsDialog
         target={domainTarget}
         onClose={() => setDomainTarget(null)}
@@ -1526,6 +1540,174 @@ interface CustomerPaletteData {
  * hands, outside the product. -1 means unlimited, for a customer on a bespoke
  * arrangement.
  */
+
+/**
+ * Turning a customer on for a real length of time.
+ *
+ * "Mark as paid" always added a month, so a year's payment had to be clicked
+ * twelve times and anything else — two years, a one-off three months — could
+ * not be recorded at all. The length is chosen here, the exact end date is
+ * shown before confirming, and the amount defaults to the plan's price for
+ * that length while staying editable for a discount actually given.
+ */
+function ActivatePlanDialog({
+  row,
+  onClose,
+  onConfirm,
+}: {
+  row: CustomerRow | null;
+  onClose: () => void;
+  onConfirm: (body: Record<string, unknown>, label: string) => Promise<void>;
+}) {
+  const [count, setCount] = useState("1");
+  const [unit, setUnit] = useState<"months" | "years">("months");
+  const [amount, setAmount] = useState("");
+  const [touchedAmount, setTouchedAmount] = useState(false);
+
+  const plan = row?.subscription?.plan ?? null;
+  const n = Math.max(1, Math.min(120, Math.trunc(Number(count) || 0)));
+  const months = unit === "years" ? n * 12 : n;
+  const yearly = months >= 12;
+
+  // Calendar months, not 30-day blocks: a year bought today ends on today's
+  // date next year, which is what the customer will expect to see.
+  const base = (() => {
+    const renews = row?.subscription?.renewsAt ? new Date(row.subscription.renewsAt) : null;
+    return renews && renews > new Date() ? renews : new Date();
+  })();
+  const end = (() => {
+    const d = new Date(base);
+    d.setMonth(d.getMonth() + months);
+    return d;
+  })();
+  const days = Math.max(1, Math.round((end.getTime() - base.getTime()) / 86_400_000));
+
+  const suggested = plan
+    ? yearly
+      ? Math.round((plan.priceYearly / 12) * months)
+      : plan.priceMonthly * months
+    : 0;
+  const finalAmount = touchedAmount && amount.trim() !== "" ? Number(amount) : suggested;
+
+  const PRESETS: { label: string; count: string; unit: "months" | "years" }[] = [
+    { label: "1 month", count: "1", unit: "months" },
+    { label: "3 months", count: "3", unit: "months" },
+    { label: "6 months", count: "6", unit: "months" },
+    { label: "1 year", count: "1", unit: "years" },
+    { label: "2 years", count: "2", unit: "years" },
+  ];
+
+  return (
+    <Dialog open={!!row} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Activate plan</DialogTitle>
+          <DialogDescription>
+            {row?.business?.name ?? row?.name} — records the payment and keeps the site live for the
+            length you choose.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div className="flex flex-wrap gap-2">
+            {PRESETS.map((p) => {
+              const active = count === p.count && unit === p.unit;
+              return (
+                <button
+                  key={p.label}
+                  type="button"
+                  onClick={() => {
+                    setCount(p.count);
+                    setUnit(p.unit);
+                    setTouchedAmount(false);
+                  }}
+                  className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${
+                    active ? "border-emerald-600 bg-emerald-600 text-white" : "border-border bg-card text-muted-foreground"
+                  }`}
+                >
+                  {p.label}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <label className="space-y-1 text-xs font-medium text-muted-foreground">
+              How many
+              <Input
+                inputMode="numeric"
+                value={count}
+                onChange={(e) => {
+                  setCount(e.target.value.replace(/\D/g, ""));
+                  setTouchedAmount(false);
+                }}
+                className="rounded-xl"
+              />
+            </label>
+            <label className="space-y-1 text-xs font-medium text-muted-foreground">
+              Months or years
+              <select
+                value={unit}
+                onChange={(e) => {
+                  setUnit(e.target.value as "months" | "years");
+                  setTouchedAmount(false);
+                }}
+                className="h-10 w-full rounded-xl border border-input bg-background px-3 text-sm"
+              >
+                <option value="months">Months</option>
+                <option value="years">Years</option>
+              </select>
+            </label>
+          </div>
+
+          <label className="block space-y-1 text-xs font-medium text-muted-foreground">
+            Amount received (₹)
+            <Input
+              inputMode="decimal"
+              value={touchedAmount ? amount : String(suggested)}
+              onChange={(e) => {
+                setTouchedAmount(true);
+                setAmount(e.target.value.replace(/[^\d.]/g, ""));
+              }}
+              className="rounded-xl"
+            />
+          </label>
+
+          <p className="rounded-xl bg-muted p-3 text-xs text-muted-foreground">
+            Billed as <strong>{yearly ? "yearly" : "monthly"}</strong> · stays live until{" "}
+            <strong className="text-foreground">
+              {end.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+            </strong>
+            {row?.subscription?.renewsAt && new Date(row.subscription.renewsAt) > new Date()
+              ? " (added to the time they already have)"
+              : ""}
+          </p>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button
+            className="bg-emerald-600 text-white hover:bg-emerald-700"
+            onClick={() =>
+              void onConfirm(
+                {
+                  markPaid: true,
+                  cycle: yearly ? "YEARLY" : "MONTHLY",
+                  extendPeriodDays: days,
+                  amount: Number.isFinite(finalAmount) ? finalAmount : suggested,
+                },
+                `Activated for ${n} ${unit}`,
+              )
+            }
+          >
+            Activate
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function DomainCreditsDialog({
   target,
   onClose,

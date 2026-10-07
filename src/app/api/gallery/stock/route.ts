@@ -2,7 +2,8 @@ import { db } from "@/lib/db";
 import { HttpError, limitSubjectOrThrow, ok, requireBusiness, requireUser, route } from "@/lib/api";
 import { parseJson } from "@/lib/sections";
 import { resolveIndustry } from "@/lib/industries";
-import { fetchStockPhotos, stockImagesConfigured } from "@/lib/stock-images";
+import { variantsFor } from "@/lib/variants";
+import { fetchStockPhotos, searchesFor, stockImagesConfigured } from "@/lib/stock-images";
 import type { SiteSection, SiteTheme } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -20,10 +21,23 @@ export const POST = route(async (req: Request) => {
 
   const theme = parseJson<Partial<SiteTheme>>(business.website?.themeJson, {});
   const preset = resolveIndustry(business.category, theme.industry);
-  const query = preset.key === "general" ? business.category : preset.imageQuery;
+  // What this shop actually sells, not what its trade group is called: asking
+  // for the preset's "shop" handed a jeweller photographs of other people's
+  // shops. Their own description narrows it further.
+  const searches = searchesFor({
+    category: business.category,
+    description: business.description,
+    curated: [...variantsFor(preset.key).imageQueries, preset.imageQuery],
+  });
   // Each press moves one page further so it never re-adds the same photos.
   const existing = await db.galleryItem.count({ where: { businessId: business.id } });
-  const photos = await fetchStockPhotos(query, 6, Math.floor(existing / 6) + 2, [business.category], business.slug);
+  const photos = await fetchStockPhotos(
+    searches[0],
+    6,
+    Math.floor(existing / 6) + 2,
+    searches.slice(1),
+    `${business.slug}:${existing}`,
+  );
   if (!photos.length) throw new HttpError("Could not fetch photos right now — please try again in a minute.", 502);
 
   const last = await db.galleryItem.findFirst({ where: { businessId: business.id }, orderBy: { sortOrder: "desc" } });

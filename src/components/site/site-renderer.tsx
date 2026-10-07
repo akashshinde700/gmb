@@ -15,6 +15,7 @@ import SiteReveal from "@/components/site/site-reveal";
 import { seedFrom } from "@/lib/variants";
 import SiteImage from "@/components/site/site-image";
 import type { SitePayload, SiteSection, SiteTheme } from "@/lib/types";
+import { toWaNumber } from "@/lib/phone-format";
 import {
   Hero, Stats, About, Services, Products, WhyUs, Gallery, Testimonials,
   FaqSection, BlogTeaser, CtaBanner, Payment, Hours, Contact,
@@ -344,7 +345,7 @@ export default function SiteRenderer({ payload, mode = "live", device = "desktop
     }
   }
 
-  const waNumber = (business.whatsapp || business.phone || "").replace(/[^\d]/g, "");
+  const waNumber = toWaNumber(business.whatsapp || business.phone || "");
   const containerWidth = website.theme?.containerWidth === "wide" ? "max-w-7xl" : "max-w-6xl";
   const hasPayment = Boolean(business.upiId || business.paymentQrUrl);
   /**
