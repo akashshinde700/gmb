@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { recordVersion } from "@/lib/site-history";
 import { parseJson } from "@/lib/sections";
 import { serializeWebsite } from "@/lib/serialize";
 import { checkSite } from "@/lib/site-quality";
@@ -119,6 +120,8 @@ export const POST = route(async (req: Request) => {
       version: { increment: 1 },
     },
   });
+
+  await recordVersion({ website: updated, label: `Made it ${intent.label.toLowerCase()}`, actor: business.ownerName || "Owner" });
 
   return ok({
     intent: { id: intent.id, label: intent.label, note: intent.note },

@@ -8,7 +8,7 @@ import {
   ChevronDown, ChevronUp, Clock, Copy, CreditCard, ExternalLink, Eye, EyeOff,
   Globe, GripVertical, HelpCircle, Image as ImageIcon, ImagePlus, Inbox, Info, LayoutDashboard,
   LayoutTemplate, Link2, Loader2, LogOut, Mail, MapPin, Menu, MessageCircle, Monitor,
-  Newspaper, Package, Palette, Pencil, Phone, Plus, QrCode, Quote, Rocket, Save, Search, Settings,
+  Newspaper, Package, Palette, Pencil, PenLine, Phone, Plus, QrCode, Quote, Rocket, Save, Search, Settings,
   ShieldCheck, Smartphone, Sparkles, Star, Tablet, Trash2, TrendingUp, Users, XCircle,
   Youtube,
 } from "lucide-react";
@@ -1102,6 +1102,7 @@ function OverviewTab({ business, content, contentLoading }: {
       )}
 
       <div className="grid gap-4 lg:grid-cols-3">
+        <AutopilotCard business={business} onUpdated={(w) => patchBusiness({ website: w })} />
         {/* Health card */}
         <Card className="rounded-2xl p-6 lg:col-span-2">
           <div className="flex flex-col items-start gap-6 sm:flex-row">
@@ -1259,6 +1260,7 @@ function BuilderTab({ business, content }: { business: BusinessWithMeta; content
   // tab discarded the lot without a word.
   useUnsavedChanges(dirty);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [regenerating, setRegenerating] = useState<string | null>(null);
   const [device, setDevice] = useState<"desktop" | "tablet" | "mobile">("desktop");
   const [saving, setSaving] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
@@ -1280,6 +1282,35 @@ function BuilderTab({ business, content }: { business: BusinessWithMeta; content
     });
     setDirty(false);
   }, [website]);
+
+  /**
+   * Redraw or rewrite one section, saving everything else as it stands.
+   *
+   * The builder may hold unsaved edits, so they are saved first: regenerating
+   * a section against a stale copy on the server would quietly lose them.
+   */
+  async function regenerateSection(sectionId: string, mode: "layout" | "copy" | "both") {
+    setRegenerating(sectionId);
+    try {
+      if (dirty) await saveDraft(true);
+      const res = await api.post<{ changed: string[]; website: WebsiteData }>("/api/website/section/regenerate", {
+        sectionId,
+        mode,
+      });
+      setSections(res.website.sections ?? []);
+      setTheme({ ...DEFAULT_THEME, ...(res.website.theme ?? {}) });
+      setDirty(false);
+      toast({ title: "Section regenerated", description: res.changed.join(" · ") });
+    } catch (e) {
+      toast({
+        variant: "destructive",
+        title: "Could not regenerate that section",
+        description: e instanceof Error ? e.message : "Try again in a moment",
+      });
+    } finally {
+      setRegenerating(null);
+    }
+  }
 
   const published = business.status === "PUBLISHED";
   const editing = sections.find((s) => s.id === editingId) ?? null;
@@ -1658,6 +1689,32 @@ function BuilderTab({ business, content }: { business: BusinessWithMeta; content
                         <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-emerald-700" onClick={() => setEditingId(s.id)} aria-label={`Edit ${lib?.name ?? s.type}`}>
                           <Pencil className="h-4 w-4" />
                         </Button>
+                        {/* One section, redrawn or rewritten, without touching the
+                            rest of the page. */}
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-muted-foreground hover:text-emerald-700"
+                              disabled={regenerating === s.id}
+                              aria-label={`Regenerate ${lib?.name ?? s.type}`}
+                            >
+                              {regenerating === s.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-56">
+                            <DropdownMenuItem onClick={() => regenerateSection(s.id, "layout")}>
+                              <LayoutTemplate className="mr-2 h-4 w-4" /> Different layout
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => regenerateSection(s.id, "copy")}>
+                              <PenLine className="mr-2 h-4 w-4" /> Rewrite the words
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => regenerateSection(s.id, "both")}>
+                              <Sparkles className="mr-2 h-4 w-4" /> Both
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                         {s.type !== "hero" ? (
                           <DeleteConfirm
                             label={`The "${lib?.name ?? s.type}" section will be removed from your page.`}
@@ -1672,6 +1729,14 @@ function BuilderTab({ business, content }: { business: BusinessWithMeta; content
                 </div>
               </Card>
               <SeoCard seo={seo} setSeo={(s) => { setSeo(s); setDirty(true); }} />
+              <HistoryCard
+                onRestored={(w) => {
+                  setSections(w.sections ?? []);
+                  setTheme({ ...DEFAULT_THEME, ...(w.theme ?? {}) });
+                  setSeo({ seoTitle: w.seoTitle ?? "", seoDescription: w.seoDescription ?? "", keywords: w.keywords ?? "" });
+                  setDirty(false);
+                }}
+              />
             </>
           )}
         </div>
@@ -1996,6 +2061,225 @@ function DesignDnaPanel({ theme, onFixed }: { theme: SiteTheme; onFixed: (w: Web
         </CollapsibleContent>
       </Collapsible>
     </Card>
+  );
+}
+
+/* -------------------------------- autopilot --------------------------------- */
+
+/**
+ * The switch for the platform's own maintenance pass, and what it last did.
+ *
+ * Autopilot re-checks a published site, applies the structural fixes it can do
+ * without asking anything (a section switched off, a missing About or contact
+ * block, the page title and description) and writes a version first, so anything
+ * it does can be undone from the history. It never touches the owner's words,
+ * photos or colours.
+ */
+function AutopilotCard({ business, onUpdated }: {
+  business: BusinessWithMeta;
+  onUpdated: (w: WebsiteData) => void;
+}) {
+  const [state, setState] = useState<{ enabled: boolean; lastRunAt: string | null; lastChanged: string[]; lastScore: number | null } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      setState(await api.get<{ enabled: boolean; lastRunAt: string | null; lastChanged: string[]; lastScore: number | null }>("/api/website/autopilot"));
+    } catch {
+      setState(null);
+    }
+  }, []);
+  // Autopilot's state lives on the server (it runs on a schedule whether this
+  // tab is open or not), so this effect is a fetch, not derived state.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { void load(); }, [load]);
+
+  const enabled = state?.enabled ?? (business.website?.theme?.autopilot?.enabled !== false);
+  const lastChanged = state?.lastChanged ?? business.website?.theme?.autopilot?.lastChanged ?? [];
+  const lastRunAt = state?.lastRunAt ?? business.website?.theme?.autopilot?.lastRunAt ?? null;
+
+  async function toggle(next: boolean) {
+    setBusy(true);
+    try {
+      const res = await api.post<{ enabled: boolean; website: WebsiteData }>("/api/website/autopilot", { enabled: next });
+      setState((s) => (s ? { ...s, enabled: res.enabled } : s));
+      onUpdated(res.website);
+      toast({ title: next ? "Autopilot is on" : "Autopilot is off" });
+    } catch (e) {
+      toast({ variant: "destructive", title: "Could not change that", description: e instanceof Error ? e.message : "" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runNow() {
+    setBusy(true);
+    try {
+      const res = await api.post<{ result: { changed: string[]; before: number; after: number }; website: WebsiteData | null }>(
+        "/api/website/autopilot",
+        { run: true },
+      );
+      if (res.website) onUpdated(res.website);
+      await load();
+      toast({
+        title: res.result.changed.length ? `Fixed ${res.result.changed.length} thing(s)` : "Nothing needed fixing",
+        description: res.result.changed.length
+          ? `${res.result.before} → ${res.result.after}/100`
+          : `The site is already at ${res.result.before}/100`,
+      });
+    } catch (e) {
+      toast({ variant: "destructive", title: "Autopilot could not run", description: e instanceof Error ? e.message : "" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const when = lastRunAt
+    ? new Date(lastRunAt).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })
+    : null;
+
+  return (
+    <Card className="rounded-2xl p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <ShieldCheck className="h-4 w-4 text-emerald-600" />
+          <div>
+            <h2 className="text-sm font-bold text-foreground">Autopilot</h2>
+            <p className="text-[11px] text-muted-foreground">
+              Keeps your published site in order on its own — never your words or photos.
+            </p>
+          </div>
+        </div>
+        <Switch checked={enabled} disabled={busy} onCheckedChange={toggle} aria-label="Autopilot" />
+      </div>
+
+      {when && (
+        <p className="mt-2 text-[11px] text-muted-foreground">Last pass {when}</p>
+      )}
+      {lastChanged.length > 0 && (
+        <ul className="mt-2 space-y-0.5 text-[11px] text-muted-foreground">
+          {lastChanged.slice(0, 3).map((line) => (
+            <li key={line}>· {line}</li>
+          ))}
+        </ul>
+      )}
+
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={runNow}
+        disabled={busy}
+        className="mt-3 h-8 w-full rounded-lg text-[11px]"
+      >
+        {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Rocket className="h-3.5 w-3.5" />}
+        Run a check now
+      </Button>
+    </Card>
+  );
+}
+
+/* ------------------------------ site history -------------------------------- */
+
+/**
+ * Every version of the site, newest first, with one press to go back.
+ *
+ * A generator that edits a live website has to be able to undo it: the owner
+ * pressed a button, the page changed, and "put it back" is the only acceptable
+ * answer to not liking the result. Restoring writes the old state as a new
+ * version, so going back is itself undoable.
+ */
+function HistoryCard({ onRestored }: { onRestored: (w: WebsiteData) => void }) {
+  const [versions, setVersions] = useState<{ id: string; label: string; actor: string; score?: number; createdAt: string }[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await api.get<{ versions: typeof versions }>("/api/website/history");
+      setVersions(res.versions ?? []);
+    } catch {
+      setVersions([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // The history is only fetched when the card is opened: it is a list nobody
+  // needs until they are looking for it.
+  useEffect(() => {
+    if (open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      void load();
+    }
+  }, [open, load]);
+
+  async function restore(versionId: string) {
+    setBusy(versionId);
+    try {
+      const res = await api.post<{ restored: string; website: WebsiteData }>("/api/website/restore", { versionId });
+      onRestored(res.website);
+      toast({ title: "Restored", description: res.restored });
+      void load();
+    } catch (e) {
+      toast({ variant: "destructive", title: "Could not restore", description: e instanceof Error ? e.message : "" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const when = (iso: string) => {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "";
+    return d.toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+  };
+
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <Card className="rounded-2xl p-4">
+        <CollapsibleTrigger asChild>
+          <button type="button" className="flex w-full items-center justify-between" aria-expanded={open}>
+            <span className="flex items-center gap-2 text-sm font-bold text-foreground">
+              <Clock className="h-4 w-4 text-muted-foreground" /> History
+            </span>
+            <ChevronDown className={cn("h-4 w-4 text-muted-foreground transition-transform", open && "rotate-180")} />
+          </button>
+        </CollapsibleTrigger>
+        <CollapsibleContent className="mt-3">
+          {loading ? (
+            <p className="text-xs text-muted-foreground">Loading…</p>
+          ) : versions.length === 0 ? (
+            <p className="text-xs text-muted-foreground">No versions recorded yet — they appear as soon as anything changes.</p>
+          ) : (
+            <ul className="space-y-2">
+              {versions.map((v) => (
+                <li key={v.id} className="flex items-start justify-between gap-3 text-[11px]">
+                  <div className="min-w-0">
+                    <p className="truncate font-medium text-foreground">{v.label}</p>
+                    <p className="text-muted-foreground">
+                      {v.actor} · {when(v.createdAt)}
+                      {typeof v.score === "number" ? ` · ${v.score}/100` : ""}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => restore(v.id)}
+                    disabled={busy !== null}
+                    className="shrink-0 rounded-lg border px-2 py-0.5 font-semibold text-foreground transition hover:bg-muted disabled:opacity-50"
+                  >
+                    {busy === v.id ? "Restoring…" : "Restore"}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="mt-3 text-[11px] text-muted-foreground">
+            The last {versions.length || 8} versions are kept. Restoring changes the live site back to that point.
+          </p>
+        </CollapsibleContent>
+      </Card>
+    </Collapsible>
   );
 }
 

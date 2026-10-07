@@ -4,6 +4,7 @@ import { parseJson, SECTION_LIBRARY } from "@/lib/sections";
 import type { SiteSection, SiteTheme } from "@/lib/types";
 import { HttpError, ok, readJson, requireBusiness, requireUser, route, safeUrl, str } from "@/lib/api";
 import { allowanceFor, consumeThemeChange } from "@/lib/appearance";
+import { recordVersion } from "@/lib/site-history";
 import { INDUSTRY_KEYS } from "@/lib/industries";
 
 const SECTION_TYPES = new Set(SECTION_LIBRARY.map((s) => s.type as string));
@@ -18,7 +19,7 @@ const MAX_SECTIONS_JSON = 400_000;
  * would let a customer's browser claim a uniqueness score or an animation it
  * never had.
  */
-type ThemeKey = Exclude<keyof SiteTheme, "motion" | "dna" | "quality" | "uniqueness">;
+type ThemeKey = Exclude<keyof SiteTheme, "motion" | "dna" | "quality" | "uniqueness" | "autopilot">;
 
 const THEME_VALUES: Record<ThemeKey, string[]> = {
   font: ["modern", "classic", "elegant"],
@@ -106,6 +107,14 @@ export const PUT = route(async (req: Request) => {
   if (!Object.keys(data).length) throw new HttpError("Nothing to update");
 
   const updated = await db.website.update({ where: { businessId: business.id }, data });
+
+  // Saving is a version. The builder is where an owner can do the most damage
+  // to their own site by accident, so it is the change that most needs an undo.
+  await recordVersion({
+    website: updated,
+    label: data.sectionsJson !== undefined ? "Edited the page" : "Changed the theme",
+    actor: business.ownerName || "Owner",
+  });
 
   const fresh = await db.business.findUnique({
     where: { id: business.id },

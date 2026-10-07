@@ -21,6 +21,8 @@ import { checkSite, contrastRatio } from "@/lib/site-quality";
 import { applyFixes } from "@/lib/site-fixes";
 import { interpretRestyle, restyledPlan, restyledTokens, restyleSummary } from "@/lib/restyle";
 import { suggestionHeadline, suggestionsFor } from "@/lib/suggestions";
+import { SECTION_VARIANTS } from "@/lib/design-dna";
+import { applyCopy, copyChanged, copyPrompt, nextVariant } from "@/lib/section-regen";
 import { posterSvg } from "@/lib/site-art";
 import type { SectionType } from "@/lib/types";
 
@@ -411,6 +413,55 @@ console.log("\n== What to do next");
   });
   check("a healthy site is not nagged", fine.length === 0, fine.map((s) => s.id).join(","));
   check("the headline matches the list", suggestionHeadline(fine).includes("Nothing"));
+}
+
+console.log("\n== Regenerating one section");
+{
+  // Walking the library rather than toggling: three presses on a four-way
+  // section must produce three different arrangements.
+  const seen = [
+    nextVariant("hero", "banner", 0),
+    nextVariant("hero", nextVariant("hero", "banner", 0) ?? "banner", 1),
+    nextVariant("hero", nextVariant("hero", nextVariant("hero", "banner", 0) ?? "banner", 1) ?? "banner", 2),
+  ];
+  check("a layout re-roll moves forward each time", new Set(seen).size === 3, seen.join(" → "));
+  check("a section with one arrangement is left alone", nextVariant("payment", "qr", 0) === null && nextVariant("hours", "cards", 0) === null);
+  check(
+    "an unrecognised current arrangement still resolves to a real one",
+    SECTION_VARIANTS.about?.includes(nextVariant("about", "something-old", 0) ?? "") === true,
+    nextVariant("about", "something-old", 0) ?? "none",
+  );
+
+  const section = {
+    id: "s1", type: "hero" as const, visible: true,
+    content: { heading: "Dental care in Pune", subheading: "Book an appointment", ctaPrimary: "Book", variant: "banner", image: "/api/art/x.svg" },
+  };
+  const written = applyCopy(section, {
+    heading: "Family dentistry in Baner, Pune",
+    subheading: "Same-day appointments for check-ups and implants",
+    // A model that tries to add a field, or write something enormous, or set the
+    // layout itself, must not be able to.
+    variant: "banner",
+    image: "https://example.com/invented.jpg",
+    badge: "x".repeat(500),
+  });
+  check("the copy pass writes only the text of that section",
+    written.content.heading === "Family dentistry in Baner, Pune" &&
+      written.content.image === "/api/art/x.svg" &&
+      written.content.variant === "banner" &&
+      written.content.ctaPrimary === "Book" &&
+      written.content.badge === undefined,
+    JSON.stringify(Object.keys(written.content)));
+  check("the change is reported only when the words changed",
+    copyChanged(section, written) && !copyChanged(section, { ...section, content: { ...section.content, heading: "Dental care in Pune" } }));
+
+  const prompt = copyPrompt({
+    section,
+    business: { name: "Smile Dental", category: "Dental", city: "Pune", services: ["Check-up"] },
+    instruction: "shorter",
+  });
+  check("the model is told never to invent a fact", /never invent/i.test(prompt.system));
+  check("the prompt carries the owner's own instruction", prompt.prompt.includes("shorter"));
 }
 
 console.log("\n== Blueprint integration");

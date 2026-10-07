@@ -12,6 +12,7 @@ import { fetchStockPhotos, searchesFor } from "@/lib/stock-images";
 import { blueprintFor, resolveColors, designSeed } from "@/lib/blueprint";
 import { bestCandidate, profileFromSite, uniquenessPercent, type SiteProfile } from "@/lib/uniqueness";
 import { checkSite } from "@/lib/site-quality";
+import { recordVersion } from "@/lib/site-history";
 import { posterUrl } from "@/lib/site-art";
 import { rng, seedFrom } from "@/lib/variants";
 import { SITE_ICON_KEYS } from "@/lib/site-icon-keys";
@@ -479,6 +480,16 @@ export const POST = route(async (req: Request) => {
     include: { website: true, subscription: { include: { plan: true } } },
   });
   if (!fresh) throw new HttpError("Could not load the business that was just created", 500);
+
+  // Version 1 of this site, so every later change — an edit, a restyle, an
+  // automatic fix, a regenerated section — has something to go back to.
+  if (fresh.website) {
+    await recordVersion({ website: fresh.website, label: "Created by WebSetu" }).catch((e) => {
+      // A site that was built successfully must not fail because its history
+      // could not be written; the version is recoverable, the signup is not.
+      console.error("[history] could not record the first version:", e instanceof Error ? e.message : e);
+    });
+  }
 
   return ok(
     {

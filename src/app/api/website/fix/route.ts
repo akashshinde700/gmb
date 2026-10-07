@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { recordVersion } from "@/lib/site-history";
 import { parseJson } from "@/lib/sections";
 import { serializeWebsite } from "@/lib/serialize";
 import { checkSite, type QualityReport } from "@/lib/site-quality";
@@ -109,6 +110,8 @@ export const POST = route(async (req: Request) => {
       version: { increment: 1 },
     },
   });
+
+  await recordVersion({ website: updated, label: `Fixed ${fixed.changed.length} issue(s)`, actor: business.ownerName || "Owner" });
 
   return ok({
     changed: fixed.changed,
