@@ -19,7 +19,7 @@ const MAX_SECTIONS_JSON = 400_000;
  * would let a customer's browser claim a uniqueness score or an animation it
  * never had.
  */
-type ThemeKey = Exclude<keyof SiteTheme, "motion" | "dna" | "quality" | "uniqueness" | "autopilot">;
+type ThemeKey = Exclude<keyof SiteTheme, "motion" | "dna" | "quality" | "uniqueness" | "autopilot" | "experiments">;
 
 const THEME_VALUES: Record<ThemeKey, string[]> = {
   font: ["modern", "classic", "elegant"],

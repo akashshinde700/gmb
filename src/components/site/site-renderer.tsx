@@ -8,7 +8,8 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { openStatus } from "@/lib/hours";
-import { jsonLdScript, siteOrigin, usableTagline } from "@/lib/site-utils";
+import { jsonLdScript, siteOrigin, usableTagline, visitorId } from "@/lib/site-utils";
+import { applyVariant } from "@/lib/experiments";
 import { schemaTypeFor } from "@/lib/schema-types";
 import { resolveIndustry, type SceneKind } from "@/lib/industries";
 import SiteReveal from "@/components/site/site-reveal";
@@ -290,7 +291,7 @@ interface SiteRendererProps {
 
 export default function SiteRenderer({ payload, mode = "live", device = "desktop" }: SiteRendererProps) {
   const { business, website, services, products, gallery, testimonials, faqs, blogPosts } = payload;
-  const sections = useMemo(
+  const baseSections = useMemo(
     () =>
       (website.sections || [])
         .filter((s) => s.visible !== false)
@@ -302,6 +303,20 @@ export default function SiteRenderer({ payload, mode = "live", device = "desktop
     [website.sections, website.theme],
   );
   const trackedVisit = useRef(false);
+  // The A/B test running on this site, if any. The visitor's variant is decided
+  // by a hash of their own id, so the same person always sees the same headline
+  // — and it is applied after mount rather than during render, so the HTML the
+  // server sent and the HTML the client first renders are identical.
+  const experiment = useMemo(() => {
+    const raw = website.theme?.experiments;
+    if (!raw || raw.status !== "running" || raw.variants?.length < 2) return null;
+    return raw;
+  }, [website.theme?.experiments]);
+  const [abVariant, setAbVariant] = useState<{ key: string; variant: "a" | "b" } | null>(null);
+  const [abSections, setAbSections] = useState<SiteSection[] | null>(null);
+  // Until the visitor's variant is known, the page renders exactly what the
+  // owner approved — the control is the real page, not a copy of it.
+  const sections = abSections ?? baseSections;
   const [menuOpen, setMenuOpen] = useState(false);
   // Which service/product the visitor clicked "Enquire" on, so the contact form
   // arrives pre-filled and the lead records what they actually asked about.
@@ -317,6 +332,16 @@ export default function SiteRenderer({ payload, mode = "live", device = "desktop
   );
   // Derived from the owner's own hours; "unknown" renders nothing.
   const hours = useMemo(() => openStatus(business.hours), [business.hours]);
+
+  useEffect(() => {
+    if (!experiment || mode === "preview") return;
+    const applied = applyVariant(baseSections, experiment, visitorId());
+    if (applied.applied) {
+      setAbVariant(applied.applied);
+      // Variant A is the live page untouched, so only B needs new sections.
+      if (applied.applied.variant === "b") setAbSections(applied.sections);
+    }
+  }, [experiment, baseSections, mode]);
 
   // theme → CSS variables. Every value is optional, so a site published before
   // the Design DNA existed keeps the exact look it had.
@@ -358,12 +383,21 @@ export default function SiteRenderer({ payload, mode = "live", device = "desktop
   useEffect(() => {
     if (mode !== "live" || trackedVisit.current) return;
     trackedVisit.current = true;
-    api.post("/api/analytics/event", { slug: business.slug, type: "VISIT", path: "/" }).catch(() => {});
-  }, [mode, business.slug]);
+    api.post("/api/analytics/event", { slug: business.slug, type: "VISIT", path: "/", ...abMeta() }).catch(() => {});
+  }, [mode, business.slug, abVariant]);
 
   function track(type: string) {
     if (mode !== "live") return;
-    api.post("/api/analytics/event", { slug: business.slug, type, path: "/" }).catch(() => {});
+    api.post("/api/analytics/event", { slug: business.slug, type, path: "/", ...abMeta() }).catch(() => {});
+  }
+
+  /**
+   * The test this visitor is in, attached to every event they generate — the
+   * visit, the call tap, the enquiry. Without it the owner would see two
+   * headlines in a dashboard and no way to tell which one earned the work.
+   */
+  function abMeta(): { experiment?: string; variant?: string } {
+    return experiment && abVariant ? { experiment: String(experiment.key), variant: abVariant.variant } : {};
   }
 
   async function submitLead(data: {

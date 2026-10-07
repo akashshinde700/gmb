@@ -178,6 +178,19 @@ export interface SiteTheme {
   /** Output of the quality checker (lib/site-quality.ts). */
   quality?: SiteQualityReport;
   /**
+   * The one test running on the site, if any (lib/experiments.ts). Stored with
+   * the theme rather than in its own table: it is a property of the page, it
+   * travels with the version history, and it has to be undone when it ends.
+   */
+  experiments?: {
+    key: SectionType;
+    status: "running" | "stopped";
+    metric: "enquiries";
+    variants: { id: "a" | "b"; content: Record<string, string>; source: "site" | "owner" | "ai" }[];
+    startedAt: string;
+    stoppedAt?: string;
+  };
+  /**
    * Autopilot: the platform's own maintenance pass over a published site.
    * Absent means "on" — a customer should not have to find a switch to get
    * their site kept in order.

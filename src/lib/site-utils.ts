@@ -90,3 +90,26 @@ export function tenantBaseUrl(slug: string, primaryHost?: string | null): string
   const host = (primaryHost || "").trim().toLowerCase();
   return host ? `https://${host}` : `${siteOrigin()}/s/${slug}`;
 }
+
+/**
+ * A stable id for this browser, used to keep a visitor in the same A/B variant
+ * across page views. Purely local: it is not a user account, it is not sent
+ * anywhere except as part of the analytics event it explains, and a visitor who
+ * clears their storage simply joins whichever variant the hash gives them next
+ * time.
+ */
+export function visitorId(): string {
+  if (typeof window === "undefined") return "";
+  try {
+    const key = "ws_visitor";
+    const existing = window.localStorage.getItem(key);
+    if (existing && /^[\w-]{8,40}$/.test(existing)) return existing;
+    const fresh = `v${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`;
+    window.localStorage.setItem(key, fresh);
+    return fresh;
+  } catch {
+    // Private mode, or storage disabled: the visitor still gets a page, they
+    // just get variant A (see lib/experiments.ts).
+    return "";
+  }
+}

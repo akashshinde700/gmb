@@ -8,7 +8,7 @@ import {
   ChevronDown, ChevronUp, Clock, Copy, CreditCard, ExternalLink, Eye, EyeOff,
   Globe, GripVertical, HelpCircle, Image as ImageIcon, ImagePlus, Inbox, Info, LayoutDashboard,
   LayoutTemplate, Link2, Loader2, LogOut, Mail, MapPin, Menu, MessageCircle, Monitor,
-  Newspaper, Package, Palette, Pencil, PenLine, Phone, Plus, QrCode, Quote, Rocket, Save, Search, Settings,
+  Newspaper, Package, Palette, Pencil, PenLine, Phone, Play, Plus, QrCode, Quote, Rocket, Save, Search, Settings, FlaskConical,
   ShieldCheck, Smartphone, Sparkles, Star, Tablet, Trash2, TrendingUp, Users, XCircle,
   Youtube,
 } from "lucide-react";
@@ -54,7 +54,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Collapsible, CollapsibleContent, CollapsibleTrigger,
 } from "@/components/ui/collapsible";
@@ -894,7 +894,7 @@ export default function DashboardView() {
             {tab === "leads" && (
               <LeadsTab onCountChange={setNewLeads} />
             )}
-            {tab === "analytics" && <AnalyticsTab />}
+            {tab === "analytics" && <AnalyticsTab business={business} />}
             {tab === "subscription" && <SubscriptionTab business={business} servicesCount={content.services.length} />}
             {tab === "settings" && <SettingsTab />}
             </div>
@@ -2071,6 +2071,221 @@ function DesignDnaPanel({ theme, onFixed }: { theme: SiteTheme; onFixed: (w: Web
           </div>
         </CollapsibleContent>
       </Collapsible>
+    </Card>
+  );
+}
+
+/* -------------------------- testing two headlines --------------------------- */
+
+interface ExperimentPayload {
+  experiment: {
+    key: string;
+    status: "running" | "stopped";
+    variants: { id: "a" | "b"; content: Record<string, string>; source: "site" | "owner" | "ai" }[];
+    startedAt: string;
+  } | null;
+  result: {
+    variants: { id: "a" | "b"; visits: number; actions: number; calls: number; whatsapp: number; enquiries: number }[];
+    leading: "a" | "b" | null;
+    decided: boolean;
+    verdict: string;
+  } | null;
+}
+
+/**
+ * Two headlines, one page, and the numbers to settle it.
+ *
+ * The promise here is deliberately small: one test at a time, two versions, and
+ * a result written in the same numbers the rest of the analytics tab reports.
+ * What it must not do is pretend to statistics it does not have — with twenty
+ * visitors the honest answer is "too early to call", and that is what it says.
+ */
+function ExperimentCard({ business }: { business: BusinessWithMeta }) {
+  const patchBusiness = useApp((s) => s.patchBusiness);
+  const [data, setData] = useState<ExperimentPayload | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [headlineB, setHeadlineB] = useState("");
+  const [open, setOpen] = useState(false);
+
+  const hero = business.website?.sections?.find((s) => s.type === "hero");
+
+  const load = useCallback(async () => {
+    try {
+      setData(await api.get<ExperimentPayload>("/api/website/experiment"));
+    } catch {
+      setData(null);
+    }
+  }, []);
+  // The test's state lives on the server (visitors are seeing it whether this
+  // tab is open or not), so this effect is a fetch, not derived state.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { void load(); }, [load]);
+
+  async function start(withOwn: boolean) {
+    setBusy(true);
+    try {
+      await api.post<{ website: WebsiteData }>("/api/website/experiment", {
+        action: "start",
+        sectionId: "hero",
+        ...(withOwn && headlineB.trim() ? { variantB: { heading: headlineB.trim() } } : {}),
+      });
+      await load();
+      setHeadlineB("");
+      toast({
+        title: "Test is running",
+        description: "Half your visitors see the new headline. The result appears in a few days.",
+      });
+    } catch (e) {
+      toast({ variant: "destructive", title: "Could not start the test", description: errMsg(e) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function stop() {
+    setBusy(true);
+    try {
+      await api.post("/api/website/experiment", { action: "stop" });
+      await load();
+      toast({ title: "Test stopped", description: "The headline you have now stays as it is." });
+    } catch (e) {
+      toast({ variant: "destructive", title: "Could not stop the test", description: errMsg(e) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function keep(variant: "a" | "b") {
+    setBusy(true);
+    try {
+      const res = await api.post<{ website: WebsiteData }>("/api/website/experiment", { action: "keep", variant });
+      patchBusiness({ website: res.website });
+      await load();
+      toast({ title: variant === "b" ? "New headline kept" : "Original headline kept" });
+    } catch (e) {
+      toast({ variant: "destructive", title: "Could not keep that one", description: errMsg(e) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const experiment = data?.experiment ?? null;
+  const result = data?.result ?? null;
+  const variantText = (id: "a" | "b") => {
+    const v = experiment?.variants.find((x) => x.id === id);
+    return v?.content.heading ?? v?.content.title ?? "";
+  };
+  const tally = (id: "a" | "b") => result?.variants.find((v) => v.id === id);
+  const rate = (id: "a" | "b") => {
+    const t = tally(id);
+    return t && t.visits ? `${Math.round((t.actions / t.visits) * 1000) / 10}%` : "—";
+  };
+
+  return (
+    <Card className="rounded-2xl">
+      <CardHeader>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <FlaskConical className="h-4 w-4 text-emerald-600" /> Test two headlines
+            </CardTitle>
+            <CardDescription>
+              Find out which opening line brings more enquiries instead of guessing. One test at a time.
+            </CardDescription>
+          </div>
+          {!experiment && (
+            <Button size="sm" variant="outline" className="h-8 shrink-0 rounded-lg text-xs" onClick={() => setOpen((v) => !v)}>
+              {open ? "Cancel" : "Start a test"}
+            </Button>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {!experiment && open && (
+          <div className="space-y-2 rounded-xl border border-emerald-200 bg-emerald-50/40 p-3">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Version 1 (live now)</p>
+              <p className="text-sm text-foreground">{String(hero?.content?.heading ?? "—")}</p>
+            </div>
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Version 2</p>
+              <Input
+                className="h-9 rounded-lg bg-white text-sm"
+                value={headlineB}
+                onChange={(e) => setHeadlineB(e.target.value)}
+                placeholder="Type a different angle, or let us write one"
+              />
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                className="h-8 rounded-lg bg-emerald-600 text-xs hover:bg-emerald-700"
+                disabled={busy || !headlineB.trim()}
+                onClick={() => start(true)}
+              >
+                {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                Test mine
+              </Button>
+              <Button size="sm" variant="outline" className="h-8 rounded-lg text-xs" disabled={busy} onClick={() => start(false)}>
+                <Sparkles className="h-3.5 w-3.5" /> Write one for me
+              </Button>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Half your visitors see each version. Your words, photos and colours are untouched — only the headline changes
+              for the half who see version 2.
+            </p>
+          </div>
+        )}
+
+        {experiment && (
+          <>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {(["a", "b"] as const).map((id) => {
+                const t = tally(id);
+                const leading = result?.leading === id;
+                return (
+                  <div key={id} className={cn("rounded-xl border p-3", leading ? "border-emerald-300 bg-emerald-50/40" : "border-border")}>
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                        Version {id === "a" ? "1" : "2"}
+                        {experiment.variants.find((v) => v.id === id)?.source === "ai" ? " · written by AI" : ""}
+                      </p>
+                      {leading && <Badge className="rounded-full bg-emerald-100 text-[10px] text-emerald-800 hover:bg-emerald-100">ahead</Badge>}
+                    </div>
+                    <p className="mt-1 text-sm font-medium text-foreground">{variantText(id) || "—"}</p>
+                    <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-muted-foreground">
+                      <span>{t?.visits ?? 0} visitors</span>
+                      <span>{t?.actions ?? 0} enquiries</span>
+                      <span className="font-semibold text-foreground">{rate(id)} enquire</span>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="mt-2 h-7 w-full rounded-lg text-[11px]"
+                      disabled={busy}
+                      onClick={() => keep(id)}
+                    >
+                      Keep this one
+                    </Button>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="text-xs text-muted-foreground">{result?.verdict ?? "Gathering numbers…"}</p>
+            {experiment.status === "running" && (
+              <Button size="sm" variant="ghost" className="h-7 rounded-lg text-[11px] text-muted-foreground" disabled={busy} onClick={stop}>
+                Stop the test (keeps the current headline)
+              </Button>
+            )}
+          </>
+        )}
+
+        {!experiment && !open && (
+          <p className="text-xs text-muted-foreground">
+            No test running. A different angle usually beats a cleverer sentence — try one on the headline.
+          </p>
+        )}
+      </CardContent>
     </Card>
   );
 }
@@ -3975,7 +4190,7 @@ function SeoTab({ business, content }: { business: BusinessWithMeta; content: Co
 
 const CHART_COLORS = { emerald: "#059669", amber: "#d97706", zinc: "#a1a1aa" };
 
-function AnalyticsTab() {
+function AnalyticsTab({ business }: { business: BusinessWithMeta }) {
   const { data: summary, loading } = useFetch<AnalyticsSummary>(() => api.get<AnalyticsSummary>("/api/analytics/summary"));
 
   const chartData = useMemo(
@@ -3996,6 +4211,10 @@ function AnalyticsTab() {
   return (
     <div className="space-y-6">
       <PageHeader title="Analytics" subtitle="Last 30 days across your website, WhatsApp and calls." />
+
+      {/* Testing lives here rather than on its own screen: the whole point is to
+          read the result in the same numbers shown below it. */}
+      <ExperimentCard business={business} />
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6">
         <StatCard icon={Users} label="Visits" value={loading ? "…" : (summary?.visits ?? 0)} />

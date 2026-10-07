@@ -10,7 +10,7 @@ const EVENT_TYPES = ["VISIT", "CTA_CALL", "CTA_WHATSAPP", "CTA_EMAIL", "CTA_DIRE
  * `tracked` says whether the event was actually recorded.
  */
 export const POST = route(async (req: Request) => {
-  const body = await readJson<{ slug?: string; type?: string; path?: string }>(req);
+  const body = await readJson<{ slug?: string; type?: string; path?: string; experiment?: string; variant?: string }>(req);
   const slug = str(body.slug, 120);
   const type = str(body.type, 30);
   if (!slug || !EVENT_TYPES.includes(type)) return ok({ tracked: false });
@@ -26,8 +26,17 @@ export const POST = route(async (req: Request) => {
   });
   if (!business || business.status !== "PUBLISHED") return ok({ tracked: false });
 
+  // An A/B test rides along with the ordinary events rather than having its own
+  // table: "which headline did this visitor see" is a property of the visit, the
+  // call and the enquiry alike, and keeping them together is what makes the
+  // comparison a like-for-like one.
+  const experiment = str(body.experiment, 40);
+  const variant = str(body.variant, 4);
+  const meta =
+    experiment && (variant === "a" || variant === "b") ? JSON.stringify({ experiment, variant }) : "{}";
+
   await db.analyticsEvent.create({
-    data: { businessId: business.id, type, path: str(body.path, 200) || "/" },
+    data: { businessId: business.id, type, path: str(body.path, 200) || "/", meta },
   });
   return ok({ tracked: true });
 });
