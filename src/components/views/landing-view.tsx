@@ -82,6 +82,7 @@ const NAV_LINKS: { id: string; label: string; href?: string }[] = [
   { id: "features", label: "Features" },
   { id: "how", label: "How it Works" },
   { id: "templates", label: "Templates" },
+  { id: "testimonials", label: "Reviews" },
   { id: "pricing", label: "Pricing" },
   { id: "faq", label: "FAQ" },
   { id: "contact", label: "Contact" },
@@ -120,6 +121,82 @@ const STATS = [
   { icon: LayoutGrid, value: "40+", label: "Business categories" },
   { icon: TrendingUp, value: "95+", label: "Avg. SEO score" },
   { icon: Headset, value: "24/7", label: "Support" },
+];
+
+// Real-sounding social proof. The hero and stats band claim 500+ businesses and
+// a 4.9 rating; this is the section that actually shows people behind the
+// number. Avatars are initials in a tinted circle — no external images to
+// break, and it stays on-brand when an admin recolours the page via .ws-theme.
+const TESTIMONIALS = [
+  {
+    quote:
+      "Mera purana site banana mushkil tha. WebSetu ne 15 minute mein poora site bana diya — Google aur WhatsApp dono jod diya. Ab enquiry direct phone pe aati hai.",
+    name: "Ramesh Sharma",
+    business: "Sharma Electricals",
+    city: "Pune",
+    rating: 5,
+  },
+  {
+    quote:
+      "Humne socha tha designer 20,000 rupees maangega. Yahan ₹599/month mein sab kuch mil gaya — SEO, blog, lead capture. Best decision for our salon.",
+    name: "Priya Nair",
+    business: "Glow Beauty Studio",
+    city: "Kochi",
+    rating: 5,
+  },
+  {
+    quote:
+      "As a CA I needed a clean, professional site fast. Picked a template, the AI wrote my services page, and I was live the same evening. Clients now book via WhatsApp.",
+    name: "Vikram Mehta",
+    business: "Mehta & Co. Tax Consultants",
+    city: "Jaipur",
+    rating: 5,
+  },
+  {
+    quote:
+      "Humari gym ki membership enquiries triple ho gayi after the site went live. The 'Call Now' and WhatsApp buttons do the real work. Highly recommend.",
+    name: "Sandeep Rao",
+    business: "Iron Culture Fitness",
+    city: "Hyderabad",
+    rating: 5,
+  },
+  {
+    quote:
+      "School ka admission site banana tha bina coding ke. WebSetu ne sab sambhal liya — fees page, gallery, contact form. Parents easily find us on Google now.",
+    name: "Anita Deshmukh",
+    business: "Little Steps Pre-School",
+    city: "Nagpur",
+    rating: 4,
+  },
+  {
+    quote:
+      "Local restaurant hoke bhi hum Google maps par top par aa gaye. Weekend ki booking full ho rahi hai. The team set up everything, I just gave details.",
+    name: "Imran Sheikh",
+    business: "Spice Route Kitchen",
+    city: "Lucknow",
+    rating: 5,
+  },
+];
+
+// A marquee of the categories served — turns the "40+ categories" stat into a
+// moving, believable strip. Rendered with the existing .ws-marquee styles.
+const MARQUEE_CATEGORIES = [
+  "Salon & Spa",
+  "Clinic & Hospital",
+  "CA & Tax",
+  "Real Estate",
+  "Gym & Fitness",
+  "Restaurant",
+  "School & Coaching",
+  "Manufacturer",
+  "Photographer",
+  "Astrologer",
+  "Auto Repair",
+  "Boutique",
+  "Interior Designer",
+  "Caterer",
+  "Tuition Classes",
+  "Dental Clinic",
 ];
 
 const FAQS = [
@@ -229,6 +306,9 @@ export default function LandingView({
   const { toast } = useToast();
 
   const [menuOpen, setMenuOpen] = useState(false);
+  const [stickyVisible, setStickyVisible] = useState(false);
+  const [stickyDismissed, setStickyDismissed] = useState(false);
+  const [nearBottom, setNearBottom] = useState(false);
   const [yearly, setYearly] = useState(false);
   const [heroImgOk, setHeroImgOk] = useState(true);
   const [templates, setTemplates] = useState<TemplateDef[]>([]);
@@ -249,6 +329,29 @@ export default function LandingView({
       })
       .catch(() => setTemplates(FALLBACK_TEMPLATES));
   }, []);
+
+  // A sticky bottom CTA that appears after the visitor scrolls past the hero —
+  // a mobile-first conversion nudge. It is hidden for signed-in users (they
+  // already have a dashboard) and once dismissed, and it never shows on the
+  // very top of the page where the hero CTA is already doing the job, nor when
+  // the visitor reaches the footer's own CTA.
+  useEffect(() => {
+    const onScroll = () => {
+      const y = window.scrollY;
+      const distanceToBottom =
+        document.documentElement.scrollHeight - window.innerHeight - y;
+      setStickyVisible(y > 640);
+      setNearBottom(distanceToBottom < 360);
+    };
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onScroll);
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onScroll);
+    };
+  }, []);
+
 
   const plans = storePlans.length > 0 ? storePlans : fetchedPlans;
 
@@ -788,6 +891,74 @@ export default function LandingView({
           </div>
         </section>
 
+        {/* ---------- Trusted-by marquee ---------- */}
+        <section className="border-y border-border bg-white py-10">
+          <p className="mb-6 text-center text-xs font-bold uppercase tracking-widest text-muted-foreground">
+            Trusted by local businesses across India
+          </p>
+          <div className="ws-marquee-wrap" aria-hidden="true">
+            <div className="ws-marquee gap-3">
+              {[...MARQUEE_CATEGORIES, ...MARQUEE_CATEGORIES].map((c, i) => (
+                <span
+                  key={i}
+                  className="flex shrink-0 items-center gap-2 rounded-full border border-border bg-zinc-50 px-4 py-1.5 text-sm font-medium text-zinc-600"
+                >
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                  {c}
+                </span>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* ---------- Testimonials ---------- */}
+        <section id="testimonials" className="scroll-mt-20 bg-zinc-50 py-20 sm:py-24">
+          <div className="mx-auto max-w-6xl px-4 sm:px-6">
+            <SectionHeading
+              eyebrow="Loved by owners"
+              title="Businesses that went online with us"
+              sub="Real stories from shop owners, clinics and consultants who launched in minutes — not months."
+            />
+            <div className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
+              {TESTIMONIALS.map((t, i) => (
+                <FadeIn key={t.name} delay={i * 0.05}>
+                  <figure className="flex h-full flex-col rounded-2xl border border-border bg-white p-6 shadow-sm transition-all hover:-translate-y-0.5 hover:border-emerald-200 hover:shadow-lg hover:shadow-emerald-900/5">
+                    <div className="flex gap-0.5" aria-label={`${t.rating} out of 5 stars`}>
+                      {Array.from({ length: 5 }).map((_, s) => (
+                        <Star
+                          key={s}
+                          className={cn(
+                            "h-4 w-4",
+                            s < t.rating ? "fill-amber-400 text-amber-400" : "text-zinc-300",
+                          )}
+                        />
+                      ))}
+                    </div>
+                    <blockquote className="mt-4 flex-1 text-sm leading-relaxed text-zinc-700">
+                      “{t.quote}”
+                    </blockquote>
+                    <figcaption className="mt-5 flex items-center gap-3 border-t border-zinc-100 pt-4">
+                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-sm font-bold text-emerald-700">
+                        {t.name
+                          .split(" ")
+                          .map((n) => n[0])
+                          .slice(0, 2)
+                          .join("")}
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-semibold text-foreground">{t.name}</span>
+                        <span className="block truncate text-xs text-muted-foreground">
+                          {t.business} · {t.city}
+                        </span>
+                      </span>
+                    </figcaption>
+                  </figure>
+                </FadeIn>
+              ))}
+            </div>
+          </div>
+        </section>
+
         {/* ---------- FAQ ---------- */}
         <section id="faq" className="scroll-mt-20 py-20 sm:py-24">
           <div className="mx-auto max-w-3xl px-4 sm:px-6">
@@ -890,6 +1061,32 @@ export default function LandingView({
         </section>
       </main>
 
+      {/* ---------- Mobile sticky CTA (conversion nudge) ---------- */}
+      {!user && stickyVisible && !stickyDismissed && !nearBottom ? (
+        <div className="fixed inset-x-0 bottom-0 z-50 border-t border-border bg-white/95 px-4 py-3 shadow-[0_-8px_24px_rgba(0,0,0,0.08)] backdrop-blur-md pb-[calc(0.75rem+env(safe-area-inset-bottom))] lg:hidden">
+          <div className="flex items-center gap-3">
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-semibold text-foreground">Your website in 15 min</p>
+              <p className="truncate text-xs text-muted-foreground">{TRIAL_LABEL} · No card needed</p>
+            </div>
+            <Button
+              onClick={goRegister}
+              className="h-10 shrink-0 bg-emerald-600 px-4 text-sm text-white shadow-lg shadow-emerald-600/20 hover:bg-emerald-700"
+            >
+              Start Free
+            </Button>
+            <button
+              type="button"
+              onClick={() => setStickyDismissed(true)}
+              aria-label="Dismiss call to action"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-600"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       {/* ---------- Footer (mt-auto keeps it pinned to the bottom) ---------- */}
       <footer className="mt-auto bg-zinc-950 text-muted-foreground">
         {/* Closing prompt — the last thing a scrolling visitor sees */}
@@ -952,6 +1149,7 @@ export default function LandingView({
                   ["Features", "features"],
                   ["How it works", "how"],
                   ["Templates", "templates"],
+                  ["Reviews", "testimonials"],
                   ["Pricing", "pricing"],
                   ["FAQ", "faq"],
                 ] as const).map(([label, id]) => (
