@@ -56,7 +56,15 @@ export const GET = route(async (req: Request) => {
     // server-side values and never from the request.
     await db.$executeRawUnsafe(`VACUUM INTO '${target.replace(/'/g, "''")}'`);
 
-    const raw = await readFile(target);
+    // `turbopackIgnore` because this path is written by this very route a few
+    // lines above, at request time, into the OS temp directory. The build
+    // tracer cannot resolve `tmpdir()` statically, and its fallback for an
+    // unknown read is to trace the entire project root — which put `src/` and,
+    // worse, the machine's `.env` (APP_SECRET, Razorpay keys, SMTP password)
+    // inside `.next/standalone`, the folder that gets uploaded on deploy.
+    // Nothing about this read is a build-time fact, so there is nothing for the
+    // tracer to follow.
+    const raw = await readFile(/* turbopackIgnore: true */ target);
     const gz = gzipSync(raw, { level: 9 });
 
     await audit({

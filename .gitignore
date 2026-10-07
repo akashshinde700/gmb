@@ -96,3 +96,13 @@ stitch-keys.local.json
 # Customer-uploaded images live in UPLOADS_DIR on the server, not in git
 public/uploads/
 __pycache__/
+
+# Patch/bundle artifacts of a session's work. A 1.4 MB `GMB-PATCH-*.patch`
+# holding a diff of already-merged commits was committed this way, and the
+# standalone build then copied it into the deployable output. If a patch is
+# worth keeping, it belongs in the pull request, not in the tree.
+*.patch
+*.diff
+*.bundle
+*.zip
+!*/public/**/*.zip

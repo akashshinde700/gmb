@@ -4,6 +4,7 @@
 // leads, seo, analytics, subscription, settings. All data via api client.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import OrdersTab from "@/components/views/orders-tab";
 import {
   AlertCircle, ArrowLeft, BarChart3, Bell, Briefcase, Building2, Check, CheckCircle2,
@@ -16,9 +17,6 @@ import {
   Youtube,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import {
-  Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis,
-} from "recharts";
 import { api } from "@/lib/api-client";
 import { useApp } from "@/store/app-store";
 import type { BusinessWithMeta, DashboardTab } from "@/store/app-store";
@@ -84,6 +82,26 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+
+/* ---------------------------------- charts --------------------------------- */
+
+/**
+ * The two analytics charts, fetched only when the Analytics tab is opened.
+ *
+ * recharts is the heaviest client dependency in the app and it used to be
+ * imported at the top of this file, which meant every dashboard screen — the
+ * builder, the lead inbox, a CRUD form — paid for a charting library it never
+ * drew. `ssr: false` is right for both: they measure their own container, so on
+ * the server they would only render an empty box.
+ */
+const DailyTrafficChart = dynamic(
+  () => import("@/components/views/charts").then((m) => m.DailyTrafficChart),
+  { ssr: false, loading: () => <Skeleton className="h-64 w-full rounded-2xl" /> },
+);
+const CtaClicksChart = dynamic(
+  () => import("@/components/views/charts").then((m) => m.CtaClicksChart),
+  { ssr: false, loading: () => <Skeleton className="mt-4 h-44 w-full rounded-2xl" /> },
+);
 
 /* ---------------------------------- style ---------------------------------- */
 
@@ -4591,8 +4609,6 @@ function SeoTab({ business, content }: { business: BusinessWithMeta; content: Co
 
 /* ================================ 7. ANALYTICS ============================== */
 
-const CHART_COLORS = { emerald: "#059669", amber: "#d97706", zinc: "#a1a1aa" };
-
 const VISIT_ACTION_LABEL: Record<string, { label: string; Icon: typeof Phone }> = {
   VISIT: { label: "Opened the site", Icon: Eye },
   CART_ADD: { label: "Added to cart", Icon: ShoppingBag },
@@ -4736,37 +4752,15 @@ function AnalyticsTab({ business }: { business: BusinessWithMeta }) {
               <p className="text-xs text-muted-foreground">Visits and enquiries per day (last 14 days)</p>
             </div>
             <div className="flex items-center gap-4 text-xs font-medium">
-              <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full" style={{ background: CHART_COLORS.emerald }} /> Visits</span>
-              <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full" style={{ background: CHART_COLORS.amber }} /> Leads</span>
+              <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-emerald-600" /> Visits</span>
+              <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-amber-600" /> Leads</span>
             </div>
           </div>
           {loading ? (
             <Skeleton className="h-64 w-full rounded-2xl" />
           ) : (
             <div className="h-64 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={chartData} margin={{ top: 5, right: 5, bottom: 0, left: -20 }}>
-                  <defs>
-                    <linearGradient id="gVisits" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={CHART_COLORS.emerald} stopOpacity={0.25} />
-                      <stop offset="100%" stopColor={CHART_COLORS.emerald} stopOpacity={0} />
-                    </linearGradient>
-                    <linearGradient id="gLeads" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={CHART_COLORS.amber} stopOpacity={0.25} />
-                      <stop offset="100%" stopColor={CHART_COLORS.amber} stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" vertical={false} />
-                  <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#71717a" }} tickLine={false} axisLine={false} interval="preserveStartEnd" />
-                  <YAxis tick={{ fontSize: 11, fill: "#71717a" }} tickLine={false} axisLine={false} allowDecimals={false} />
-                  <Tooltip
-                    contentStyle={{ borderRadius: 12, border: "1px solid #e4e4e7", fontSize: 12 }}
-                    labelStyle={{ fontWeight: 700, color: "#18181b" }}
-                  />
-                  <Area type="monotone" dataKey="visits" stroke={CHART_COLORS.emerald} strokeWidth={2} fill="url(#gVisits)" name="Visits" />
-                  <Area type="monotone" dataKey="leads" stroke={CHART_COLORS.amber} strokeWidth={2} fill="url(#gLeads)" name="Leads" />
-                </AreaChart>
-              </ResponsiveContainer>
+              <DailyTrafficChart data={chartData} />
             </div>
           )}
         </Card>
@@ -4779,15 +4773,7 @@ function AnalyticsTab({ business }: { business: BusinessWithMeta }) {
               <Skeleton className="mt-4 h-44 w-full rounded-2xl" />
             ) : (
               <div className="mt-4 h-44 w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={ctaData} margin={{ top: 5, right: 5, bottom: 0, left: -25 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" vertical={false} />
-                    <XAxis dataKey="name" tick={{ fontSize: 11, fill: "#71717a" }} tickLine={false} axisLine={false} />
-                    <YAxis tick={{ fontSize: 11, fill: "#71717a" }} tickLine={false} axisLine={false} allowDecimals={false} />
-                    <Tooltip contentStyle={{ borderRadius: 12, border: "1px solid #e4e4e7", fontSize: 12 }} cursor={{ fill: "rgba(5,150,105,0.06)" }} />
-                    <Bar dataKey="count" name="Clicks" fill={CHART_COLORS.emerald} radius={[6, 6, 0, 0]} maxBarSize={40} />
-                  </BarChart>
-                </ResponsiveContainer>
+                <CtaClicksChart data={ctaData} />
               </div>
             )}
           </Card>

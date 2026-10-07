@@ -517,6 +517,33 @@ async function main() {
   check("referrer policy header is set", !!root.headers.get("referrer-policy"));
   check("Next version header is hidden", !root.headers.get("x-powered-by"));
 
+  /* -------------------------------------------------- no open proxies -- */
+  // These two routes shipped a public, unauthenticated proxy to an external
+  // model service that nothing in the product called: any stranger could spend
+  // the server's bandwidth and its IP's reputation through it, and /api/health
+  // reported that third party as one of the platform's own dependencies. They
+  // are gone; this is the guard that keeps them gone.
+  section("No unauthenticated third-party proxies");
+
+  const chat = await call("POST", "/api/chat", {
+    body: { messages: [{ role: "user", content: "ping" }], stream: false },
+  });
+  check("the /api/chat proxy is gone", chat.status === 404, `got ${chat.status}`);
+  const models = await call("GET", "/api/models");
+  check("the /api/models listing is gone", models.status === 404, `got ${models.status}`);
+
+  /* ------------------------------------------------------- health ------ */
+  section("Health probe");
+
+  const health = await call("GET", "/api/health");
+  check("health answers 200", health.status === 200, `got ${health.status}`);
+  check("health reports the database", health.json?.checks?.database === true);
+  check("health reports mail configuration", typeof health.json?.checks?.mail === "boolean");
+  check("health reports the SMS allowance", typeof health.json?.checks?.sms === "boolean");
+  check("health no longer probes a third party",
+    health.json?.checks?.freeModels === undefined && health.json?.checks?.freemodels === undefined,
+    JSON.stringify(health.json?.checks));
+
   /* ---------------------------------------------------------- summary --- */
   console.log(`\n${passed} passed, ${failed} failed`);
   if (failures.length) {

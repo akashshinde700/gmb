@@ -90,12 +90,15 @@ const REPO_FILES_NOT_NEEDED_AT_RUNTIME = [
   "./.env.example",
   "./db/**/*",
   "./e2e/**/*",
+  "./marketing_content/**/*",
   "./public/**/*",
   "./scripts/**/*",
   "./src/**/*",
   "./test-results/**/*",
   "./tests/**/*",
+  "./tools/**/*",
   "./*.md",
+  "./*.patch",
   "./*.py",
   "./*.json",
   "./*.ts",
@@ -108,10 +111,31 @@ const REPO_FILES_NOT_NEEDED_AT_RUNTIME = [
 
 const nextConfig: NextConfig = {
   output: "standalone",
-  // Keyed by route glob, matched with `contains`, so this one key covers both
-  // /api/upload and /api/uploads/[file].
+  /**
+   * One key, `"*"`, which matches every route.
+   *
+   * The keys are matched against the route name with
+   * `picomatch(key, { dot: true, contains: true })`, so a bare `*` matches all
+   * of them — deliberately. The previous version listed only `"/api/upload"`,
+   * because the problem was believed to live only in the upload route. It did
+   * not: a `.next/standalone` built from this repository contained the whole
+   * project root — `db/custom.db` (the live database), `.env`, `e2e/`,
+   * `marketing_content/` and a 1.4 MB rejected patch — because ANY route whose
+   * trace hit an unresolvable file read widened to the project root, and
+   * Turbopack additionally traces the TypeScript sources of every module it
+   * compiles.
+   *
+   * Excluding here is the belt; the `turbopackIgnore` comments in
+   * src/lib/uploads.ts and src/app/api/admin/backup/route.ts are the braces
+   * that stop the widening at its source. scripts/check-standalone.mjs fails
+   * the build if either stops working.
+   *
+   * `prisma/` is absent from this list on purpose: scripts/deploy-swap.py
+   * copies `prisma/` and the generated client into the standalone output as an
+   * explicit deploy step, so the server has them without the trace.
+   */
   outputFileTracingExcludes: {
-    "/api/upload": REPO_FILES_NOT_NEEDED_AT_RUNTIME,
+    "*": REPO_FILES_NOT_NEEDED_AT_RUNTIME,
   },
   images: {
     // Modern formats first; sharp (already a dependency) does the encoding.
