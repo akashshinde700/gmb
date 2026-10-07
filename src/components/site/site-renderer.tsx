@@ -1,7 +1,7 @@
 "use client";
 // WebSetu — SiteRenderer: renders a complete tenant website from SitePayload.
 // Used in live view + dashboard preview (mode="preview" disables tracking/lead POSTs).
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Phone, Menu, X, Star, Facebook, Instagram, Youtube, Linkedin, Twitter, Globe,
   MessageCircle, Mail, MapPin, Moon, ArrowUp,
@@ -312,11 +312,22 @@ export default function SiteRenderer({ payload, mode = "live", device = "desktop
     if (!raw || raw.status !== "running" || raw.variants?.length < 2) return null;
     return raw;
   }, [website.theme?.experiments]);
-  const [abVariant, setAbVariant] = useState<{ key: string; variant: "a" | "b" } | null>(null);
-  const [abSections, setAbSections] = useState<SiteSection[] | null>(null);
+  // One test, one assignment: which variant this visitor got, and the sections
+  // that go with it.
+  const [ab, setAb] = useState<{ key: string; variant: "a" | "b"; sections: SiteSection[] } | null>(null);
+  /**
+   * The test this visitor is in, attached to every event they generate — the
+   * visit, the call tap, the enquiry. Without it the owner would see two
+   * headlines in a dashboard and no way to tell which one earned the work.
+   */
+  const abMeta = useCallback(
+    (): { experiment?: string; variant?: string } =>
+      experiment && ab ? { experiment: String(experiment.key), variant: ab.variant } : {},
+    [experiment, ab],
+  );
   // Until the visitor's variant is known, the page renders exactly what the
   // owner approved — the control is the real page, not a copy of it.
-  const sections = abSections ?? baseSections;
+  const sections = ab?.sections ?? baseSections;
   const [menuOpen, setMenuOpen] = useState(false);
   // Which service/product the visitor clicked "Enquire" on, so the contact form
   // arrives pre-filled and the lead records what they actually asked about.
@@ -335,12 +346,14 @@ export default function SiteRenderer({ payload, mode = "live", device = "desktop
 
   useEffect(() => {
     if (!experiment || mode === "preview") return;
+    // Which variant this visitor gets comes from localStorage (their own stable
+    // id) — an external store that cannot be read during render without
+    // breaking hydration, so the read and the state it produces belong in this
+    // effect rather than in the render.
     const applied = applyVariant(baseSections, experiment, visitorId());
-    if (applied.applied) {
-      setAbVariant(applied.applied);
-      // Variant A is the live page untouched, so only B needs new sections.
-      if (applied.applied.variant === "b") setAbSections(applied.sections);
-    }
+    if (!applied.applied) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setAb({ ...applied.applied, sections: applied.sections });
   }, [experiment, baseSections, mode]);
 
   // theme → CSS variables. Every value is optional, so a site published before
@@ -384,21 +397,13 @@ export default function SiteRenderer({ payload, mode = "live", device = "desktop
     if (mode !== "live" || trackedVisit.current) return;
     trackedVisit.current = true;
     api.post("/api/analytics/event", { slug: business.slug, type: "VISIT", path: "/", ...abMeta() }).catch(() => {});
-  }, [mode, business.slug, abVariant]);
+  }, [mode, business.slug, abMeta]);
 
   function track(type: string) {
     if (mode !== "live") return;
     api.post("/api/analytics/event", { slug: business.slug, type, path: "/", ...abMeta() }).catch(() => {});
   }
 
-  /**
-   * The test this visitor is in, attached to every event they generate — the
-   * visit, the call tap, the enquiry. Without it the owner would see two
-   * headlines in a dashboard and no way to tell which one earned the work.
-   */
-  function abMeta(): { experiment?: string; variant?: string } {
-    return experiment && abVariant ? { experiment: String(experiment.key), variant: abVariant.variant } : {};
-  }
 
   async function submitLead(data: {
     name: string; phone: string; email: string; message: string; website: string; serviceName?: string;

@@ -8,7 +8,7 @@ import {
   ChevronDown, ChevronUp, Clock, Copy, CreditCard, ExternalLink, Eye, EyeOff,
   Globe, GripVertical, HelpCircle, Image as ImageIcon, ImagePlus, Inbox, Info, LayoutDashboard,
   LayoutTemplate, Link2, Loader2, LogOut, Mail, MapPin, Menu, MessageCircle, Monitor,
-  Newspaper, Package, Palette, Pencil, PenLine, Phone, Play, Plus, QrCode, Quote, Rocket, Save, Search, Settings, FlaskConical,
+  Newspaper, Package, Palette, Pencil, PenLine, Phone, Play, Plus, QrCode, Quote, Rocket, Save, Search, Settings, FlaskConical, Download,
   ShieldCheck, Smartphone, Sparkles, Star, Tablet, Trash2, TrendingUp, Users, XCircle,
   Youtube,
 } from "lucide-react";
@@ -2318,6 +2318,198 @@ interface GoogleLookup {
  * Google and when, because a website that quietly presents imported data as the
  * owner's own words is a website nobody should trust.
  */
+interface WebsiteLookup {
+  url: string;
+  title: string;
+  summary: string[];
+  missing: string[];
+  options: { id: string; field: string; label: string; current: string; next: string; display: string }[];
+  services: { name: string; description: string }[];
+  faqs: { question: string; answer: string }[];
+  photos: { url: string; alt: string }[];
+  social: string[];
+  hourDays: number;
+}
+
+/**
+ * The owner's *old* website, read title by title.
+ *
+ * Google gives a business its facts; the owner's own site gives it the things
+ * Google never had — the about paragraph they wrote, the services they list, the
+ * questions they answer, the photos they own. All of it is offered as ticked
+ * boxes with what the page actually said next to each one, and every write is
+ * tagged "website" so the profile can say where a line came from.
+ *
+ * The design is deliberately not imported. Same trade or not, the new site is
+ * built from this business's own design genome.
+ */
+function WebsiteImportCard({ business, onApplied }: {
+  business: BusinessWithMeta;
+  onApplied: (b: Business) => void;
+}) {
+  const patchBusiness = useApp((s) => s.patchBusiness);
+  const [url, setUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<WebsiteLookup | null>(null);
+  // What an earlier import already brought over, so the card is honest about
+  // which lines on this profile came from the owner's old website.
+  const already = useMemo(
+    () => Object.entries(business.facts ?? {}).filter(([, fact]) => fact.source === "website"),
+    [business.facts],
+  );
+  const [chosen, setChosen] = useState<string[]>([]);
+  const [withServices, setWithServices] = useState(false);
+  const [withFaqs, setWithFaqs] = useState(false);
+  const [withPhotos, setWithPhotos] = useState(false);
+
+  async function read() {
+    const target = url.trim();
+    if (!target) return;
+    setBusy(true);
+    setResult(null);
+    try {
+      const res = await api.post<WebsiteLookup>("/api/business/website-import", { mode: "lookup", url: target });
+      setResult(res);
+      // Additions ticked, replacements offered — same rule as the Google card.
+      setChosen(res.options.filter((o) => !o.current).map((o) => o.id));
+      setWithServices(res.services.length > 0);
+      setWithFaqs(res.faqs.length > 0);
+      setWithPhotos(res.photos.length > 0);
+    } catch (e) {
+      toast({ variant: "destructive", title: "Could not read that page", description: errMsg(e) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function apply() {
+    if (!result) return;
+    setBusy(true);
+    try {
+      const res = await api.post<{
+        applied: { label: string; value: string }[];
+        servicesAdded: number; faqsAdded: number; photosAdded: number;
+        business: Business;
+      }>("/api/business/website-import", {
+        mode: "apply", url, fields: chosen,
+        services: withServices, faqs: withFaqs, photos: withPhotos,
+      });
+      patchBusiness(res.business);
+      onApplied(res.business);
+      const parts = [
+        res.applied.length ? `${res.applied.length} field(s)` : "",
+        res.servicesAdded ? `${res.servicesAdded} services` : "",
+        res.faqsAdded ? `${res.faqsAdded} questions` : "",
+        res.photosAdded ? `${res.photosAdded} photos` : "",
+      ].filter(Boolean);
+      toast({
+        title: "Brought over from your website",
+        description: parts.length ? `${parts.join(" · ")}. Press Save below to keep the rest of your edits.` : "Nothing new was found.",
+      });
+      setResult(null);
+      setUrl("");
+    } catch (e) {
+      toast({ variant: "destructive", title: "Could not bring that over", description: errMsg(e) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="rounded-xl border p-3">
+      <p className="flex items-center gap-2 text-xs font-semibold text-foreground">
+        <Globe className="h-3.5 w-3.5 text-emerald-600" /> Bring your old website across
+      </p>
+      <p className="mt-1 text-[11px] text-muted-foreground">
+        Paste your existing site: we read its phone, address, about text, services, questions and photos. Your words and
+        your pictures — never its layout.
+      </p>
+      {already.length > 0 && (
+        <p className="mt-1 text-[11px] text-emerald-700">
+          Already brought over from your website: {already.map(([field]) => field).join(", ")}.
+        </p>
+      )}
+      <div className="mt-2 flex gap-2">
+        <Input
+          className="h-9 rounded-lg text-sm"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void read(); } }}
+          placeholder="yourbusiness.com"
+          inputMode="url"
+        />
+        <Button size="sm" className="h-9 shrink-0 rounded-lg bg-emerald-600 text-xs hover:bg-emerald-700" disabled={busy || !url.trim()} onClick={() => void read()}>
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />} Read
+        </Button>
+      </div>
+
+      {result && (
+        <div className="mt-3 rounded-lg border bg-white p-3">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            {result.title || result.url}
+          </p>
+          <p className="mt-0.5 text-[11px] text-muted-foreground">{result.summary.join(" · ") || "Page read"}</p>
+
+          {result.options.length > 0 && (
+            <div className="mt-2 space-y-1.5 border-t pt-2">
+              {result.options.map((o) => (
+                <label key={o.id} className="flex cursor-pointer items-start gap-2 text-[11px]">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 h-3.5 w-3.5 accent-emerald-600"
+                    checked={chosen.includes(o.id)}
+                    onChange={(e) => setChosen((p) => (e.target.checked ? [...p, o.id] : p.filter((id) => id !== o.id)))}
+                  />
+                  <span className="min-w-0">
+                    <span className="font-medium text-foreground">{o.label}</span>
+                    {o.current
+                      ? <span className="block truncate text-muted-foreground">{o.current} → <span className="text-foreground">{o.display}</span></span>
+                      : <span className="block truncate text-muted-foreground">{o.display}</span>}
+                  </span>
+                </label>
+              ))}
+            </div>
+          )}
+
+          <div className="mt-2 space-y-1.5 border-t pt-2">
+            {result.services.length > 0 && (
+              <label className="flex cursor-pointer items-start gap-2 text-[11px]">
+                <input type="checkbox" className="mt-0.5 h-3.5 w-3.5 accent-emerald-600" checked={withServices} onChange={() => setWithServices((v) => !v)} />
+                <span className="text-muted-foreground"><span className="font-medium text-foreground">{result.services.length} services</span> — {result.services.map((s) => s.name).slice(0, 5).join(", ")}{result.services.length > 5 ? "…" : ""}</span>
+              </label>
+            )}
+            {result.faqs.length > 0 && (
+              <label className="flex cursor-pointer items-start gap-2 text-[11px]">
+                <input type="checkbox" className="mt-0.5 h-3.5 w-3.5 accent-emerald-600" checked={withFaqs} onChange={() => setWithFaqs((v) => !v)} />
+                <span className="text-muted-foreground"><span className="font-medium text-foreground">{result.faqs.length} questions you already answer</span> — {result.faqs[0].question.slice(0, 60)}…</span>
+              </label>
+            )}
+            {result.photos.length > 0 && (
+              <label className="flex cursor-pointer items-start gap-2 text-[11px]">
+                <input type="checkbox" className="mt-0.5 h-3.5 w-3.5 accent-emerald-600" checked={withPhotos} onChange={() => setWithPhotos((v) => !v)} />
+                <span className="text-muted-foreground"><span className="font-medium text-foreground">{result.photos.length} of your photos</span> for the gallery</span>
+              </label>
+            )}
+          </div>
+
+          {result.missing.length > 0 && (
+            <p className="mt-2 text-[11px] text-muted-foreground">Not on that page, so we did not guess: {result.missing.join(", ")}.</p>
+          )}
+
+          <div className="mt-2 flex gap-2">
+            <Button size="sm" className="h-8 rounded-lg bg-emerald-600 text-xs hover:bg-emerald-700" disabled={busy} onClick={() => void apply()}>
+              <Check className="h-3.5 w-3.5" /> Bring these over
+            </Button>
+            <Button size="sm" variant="ghost" className="h-8 rounded-lg text-xs" disabled={busy} onClick={() => { setResult(null); setUrl(""); }}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GoogleImportCard({ business, onApplied }: {
   business: BusinessWithMeta;
   onApplied: (b: Business) => void;
@@ -3305,6 +3497,16 @@ function BusinessTab({ business }: { business: BusinessWithMeta }) {
                 onChange={(v) => setF("coverUrl", v)}
                 hint="Wide photo of your shop, team or work — used in the hero & about sections."
                 maxWidth={1400}
+              />
+              <WebsiteImportCard
+                business={business}
+                onApplied={(b) => setForm((p) => ({
+                  ...p,
+                  name: b.name, tagline: b.tagline, description: b.description,
+                  phone: b.phone, whatsapp: b.whatsapp, email: b.email,
+                  address: b.address, city: b.city, state: b.state, pincode: b.pincode,
+                  logoUrl: b.logoUrl, coverUrl: b.coverUrl,
+                }))}
               />
               <GoogleImportCard
                 business={business}

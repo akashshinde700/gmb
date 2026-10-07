@@ -57,7 +57,7 @@ export interface Business {
    * Anything not listed here was typed by the owner, and nothing in it was
    * invented (see lib/places.ts).
    */
-  facts?: Record<string, { value: string; source: "google" | "link" | "owner"; at?: string }>;
+  facts?: Record<string, { value: string; source: "google" | "link" | "owner" | "website"; at?: string }>;
   status: BusinessStatus;
   createdAt: string;
 }

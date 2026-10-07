@@ -10,8 +10,8 @@ import { useUnsavedChanges } from "@/hooks/use-unsaved-changes";
 import { useRouter } from "next/navigation";
 import { TRIAL_LABEL } from "@/lib/trial";
 import {
-  AlertCircle, ArrowLeft, ArrowRight, Briefcase, Building2, Check, Globe, Loader2, LogOut, MapPin,
-  Phone, Plus, Repeat, Rocket, Search, Sparkles, X,
+  AlertCircle, ArrowLeft, ArrowRight, Briefcase, Building2, Check, Download, Globe, Loader2, LogOut,
+  MapPin, Phone, Plus, Repeat, Rocket, Search, Sparkles, X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -816,6 +816,31 @@ export default function OnboardingView() {
                   sub="This shapes your website content, design and SEO."
                 />
 
+                <WebsiteImportBox
+                  onApply={(values, services) => {
+                    setForm((f) => {
+                      const next: OnboardingForm = { ...f };
+                      const writable = next as unknown as Record<string, string>;
+                      for (const [key, value] of Object.entries(values)) {
+                        if (key in next) writable[key] = value;
+                      }
+                      // Services merge rather than replace: whatever the wizard
+                      // had already suggested stays, and duplicates by name are
+                      // dropped so the step does not show the same row twice.
+                      const seen = new Set(next.services.map((s) => s.name.trim().toLowerCase()));
+                      const merged = [...next.services];
+                      for (const service of services) {
+                        const name = service.name.trim();
+                        if (!name || seen.has(name.toLowerCase()) || merged.length >= 12) continue;
+                        seen.add(name.toLowerCase());
+                        merged.push({ id: `imp-${seen.size}-${name.slice(0, 12)}`, name, description: service.description || "" });
+                      }
+                      return { ...next, services: merged };
+                    });
+                    setError("");
+                  }}
+                />
+
                 <div className="space-y-2">
                   <Label htmlFor="cat-search">Business category *</Label>
                   <div className="relative">
@@ -1450,6 +1475,199 @@ export default function OnboardingView() {
 }
 
 // ---------------------------------------------------------------- small parts
+
+/* --------------------- bringing an existing site across -------------------- */
+
+interface ImportPreview {
+  url: string;
+  title: string;
+  summary: string[];
+  missing: string[];
+  found: {
+    name: string | null; tagline: string | null; description: string | null;
+    phone: string | null; whatsapp: string | null; email: string | null;
+    address: string | null; city: string | null; state: string | null; pincode: string | null;
+  };
+  services: { name: string; description: string }[];
+  faqs: number;
+  photos: number;
+}
+
+const IMPORT_FIELDS = [
+  ["name", "Business name"], ["tagline", "Tagline"], ["description", "About"],
+  ["phone", "Phone"], ["whatsapp", "WhatsApp"], ["email", "Email"],
+  ["address", "Address"], ["city", "City"], ["state", "State"], ["pincode", "PIN code"],
+] as const;
+
+/**
+ * "You already have a website — let it fill this in."
+ *
+ * Reads the owner's current page and offers what it actually says, field by
+ * field, so they can keep whichever parts are still true. Nothing is written
+ * from here: the values land in the form they are already filling in, and the
+ * page they came from is named on every line. What the page does not say is
+ * listed too, rather than quietly filled with something plausible.
+ */
+function WebsiteImportBox({ onApply }: {
+  onApply: (values: Record<string, string>, services: { name: string; description: string }[]) => void;
+}) {
+  const { toast } = useToast();
+  const [url, setUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [preview, setPreview] = useState<ImportPreview | null>(null);
+  const [chosen, setChosen] = useState<Set<string>>(new Set());
+  const [withServices, setWithServices] = useState(true);
+
+  async function look() {
+    const target = url.trim();
+    if (!target) return;
+    setBusy(true);
+    setPreview(null);
+    try {
+      const res = await api.post<ImportPreview>("/api/business/website-import/preview", { url: target });
+      setPreview(res);
+      // Everything found is ticked to begin with — the common case is "yes,
+      // that is my business", and unticking is faster than ticking ten boxes.
+      setChosen(new Set(IMPORT_FIELDS.filter(([key]) => res.found[key as keyof ImportPreview["found"]]).map(([key]) => key)));
+      setWithServices(res.services.length > 0);
+    } catch (e) {
+      toast({ variant: "destructive", title: "Could not read that page", description: e instanceof Error ? e.message : "Check the address and try again." });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function apply() {
+    if (!preview) return;
+    const values: Record<string, string> = {};
+    for (const [key] of IMPORT_FIELDS) {
+      const value = preview.found[key as keyof ImportPreview["found"]];
+      if (chosen.has(key) && value) values[key] = String(value);
+    }
+    onApply(values, withServices ? preview.services : []);
+    toast({
+      title: "Filled in from your website",
+      description: [
+        `${Object.keys(values).length} field(s)`,
+        withServices && preview.services.length ? `${preview.services.length} services` : "",
+      ].filter(Boolean).join(" · ") + " — check each one, then carry on.",
+    });
+    setPreview(null);
+    setUrl("");
+  }
+
+  const present = IMPORT_FIELDS.filter(([key]) => preview?.found[key as keyof ImportPreview["found"]]);
+
+  return (
+    <div className="rounded-2xl border border-emerald-200 bg-emerald-50/40 p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <Globe className="h-4 w-4 text-emerald-700" aria-hidden="true" />
+        <p className="text-sm font-semibold text-foreground">Already have a website? Fill this in from it.</p>
+      </div>
+      <p className="mt-1 text-xs text-muted-foreground">
+        Paste your current site&apos;s address and we will read what it says — your words, your phone number, your address.
+        Nothing is copied from its design: your new site is built fresh, and you can change anything below.
+      </p>
+
+      <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+        <Input
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void look(); } }}
+          placeholder="yourbusiness.com or https://yourbusiness.com"
+          className="rounded-xl bg-white"
+          autoComplete="url"
+          inputMode="url"
+          aria-label="Address of your current website"
+        />
+        <Button type="button" onClick={() => void look()} disabled={busy || !url.trim()} className="shrink-0 rounded-xl bg-emerald-600 hover:bg-emerald-700">
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+          Read my site
+        </Button>
+      </div>
+      {busy && <p className="mt-2 text-xs text-muted-foreground">Reading… this usually takes a couple of seconds.</p>}
+
+      {preview && (
+        <div className="mt-3 space-y-3 rounded-xl border border-emerald-200 bg-white p-3">
+          <div>
+            <p className="text-xs font-semibold text-foreground">{preview.title || preview.url}</p>
+            <p className="text-[11px] text-muted-foreground">
+              {preview.summary.length ? preview.summary.join(" · ") : "We read the page"}
+            </p>
+          </div>
+
+          {present.length === 0 && (
+            <p className="text-xs text-muted-foreground">
+              This page did not state anything we could bring over — no phone number, address or description we could
+              read. Fill the form in yourself, or try a different page (the one with your contact details on it).
+            </p>
+          )}
+
+          {present.length > 0 && (
+            <div className="space-y-1.5">
+              {present.map(([key, label]) => {
+                const value = String(preview.found[key as keyof ImportPreview["found"]] ?? "");
+                return (
+                  <label key={key} className="flex cursor-pointer items-start gap-2 text-xs">
+                    <input
+                      type="checkbox"
+                      checked={chosen.has(key)}
+                      onChange={() => setChosen((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(key)) next.delete(key); else next.add(key);
+                        return next;
+                      })}
+                      className="mt-0.5 h-3.5 w-3.5 accent-emerald-600"
+                    />
+                    <span className="text-muted-foreground"><span className="font-medium text-foreground">{label}:</span> {value.slice(0, 120)}{value.length > 120 ? "…" : ""}</span>
+                  </label>
+                );
+              })}
+            </div>
+          )}
+
+          {preview.services.length > 0 && (
+            <label className="flex cursor-pointer items-start gap-2 border-t border-border pt-2 text-xs">
+              <input
+                type="checkbox"
+                checked={withServices}
+                onChange={() => setWithServices((v) => !v)}
+                className="mt-0.5 h-3.5 w-3.5 accent-emerald-600"
+              />
+              <span className="text-muted-foreground">
+                <span className="font-medium text-foreground">{preview.services.length} services:</span>{" "}
+                {preview.services.map((s) => s.name).slice(0, 6).join(", ")}{preview.services.length > 6 ? "…" : ""}
+              </span>
+            </label>
+          )}
+
+          {preview.missing.length > 0 && (
+            <p className="text-[11px] text-muted-foreground">
+              Not on that page, so we did not invent it: {preview.missing.join(", ")}.
+            </p>
+          )}
+          {(preview.faqs > 0 || preview.photos > 0) && (
+            <p className="text-[11px] text-muted-foreground">
+              {[preview.faqs ? `${preview.faqs} of your questions` : "", preview.photos ? `${preview.photos} photos` : ""]
+                .filter(Boolean)
+                .join(" and ")}{" "}
+              can be brought over from your dashboard after signup.
+            </p>
+          )}
+
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" onClick={apply} disabled={(!present.length && !withServices)} className="rounded-xl bg-emerald-600 hover:bg-emerald-700">
+              <Check className="h-4 w-4" /> Fill these in
+            </Button>
+            <Button type="button" variant="outline" onClick={() => { setPreview(null); setUrl(""); }} className="rounded-xl">
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function StepHeader({ icon, title, sub }: { icon: React.ReactNode; title: string; sub: string }) {
   return (

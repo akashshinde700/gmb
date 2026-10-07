@@ -11,8 +11,7 @@
 import {
   alternativePrompt, applyVariant, cleanVariantContent, tallyExperiment, testableFields, variantFor, variantsDiffer,
   type Experiment,
-} from "../src/lib/experiments.ts";
-import type { SiteSection } from "../src/lib/types.ts";
+} from "@/lib/experiments";
 
 let passed = 0;
 let failed = 0;

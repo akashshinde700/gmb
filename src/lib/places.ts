@@ -21,7 +21,7 @@
 // lets the dashboard say "this came from Google" instead of implying that we
 // made it up.
 
-export type FactSource = "google" | "owner" | "link";
+export type FactSource = "google" | "owner" | "link" | "website";
 
 /** One fact, and where it came from. */
 export interface Fact {
