@@ -326,3 +326,22 @@ Stage Summary:
 - npm run test:all green on a fresh server (api-smoke 105/0, usage-race/coupon-race/distinct-sites all passing), tsc 0, eslint 0, design tests 69 checks. Commits: 12e9344 (re-landed engine), 5670670 (this work) — pushed to origin/arena/cd3fcf8e-gmb
 - Sandbox notes: the STUB provider must not be running for tests/usage-race.mjs (it expects the AI call to fail so the credit is refunded); prisma/seed.ts now needs the libsql adapter (sandbox-only patch, uncommitted) and `prisma db push` needs DATABASE_URL passed explicitly because prisma.config.ts suppresses .env loading
 - Still open: Google Business Profile import, three concept previews, A/B testing, a provider cost/quota view, scheduling Autopilot on the server (the script is ready; cron entry belongs on the host)
+---
+Task ID: 14-a
+Agent: main (Arena Agent)
+Task: Local business intelligence from Google (with provenance) and the three-concept chooser
+
+Work Log:
+- src/lib/places.ts (new): the rule is enforced in code — a fact is either the owner's or a named source's. Two ways in: a pasted Google Maps link is parsed for name, coordinates, place id and a directions link (deterministic, offline, no key); with GOOGLE_PLACES_API_KEY set the same lookup also fetches address, phone, opening hours, rating, categories and reviews from the Places API (base URL overridable for proxies and tests)
+- Lookups are proposals, not writes: the dashboard shows "what you have → what Google says" per field, ticked only for the fields the owner left empty, and only the ticked lines are stored. Field names are checked against a fixed list, and apply re-runs the lookup server-side, so the database only ever receives something a source actually said
+- Provenance is stored per field in the new Business.factsJson ({ phone: { value, source: "google"|"link", at } }) and surfaced as a "verified by Google" line in the dashboard. The production schema was staged with git update-index so the sandbox-only engineType tweak stayed out of the commit
+- The imported data is put to work: hours merge into the hours the site shows (a day Google omitted never wipes a day the owner set), address and coordinates give the contact section its directions link, the phone becomes the call button, and reviews become testimonials credited to the reviewer and tagged "Google review" — deduplicated on re-apply. Three new suggestion rules: no profile linked, reviews on Google missing from the site, hours on Google missing from the site
+- src/lib/concepts.ts (new) + POST /api/onboarding/concepts: three genomes drawn from the wizard's own details, each previewed with the real site renderer in preview mode (no screenshots, no second implementation). Quality scored with the starter FAQs and gallery the signup actually creates. Choosing sends `concept: k`; "I can't decide" keeps the old most-distinct behaviour
+- blueprints.ts: candidateBlueprints() draws the three in sequence, adding each chosen palette to the taken list before the next; the palette stream now follows the attempt number. Both call sites use it, so concept k IS the genome the signup rebuilds
+- tests/places.test.mts (51 checks) and tests/concepts.test.mts (35 checks), both in test:all
+
+Stage Summary:
+- Live probes: link-only mode read "Skyline Dental Care Baner" + coordinates from the URL, offered name/directions/profile link, wrote them with source "link", changed nothing else (address and phone untouched), and the second lookup offered nothing because everything matched. With the Places stub: via places-api, address/city/pincode/phone/hours/placeId applied, rating 4.7 and 128 reviews recorded as facts, 2 substantial reviews became testimonials (the "ok" one was dropped), the review appears on the live page, re-applying added 0 duplicates, and "ok" short links / empty input / nothing-ticked / bogus field names all answered with a proper 4xx
+- Concepts: 3 concepts in ~35ms, 22 KB total, three different palettes (violet / blue / clay), 2 distinct style names and 3 distinct plans; picking concept 1 produced a site whose styleName, colours, font/radius/button, motion and full section plan all matched. A bogus index falls back to the most distinct genome
+- npm run test:all green (api-smoke 105/0), tsc 0, eslint 0. Commits: c3166bc (Google import), 7846dfa (three concepts)
+- Still open: A/B testing, a provider cost/quota view, server-side cron for Autopilot, per-trade artwork variety, URL-to-site recreation
