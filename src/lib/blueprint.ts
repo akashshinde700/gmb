@@ -224,16 +224,20 @@ export function blueprintFor(input: BlueprintInput): SiteBlueprint {
   // shared list carry the same amber accent and a near-black secondary, so
   // exact matching let two businesses end up on pages that felt identical.
   const taken = (input.taken ?? []).map((t) => t.split(","));
-  // A shortlist of six drawn from the business's own starting point, then the
-  // least-similar one wins. Deterministic for a given database state, so a
-  // re-generate does not shuffle a live site, and a business whose palette is
-  // not close to anything keeps the palette it was drawn.
   const shortlist = Array.from(
     { length: Math.min(6, palettePool.length || 1) },
     (_, k) => palettePool[(drawn + k) % palettePool.length] ?? paletteChoices[drawn],
   );
   const closestTaken = (candidate: Palette) =>
     taken.reduce((worst, t) => Math.max(worst, paletteSimilarity(candidate, t)), 0);
+  // A shortlist of six drawn from the business's own starting point, then the
+  // least-similar one wins. Deterministic for a given database state, so a
+  // re-generate does not shuffle a live site, and a business whose palette is
+  // not close to anything keeps the palette it was drawn.
+  //
+  // (Three concepts for one business are kept different from each other by
+  // candidateBlueprints below, which is the batch that can act on it: what one
+  // business draws on its own must not depend on who else is being drawn.)
   const palette = shortlist.reduce(
     (best, candidate) => (closestTaken(candidate) < closestTaken(best) - 0.001 ? candidate : best),
     shortlist[0],
@@ -310,6 +314,17 @@ export function blueprintFor(input: BlueprintInput): SiteBlueprint {
   };
 }
 
+/**
+ * When two palettes look like the same colours used twice.
+ *
+ * The primary paints every button, heading and the moving band, so a shared
+ * primary is the one thing that makes two concepts read as one website twice;
+ * sharing only the near-black secondary or the accent is normal inside a trade
+ * (most palettes carry the same amber). 0.5 is exactly "the primary is
+ * identical and nothing else is", so anything above it is closer than that.
+ */
+const SIBLING_SAME = 0.5;
+
 /** Hex-colour guard shared by every caller that accepts colours from a client. */
 /**
  * The three genomes offered for one business (see lib/concepts.ts).
@@ -320,6 +335,11 @@ export function blueprintFor(input: BlueprintInput): SiteBlueprint {
  * not a choice. Both the concept preview and the signup that rebuilds the
  * chosen one call this, so "they picked concept 2" always means the same
  * genome.
+ *
+ * A trade's palette list is finite and a busy trade has all of it in use, so
+ * after the "already taken" hint the later concepts are also checked against
+ * their siblings — and moved to the pool entry furthest from them, but only
+ * when that is actually further than what was drawn.
  */
 export function candidateBlueprints(
   input: Omit<BlueprintInput, "attempt" | "taken"> & { taken?: readonly string[] },
@@ -329,6 +349,18 @@ export function candidateBlueprints(
   const out: SiteBlueprint[] = [];
   for (let attempt = 0; attempt < count; attempt++) {
     const blueprint = blueprintFor({ ...input, taken, attempt });
+    const closestSibling = (candidate: readonly string[]) =>
+      out.reduce((worst, other) => Math.max(worst, paletteSimilarity(candidate, other.palette)), 0);
+    if (out.length && closestSibling(blueprint.palette) >= SIBLING_SAME) {
+      // The best of a finite list, not the first acceptable one: with two or
+      // three siblings already chosen, the first acceptable entry can be much
+      // closer than another one sitting further along the pool.
+      const best = blueprint.palettePool.reduce(
+        (winner, candidate) => (closestSibling(candidate) < closestSibling(winner) ? candidate : winner),
+        blueprint.palette,
+      );
+      if (closestSibling(best) < closestSibling(blueprint.palette)) blueprint.palette = [...best];
+    }
     taken.push(blueprint.palette.join(","));
     out.push(blueprint);
   }
