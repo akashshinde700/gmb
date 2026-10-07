@@ -3,12 +3,15 @@
 // Sidebar + 14 tab views: overview, builder, business, 6x content CRUD,
 // leads, seo, analytics, subscription, settings. All data via api client.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import OrdersTab from "@/components/views/orders-tab";
 import {
   AlertCircle, ArrowLeft, BarChart3, Bell, Briefcase, Building2, Check, CheckCircle2,
   ChevronDown, ChevronUp, Clock, Copy, CreditCard, ExternalLink, Eye, EyeOff,
   Globe, GripVertical, HelpCircle, Image as ImageIcon, ImagePlus, Inbox, Info, LayoutDashboard,
   LayoutTemplate, Link2, Loader2, LogOut, Mail, MapPin, Menu, MessageCircle, Monitor,
   Newspaper, Package, Palette, Pencil, PenLine, Phone, Play, Plus, QrCode, Quote, Rocket, Save, Search, Settings, FlaskConical, Download,
+  MousePointerSquareDashed, ShoppingBag, Frame, Upload,
   ShieldCheck, Smartphone, Sparkles, Star, Tablet, Trash2, TrendingUp, Users, XCircle,
   Youtube,
 } from "lucide-react";
@@ -35,6 +38,7 @@ import { tabTitle } from "@/lib/console-tabs";
 import { useUnsavedChanges } from "@/hooks/use-unsaved-changes";
 import { gstFor } from "@/lib/gst";
 import DomainsCard from "@/components/views/domains-card";
+import HostingCard from "@/components/views/hosting-card";
 import { isValidUpiId, upiDeepLink, youtubeId } from "@/lib/site-utils";
 import { isQuoteOnlyPlan } from "@/lib/trial";
 import QRCode from "react-qr-code";
@@ -437,6 +441,10 @@ const NAV: { section: string; items: NavItem[] }[] = [
       { tab: "builder", label: "Website Builder", icon: Globe },
       { tab: "business", label: "Business Profile", icon: Building2 },
       { tab: "seo", label: "SEO", icon: Search },
+      // Hosting sits with the website rather than under Account: it is the
+      // page's domain, certificate and mailbox, and it is where an owner goes
+      // the week they connect their own name.
+      { tab: "hosting", label: "Hosting & Email", icon: ShieldCheck },
     ],
   },
   {
@@ -454,6 +462,9 @@ const NAV: { section: string; items: NavItem[] }[] = [
     section: "Grow",
     items: [
       { tab: "leads", label: "Leads", icon: Inbox },
+      // Orders sit next to Leads, not under Content: a shop's day starts with
+      // what came in and what still has to go out.
+      { tab: "orders", label: "Orders", icon: ShoppingBag },
       { tab: "analytics", label: "Analytics", icon: BarChart3 },
     ],
   },
@@ -885,6 +896,7 @@ export default function DashboardView() {
             {tab === "builder" && <BuilderTab business={business} content={content} />}
             {tab === "business" && <BusinessTab business={business} />}
             {tab === "seo" && <SeoTab business={business} content={content} />}
+            {tab === "hosting" && <HostingCard />}
             {tab === "services" && <ContentTab type="services" rows={content.services as unknown as Rec[]} loading={contentLoading} refetch={() => refetchContent("services")} />}
             {tab === "products" && <ContentTab type="products" rows={content.products as unknown as Rec[]} loading={contentLoading} refetch={() => refetchContent("products")} />}
             {tab === "gallery" && <ContentTab type="gallery" rows={content.gallery as unknown as Rec[]} loading={contentLoading} refetch={() => refetchContent("gallery")} />}
@@ -894,6 +906,7 @@ export default function DashboardView() {
             {tab === "leads" && (
               <LeadsTab onCountChange={setNewLeads} />
             )}
+            {tab === "orders" && <OrdersTab />}
             {tab === "analytics" && <AnalyticsTab business={business} />}
             {tab === "subscription" && <SubscriptionTab business={business} servicesCount={content.services.length} />}
             {tab === "settings" && <SettingsTab />}
@@ -1754,9 +1767,18 @@ function BuilderTab({ business, content }: { business: BusinessWithMeta; content
 
         {/* Preview pane */}
         <div className="rounded-2xl border bg-muted p-3 md:p-4">
-          <div className="mb-2 flex items-center justify-between px-1">
+          <div className="mb-2 flex items-center justify-between gap-2 px-1">
             <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Live preview</p>
-            <Badge variant="outline" className="bg-card text-muted-foreground">{device}</Badge>
+            <div className="flex items-center gap-2">
+              {/* The form lives here; the canvas lives at /editor. */}
+              <Link
+                href="/editor"
+                className="inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50"
+              >
+                <MousePointerSquareDashed className="h-3.5 w-3.5" aria-hidden="true" /> Visual editor
+              </Link>
+              <Badge variant="outline" className="bg-card text-muted-foreground">{device}</Badge>
+            </div>
           </div>
           <div
             className={cn(
@@ -1787,6 +1809,18 @@ function BuilderTab({ business, content }: { business: BusinessWithMeta; content
  * done a good job. This card shows the genome, the uniqueness score measured
  * against same-trade sites, and anything the quality checker flagged.
  */
+interface FigmaPlan {
+  source: "figma" | "tokens";
+  fileName: string;
+  confidence: "strong" | "partial" | "weak";
+  styleName: string;
+  notes: string[];
+  frames: string[];
+  sections: string[];
+  palette: { primary?: string; secondary?: string; accent?: string };
+  tokens: Record<string, string>;
+}
+
 function DesignDnaPanel({ theme, onFixed }: { theme: SiteTheme; onFixed: (w: WebsiteData) => void }) {
   const [open, setOpen] = useState(false);
   const [fixing, setFixing] = useState(false);
@@ -1795,6 +1829,69 @@ function DesignDnaPanel({ theme, onFixed }: { theme: SiteTheme; onFixed: (w: Web
   const [restyling, setRestyling] = useState(false);
   const [restyleNote, setRestyleNote] = useState<{ label: string; note: string; changed: string[] } | null>(null);
   const [restyleError, setRestyleError] = useState<string | null>(null);
+  /* ---- bring a design in from Figma (see app/api/figma/import) ---- */
+
+  const [figmaUrl, setFigmaUrl] = useState("");
+  const [figmaTokens, setFigmaTokens] = useState("");
+  const [figmaToken, setFigmaToken] = useState("");
+  const [figmaConnected, setFigmaConnected] = useState<"account" | "server" | null>(null);
+  const [figmaBusy, setFigmaBusy] = useState(false);
+  const [figmaError, setFigmaError] = useState<string | null>(null);
+  const [figmaUsePalette, setFigmaUsePalette] = useState(false);
+  const [figmaRead, setFigmaRead] = useState<FigmaPlan | null>(null);
+  const [figmaChanged, setFigmaChanged] = useState<string[] | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    void api
+      .get<{ connected: boolean; source: "account" | "server" | null }>("/api/figma/import")
+      .then((res) => { if (live) setFigmaConnected(res.source); })
+      .catch(() => { if (live) setFigmaConnected(null); });
+    return () => { live = false; };
+  }, []);
+
+  /**
+   * Read the file first, apply second.
+   *
+   * A dry run answers with the decisions the file justifies and the section
+   * order its frames describe, which is exactly what the owner needs to see
+   * before letting it near a live site. Nothing is written until Apply.
+   */
+  async function runFigma(apply: boolean) {
+    const body = {
+      url: figmaUrl.trim() || undefined,
+      tokens: figmaUrl.trim() ? undefined : figmaTokens.trim() || undefined,
+      token: figmaToken.trim() || undefined,
+      apply,
+      applyPalette: apply && figmaUsePalette,
+    };
+    if (!body.url && !body.tokens) {
+      setFigmaError("Paste a Figma link, or export your design tokens and paste them here");
+      return;
+    }
+    setFigmaBusy(true);
+    setFigmaError(null);
+    try {
+      const res = await api.post<{
+        applied: boolean;
+        plan: FigmaPlan;
+        changed: string[];
+        website?: WebsiteData;
+      }>("/api/figma/import", body);
+      setFigmaRead(res.plan);
+      setFigmaChanged(res.changed);
+      if (body.token) setFigmaConnected("account");
+      if (apply && res.website) {
+        onFixed(res.website);
+        setFigmaTokens("");
+      }
+    } catch (e) {
+      setFigmaError(e instanceof Error ? e.message : "Could not read that design");
+    } finally {
+      setFigmaBusy(false);
+    }
+  }
+
   const dna = theme.dna;
   // A site generated before the DNA existed has none of this, and one the owner
   // has hand-edited may have lost it. The card simply does not appear.
@@ -1998,6 +2095,110 @@ function DesignDnaPanel({ theme, onFixed }: { theme: SiteTheme; onFixed: (w: Web
                 ))}
               </ul>
             )}
+          </div>
+        )}
+      </div>
+
+      {/* Bring a design in from Figma. The mirror image of the "import your old
+          website" flow: that one takes the content and leaves the design, this
+          one takes the design and leaves the content. */}
+      <div className="mt-4 border-t pt-3">
+        <div className="mb-1.5 flex items-center justify-between gap-2">
+          <label className="flex items-center gap-1.5 text-[11px] font-semibold text-foreground" htmlFor="ws-figma-url">
+            <Frame className="h-3.5 w-3.5" /> Design from Figma
+          </label>
+          <span className="text-[10px] text-muted-foreground">
+            {figmaConnected ? "token connected" : "needs a Figma token"}
+          </span>
+        </div>
+        {theme.figma && (
+          <p className="mb-1.5 text-[10px] text-muted-foreground">
+            Last imported: {theme.figma.fileName} ·{" "}
+            {new Date(theme.figma.importedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+          </p>
+        )}
+        <input
+          id="ws-figma-url"
+          value={figmaUrl}
+          onChange={(e) => setFigmaUrl(e.target.value)}
+          placeholder="https://figma.com/design/… (or leave empty and paste tokens)"
+          className="h-8 w-full rounded-lg border bg-background px-2.5 text-[11px] outline-none focus:ring-2 focus:ring-emerald-500"
+        />
+        <div className="mt-1.5 grid grid-cols-2 gap-1.5">
+          <input
+            value={figmaToken}
+            onChange={(e) => setFigmaToken(e.target.value)}
+            placeholder="Figma token (kept on the server)"
+            className="h-8 rounded-lg border bg-background px-2.5 text-[11px] outline-none focus:ring-2 focus:ring-emerald-500"
+          />
+          <input
+            value={figmaTokens}
+            onChange={(e) => setFigmaTokens(e.target.value)}
+            placeholder='{"color":{"primary":{"value":"#0b5fff"}}}'
+            className="h-8 rounded-lg border bg-background px-2.5 text-[11px] outline-none focus:ring-2 focus:ring-emerald-500"
+          />
+        </div>
+        <div className="mt-1.5 flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => void runFigma(false)}
+            disabled={figmaBusy}
+            className="h-8 rounded-lg text-[11px]"
+          >
+            {figmaBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+            Read design
+          </Button>
+          <label className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={figmaUsePalette}
+              onChange={(e) => setFigmaUsePalette(e.target.checked)}
+              className="h-3 w-3"
+            />
+            also use its colours
+          </label>
+        </div>
+        {figmaError && <p className="mt-2 rounded-lg bg-red-50 px-2 py-1.5 text-[11px] text-red-700">{figmaError}</p>}
+        {figmaRead && (
+          <div className="mt-2 rounded-lg bg-muted/60 px-2.5 py-2 text-[10px] text-muted-foreground ring-1 ring-border">
+            <p className="font-semibold text-foreground">
+              {figmaRead.fileName} · {figmaRead.confidence} read
+            </p>
+            {figmaRead.notes.length > 0 && (
+              <ul className="mt-1 space-y-0.5">
+                {figmaRead.notes.map((note) => <li key={note}>· {note}</li>)}
+              </ul>
+            )}
+            {figmaRead.frames.length > 0 && (
+              <p className="mt-1">Frames: {figmaRead.frames.join(" → ")}</p>
+            )}
+            {Object.values(figmaRead.palette).filter(Boolean).length > 0 && (
+              <div className="mt-1.5 flex items-center gap-1.5">
+                {Object.entries(figmaRead.palette).map(([role, hex]) =>
+                  hex ? (
+                    <span key={role} className="flex items-center gap-1">
+                      <span className="h-3.5 w-3.5 rounded-sm ring-1 ring-black/10" style={{ background: hex }} />
+                      <span>{role}</span>
+                    </span>
+                  ) : null,
+                )}
+              </div>
+            )}
+            {figmaChanged && figmaChanged.length > 0 && (
+              <ul className="mt-1.5 space-y-0.5">
+                {figmaChanged.map((line) => <li key={line}>· {line}</li>)}
+              </ul>
+            )}
+            <Button
+              size="sm"
+              onClick={() => void runFigma(true)}
+              disabled={figmaBusy || figmaRead.confidence === "weak"}
+              className="mt-2 h-7 rounded-lg bg-emerald-600 text-[10px] hover:bg-emerald-700"
+            >
+              {figmaBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+              Apply this design
+            </Button>
           </div>
         )}
       </div>
@@ -4394,6 +4595,8 @@ const CHART_COLORS = { emerald: "#059669", amber: "#d97706", zinc: "#a1a1aa" };
 
 const VISIT_ACTION_LABEL: Record<string, { label: string; Icon: typeof Phone }> = {
   VISIT: { label: "Opened the site", Icon: Eye },
+  CART_ADD: { label: "Added to cart", Icon: ShoppingBag },
+  ORDER_PLACED: { label: "Placed an order", Icon: Package },
   CTA_CALL: { label: "Tapped Call", Icon: Phone },
   CTA_WHATSAPP: { label: "Tapped WhatsApp", Icon: MessageCircle },
   CTA_EMAIL: { label: "Tapped Email", Icon: Mail },
@@ -5115,8 +5318,16 @@ function SettingsTab() {
           </Labeled>
         </div>
         <p className="mt-3 text-xs text-muted-foreground">
-          Role: {user?.role === "ADMIN" ? "Administrator" : "Business owner"}
+          Role: {user?.role === "ADMIN" ? "Administrator" : user?.role === "RESELLER" ? "Reseller" : "Business owner"}
           {business ? " · Business: " + business.name : ""}
+          {user?.role === "RESELLER" && (
+            <>
+              {" · "}
+              <a href="/reseller" className="font-medium text-emerald-700 underline-offset-2 hover:underline">
+                Reseller console
+              </a>
+            </>
+          )}
         </p>
       </Card>
 

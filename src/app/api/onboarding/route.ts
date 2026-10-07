@@ -10,7 +10,7 @@ import { starterFaqs, starterPosts } from "@/lib/starter-content";
 import { fallbackServices, fillCopy, industryServices, isPresetCategory, resolveIndustry } from "@/lib/industries";
 import { fetchStockPhotos, searchesFor } from "@/lib/stock-images";
 import { candidateBlueprints, resolveColors, designSeed } from "@/lib/blueprint";
-import { bestCandidate, profileFromSite, uniquenessPercent, type SiteProfile } from "@/lib/uniqueness";
+import { bestCandidate, profileFromSite, tradeThreshold, uniquenessPercent, type SiteProfile } from "@/lib/uniqueness";
 import { checkSite } from "@/lib/site-quality";
 import { recordVersion } from "@/lib/site-history";
 import { posterUrl } from "@/lib/site-art";
@@ -293,7 +293,13 @@ export const POST = route(async (req: Request) => {
   const chosenKey = Number(body.concept);
   const chosen = Number.isInteger(chosenKey) && candidates[chosenKey] ? candidates[chosenKey] : null;
 
-  const picked = bestCandidate(candidates, profileOf, existingProfiles);
+  // "Too similar" is a moving bar: 0.45 in a young trade, this trade's own
+  // median once it is crowded enough that the closest of 500 neighbours is
+  // always closer than that. Without this a busy trade regenerates forever and
+  // every owner is shown a uniqueness number that only reflects how many
+  // businesses signed up before them.
+  const tradeBar = tradeThreshold(existingProfiles);
+  const picked = bestCandidate(candidates, profileOf, existingProfiles, tradeBar);
 
   // The winner is rebuilt properly — its own colours, section order and copy.
   const blueprint = chosen ?? picked.chosen;

@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { SITE_DESCRIPTION } from "@/lib/marketing-flags";
 import { siteOrigin } from "@/lib/site-utils";
+import { brandForHost } from "@/lib/reseller";
 import { Toaster } from "@/components/ui/toaster";
 
 const geistSans = Geist({
@@ -15,7 +17,13 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-export const metadata: Metadata = {
+export async function generateMetadata(): Promise<Metadata> {
+  // A reseller's domain must not tell the world it is running on the platform:
+  // search results, chat previews and the browser tab all carry this name.
+  const brand = await brandForHost((await headers()).get("host"));
+  const name = brand.whiteLabel ? brand.name : "WebSetu";
+  const tagline = `${name} — Your Business, Online in 15 Minutes`;
+  return {
   /**
    * Without this, Next resolves every relative Open Graph and Twitter image
    * against the server's own address — so a customer's uploaded cover went out
@@ -23,9 +31,11 @@ export const metadata: Metadata = {
    * preview ever loaded. It also emitted the build warning nobody chased down.
    */
   metadataBase: new URL(siteOrigin()),
-  title: "WebSetu — Your Business, Online in 15 Minutes",
-  description: SITE_DESCRIPTION,
-  keywords: ["business website", "website builder India", "local business SaaS", "WebSetu", "WaaS"],
+  title: tagline,
+  description: brand.whiteLabel ? `${brand.name} builds and runs websites for local businesses.` : SITE_DESCRIPTION,
+  keywords: brand.whiteLabel
+    ? ["business website", "website builder India", "local business SaaS"]
+    : ["business website", "website builder India", "local business SaaS", "WebSetu", "WaaS"],
   // No `icons` here on purpose. The icons come from the file convention —
   // src/app/icon.svg, apple-icon.png and favicon.ico — which Next serves at
   // hashed URLs like /icon?<hash>.
@@ -40,23 +50,24 @@ export const metadata: Metadata = {
   // ignore <link> — crawlers, feed readers, saved shortcuts. That path used to
   // 404.
   openGraph: {
-    title: "WebSetu — Your Business, Online in 15 Minutes",
+    title: tagline,
     description: "Give us your business details, we create and operate your complete online presence.",
-    siteName: "WebSetu",
+    siteName: name,
     type: "website",
     locale: "en_IN",
     // A generated card rather than nothing. Pasted into a WhatsApp group this
     // is the difference between a blank grey box and something that looks like
     // a product.
-    images: [{ url: "/og", width: 1200, height: 630, alt: "WebSetu" }],
+    images: [{ url: "/og", width: 1200, height: 630, alt: name }],
   },
   twitter: {
     card: "summary_large_image",
-    title: "WebSetu — Your Business, Online in 15 Minutes",
+    title: tagline,
     description: "Give us your business details, we create and operate your complete online presence.",
     images: ["/og"],
   },
-};
+  };
+}
 
 export default function RootLayout({
   children,

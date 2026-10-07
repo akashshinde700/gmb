@@ -54,6 +54,8 @@ export interface VisitSummary {
   actions: { type: string; at: string }[];
   /** The enquiry this visit produced, when it produced one. */
   leadId: string;
+  /** The order it placed, when it placed one ("ORD-1042"). */
+  order: string;
   converted: boolean;
 }
 
@@ -65,16 +67,17 @@ export interface VisitReport {
 }
 
 /** Read the identifiers out of an event's meta blob. Never throws. */
-export function visitIdsOf(meta: string): { visitor: string; visit: string; leadId: string } {
+export function visitIdsOf(meta: string): { visitor: string; visit: string; leadId: string; order: string } {
   try {
     const parsed = JSON.parse(meta || "{}") as Record<string, unknown>;
     return {
       visitor: isVisitId(parsed.visitor) ? parsed.visitor : "",
       visit: isVisitId(parsed.visit) ? parsed.visit : "",
       leadId: typeof parsed.leadId === "string" ? parsed.leadId : "",
+      order: typeof parsed.order === "string" ? parsed.order : "",
     };
   } catch {
-    return { visitor: "", visit: "", leadId: "" };
+    return { visitor: "", visit: "", leadId: "", order: "" };
   }
 }
 
@@ -91,7 +94,7 @@ export function visitSummaries(rows: readonly VisitRow[], limit = 50): VisitRepo
   let untracked = 0;
 
   for (const row of rows) {
-    const { visit, leadId } = visitIdsOf(row.meta);
+    const { visit, leadId, order } = visitIdsOf(row.meta);
     if (!visit) {
       untracked++;
       continue;
@@ -106,7 +109,8 @@ export function visitSummaries(rows: readonly VisitRow[], limit = 50): VisitRepo
         path: row.path || "/",
         actions: [{ type: row.type, at }],
         leadId,
-        converted: Boolean(leadId),
+        order,
+        converted: Boolean(leadId || order),
       });
       continue;
     }
@@ -115,6 +119,12 @@ export function visitSummaries(rows: readonly VisitRow[], limit = 50): VisitRepo
     existing.actions.push({ type: row.type, at });
     if (leadId && !existing.leadId) {
       existing.leadId = leadId;
+      existing.converted = true;
+    }
+    // An order is the strongest thing a visit can end in, so it marks the visit
+    // converted even on the rare path where the lead row was lost.
+    if (order && !existing.order) {
+      existing.order = order;
       existing.converted = true;
     }
   }

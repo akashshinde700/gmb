@@ -3,6 +3,8 @@ import { getSessionUser } from "@/lib/auth";
 import { serializeBusiness, serializeWebsite } from "@/lib/serialize";
 import { HttpError, ok, route, str } from "@/lib/api";
 import { subscriptionServesSite } from "@/lib/expiry";
+import { brandForBusiness } from "@/lib/reseller";
+import { readCommerce } from "@/lib/commerce";
 
 /**
  * GET /api/site/[slug] — PUBLIC endpoint that renders a tenant website.
@@ -67,6 +69,10 @@ export const GET = route(async (req: Request, { params }: { params: Promise<{ sl
       id: p.id, title: p.title, slug: p.slug, excerpt: p.excerpt,
       cover: p.cover, publishedAt: p.publishedAt?.toISOString() ?? null,
     })),
+    // The footer credit: the platform's name, or the agency's when this site
+    // was built through one.
+    credit: (await brandForBusiness(business.resellerId)).name,
+    commerce: readCommerce(business.commerceJson),
     subscriptionStatus: business.subscription?.status ?? "NONE",
     trialMode: business.subscription?.status === "TRIALING",
     published,

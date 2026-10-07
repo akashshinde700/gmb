@@ -14,14 +14,18 @@ import LandingView from "@/components/views/landing-view";
 import { installNavigator, pathForLegacyHash, useApp } from "@/store/app-store";
 import type { SessionUser } from "@/lib/types";
 import type { PlatformTheme } from "@/lib/platform-theme";
+import type { Brand } from "@/lib/reseller";
 
 export default function LandingClient({
   user,
   platformTheme,
+  brand,
   hasBlogPosts = false,
 }: {
   user: SessionUser | null;
   platformTheme: PlatformTheme;
+  /** Whose brand this page wears — the platform's, or a reseller's on their domain. */
+  brand?: Brand;
   hasBlogPosts?: boolean;
 }) {
   const router = useRouter();
@@ -65,7 +69,7 @@ export default function LandingClient({
 
   return (
     <div className="flex min-h-screen flex-col bg-white text-zinc-900">
-      <LandingView platformTheme={platformTheme} hasBlogPosts={hasBlogPosts} />
+      <LandingView platformTheme={platformTheme} brand={brand} hasBlogPosts={hasBlogPosts} />
     </div>
   );
 }

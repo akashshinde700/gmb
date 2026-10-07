@@ -23,8 +23,8 @@ function SectionTitle({ title, subtitle, center = true }: { title?: string; subt
   if (!title && !subtitle) return null;
   return (
     <div className={`ws-reveal mb-10 ${center ? "text-center mx-auto max-w-2xl" : ""}`}>
-      {title && <h2 className="text-3xl md:text-4xl font-bold tracking-tight text-[var(--brand-secondary)]">{title}</h2>}
-      {subtitle && <p className="mt-3 text-base md:text-lg text-[var(--brand-muted)]">{subtitle}</p>}
+      {title && <h2 className="text-3xl md:text-4xl font-bold tracking-tight text-[var(--brand-heading,var(--brand-secondary))]">{title}</h2>}
+      {subtitle && <p className="mt-3 text-base md:text-lg text-[var(--brand-subheading,var(--brand-muted))]">{subtitle}</p>}
       <div className={`mt-4 h-1 w-16 rounded-full bg-[var(--brand-primary)] ${center ? "mx-auto" : ""}`} />
     </div>
   );
@@ -653,10 +653,18 @@ function Services({ section, services, onCta, onEnquire, layout = 0, business }:
 }
 
 // ---------- PRODUCTS ----------
-function Products({ section, products, onCta, onEnquire, business }: {
+function Products({ section, products, onCta, onEnquire, business, onAdd, inCart }: {
   section: SiteSection; products: Product[]; onCta: (t: string) => void; onEnquire: (subject: string) => void;
   /** The business, so a product without a photo still gets its own drawing. */
   business?: Business;
+  /**
+   * Present only when the shop is taking orders online. An "Add to cart" button
+   * on a site with no shop to put it in is the worst kind of dead end, so it is
+   * not rendered at all — those businesses sell the priced ones by enquiry.
+   */
+  onAdd?: (productId: string) => void;
+  /** How many of each product are already in the cart, for the button label. */
+  inCart?: Record<string, number>;
 }) {
   const c = section.content as { title?: string; subtitle?: string };
   const [videoProduct, setVideoProduct] = useState<Product | null>(null);
@@ -757,13 +765,24 @@ function Products({ section, products, onCta, onEnquire, business }: {
                   )}
                   <div className="mt-3 flex items-center justify-between">
                     <span className="text-base">{fmt(p) ?? <span className="text-sm font-semibold text-[var(--brand-primary)]">Enquire for price</span>}</span>
-                    <button
-                      type="button"
-                      onClick={() => { onCta("CTA_CALL"); onEnquire(p.name); }}
-                      className="rounded-[var(--brand-radius)] bg-[var(--brand-primary)] px-3 py-1.5 text-xs font-semibold text-white transition hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-primary)] focus-visible:ring-offset-2"
-                    >
-                      Enquire
-                    </button>
+                    <div className="flex items-center gap-2">
+                      {onAdd && !p.hidePrice && (Number(p.salePrice) > 0 || Number(p.price) > 0) && (
+                        <button
+                          type="button"
+                          onClick={() => onAdd(p.id)}
+                          className="rounded-[var(--brand-radius)] border border-[var(--brand-primary)] px-3 py-1.5 text-xs font-semibold text-[var(--brand-primary)] transition hover:bg-[var(--brand-primary)] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-primary)] focus-visible:ring-offset-2"
+                        >
+                          {(inCart?.[p.id] ?? 0) > 0 ? `In cart · ${inCart?.[p.id]}` : "Add to cart"}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => { onCta("CTA_CALL"); onEnquire(p.name); }}
+                        className="rounded-[var(--brand-radius)] bg-[var(--brand-primary)] px-3 py-1.5 text-xs font-semibold text-white transition hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-primary)] focus-visible:ring-offset-2"
+                      >
+                        Enquire
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>

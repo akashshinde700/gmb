@@ -297,16 +297,19 @@ export function directorBrief(input: {
  * up, and the contact section is always last: the page ends by asking.
  */
 export function directPageOrder(drawn: readonly SectionType[], goal: GoalPlan): SectionType[] {
-  const wanted = goal.emphasis;
-  const rank = (type: SectionType) => {
-    const i = wanted.indexOf(type);
-    return i === -1 ? wanted.length : i;
-  };
-  const head = drawn.filter((t) => t !== "hero" && t !== "contact");
-  // Stable sort: sections the goal cares about come first in the goal's own
-  // order of importance, everything else keeps the order it was drawn in.
-  const sorted = [...head].sort((a, b) => rank(a) - rank(b));
-  return ["hero", ...sorted, "contact"].filter((t, i, all) => all.indexOf(t) === i) as SectionType[];
+  const head: SectionType[] = drawn.filter((t) => t !== "hero" && t !== "contact");
+  // Only the two sections this goal cares about most are pulled to the front.
+  //
+  // Sorting the whole page by the goal's list of importance — which is what
+  // this did first — put the same five blocks at the top of every site in a
+  // trade that shares a goal, so a hundred plumbers opened on the same run of
+  // sections and only the tail differed. Two are enough to say "this page is
+  // for booking, not for browsing", and everything after them keeps the order
+  // it was drawn in, which is the order that makes two businesses in one trade
+  // read as two different pages.
+  const wanted = goal.emphasis.filter((t) => head.includes(t)).slice(0, 2);
+  const rest = head.filter((t) => !wanted.includes(t));
+  return ["hero", ...wanted, ...rest, "contact"].filter((t, i, all) => all.indexOf(t) === i) as SectionType[];
 }
 
 /** The CTA the hero and the band should carry, in the shape the copy takes. */

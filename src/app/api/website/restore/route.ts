@@ -35,11 +35,28 @@ export const POST = route(async (req: Request) => {
     },
   });
 
+  // A version that kept the colours restores them too: an imported design is
+  // the page *and* its palette, so going back to a pre-import version has to
+  // bring the owner's own colours back with it.
+  if (state.brand) {
+    await db.business.update({
+      where: { id: business.id },
+      data: { brandPrimary: state.brand.primary, brandSecondary: state.brand.secondary, brandAccent: state.brand.accent },
+    });
+  }
+
   await recordVersion({
     website: updated,
     label: `Restored to “${state.label}”`,
     actor: business.ownerName || "Owner",
+    ...(state.brand ? { brand: state.brand } : {}),
   });
 
-  return ok({ restored: state.label, website: serializeWebsite(updated) });
+  return ok({
+    restored: state.label,
+    ...(state.brand
+      ? { palette: { primary: state.brand.primary, secondary: state.brand.secondary, accent: state.brand.accent } }
+      : {}),
+    website: serializeWebsite(updated),
+  });
 });

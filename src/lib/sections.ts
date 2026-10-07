@@ -312,8 +312,15 @@ export function generateSite({ business, ai, industry, aboutImage, heroImage, bl
     business.city, `${business.category} in ${business.city}`, business.state,
   ].filter(Boolean).join(", ").toLowerCase();
 
+  // What this business's page leaves off, before anything is arranged: one
+  // electrician runs a blog and a FAQ, the next runs neither, and the two pages
+  // then differ in what is on them rather than only in what order.
+  const kept = blueprint?.omit?.length
+    ? sections.filter((section) => !blueprint.omit.includes(section.type))
+    : sections;
+
   return {
-    sections: arrangeSections(withVariant(sections), blueprint?.sectionOrder ?? pick(draw("order"), SECTION_ORDERS)),
+    sections: arrangeSections(withVariant(kept), blueprint?.sectionOrder ?? pick(draw("order"), SECTION_ORDERS)),
     theme,
     seoTitle,
     seoDescription,

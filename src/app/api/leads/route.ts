@@ -173,9 +173,21 @@ export const POST = route(async (req: Request) => {
   after(async () => {
     const alertsOn = leadAlertsEnabled(business.user?.notifyJson);
     const ownerEmail = business.email || business.user?.email || "";
-    if (alertsOn && ownerEmail) {
+    // A site an agency created through the API belongs to the agency until
+    // their customer takes it over — so the agency hears about the enquiry too,
+    // on their support address, rather than it landing in an inbox nobody has
+    // opened yet.
+    const resellerAlert = business.resellerId
+      ? await db.reseller.findUnique({ where: { id: business.resellerId }, select: { supportEmail: true, brandName: true } })
+      : null;
+    // The owner's own preference governs their site; the agency's copy rides on
+    // the same switch, because it is the same alert about the same enquiry.
+    const recipients = alertsOn
+      ? [...new Set([ownerEmail, resellerAlert?.supportEmail ?? ""].filter(Boolean))]
+      : [];
+    for (const to of recipients) {
       await sendLeadAlert({
-        to: ownerEmail,
+        to,
         businessName: business.name,
         lead: {
           name: lead.name,

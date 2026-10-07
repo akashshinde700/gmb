@@ -185,7 +185,22 @@ console.log("\n== Uniqueness");
   // Same genome, different colours. Everything else is identical by
   // construction, so the palette is the only thing that can move — and it has
   // to move the colour dimension, which is what a visitor sees first.
-  const recoloured: SiteProfile = { ...a, palette: ["#7c3aed", "#3b0764", "#fbbf24"] };
+  //
+  // The second palette is the furthest one in this trade's own family rather
+  // than a literal: a hard-coded violet stopped being "a different colour" the
+  // moment the family grew rotations, one of which the first business now
+  // draws. What the check means is "the engine's own judgement says these are
+  // different colours", so it asks the engine.
+  const recoloured: SiteProfile = {
+    ...a,
+    palette: [
+      first.palettePool.reduce(
+        (best, candidate) =>
+          paletteSimilarity(candidate, a.palette) < paletteSimilarity(best, a.palette) ? candidate : best,
+        first.palettePool[0],
+      ),
+    ][0],
+  };
   const recolouredScore = similarity(a, recoloured);
   check("a different palette alone moves the colour score", recolouredScore.colour < 0.5, recolouredScore.colour.toFixed(2));
   check("and the overall score with it", recolouredScore.overall < 0.85, recolouredScore.overall.toFixed(2));

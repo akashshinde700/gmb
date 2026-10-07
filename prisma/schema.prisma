@@ -2,7 +2,8 @@
 // SQLite (no native enums) → statuses stored as strings
 
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  engineType      = "client"
 }
 
 datasource db {
@@ -15,7 +16,7 @@ model User {
   email        String   @unique
   passwordHash String
   name         String
-  role         String   @default("CUSTOMER") // CUSTOMER | ADMIN
+  role         String   @default("CUSTOMER") // CUSTOMER | ADMIN | RESELLER
   notifyJson   String   @default("{}") // {leadAlerts, weekly, productUpdates}
   /// Bumped to invalidate every session token already issued for this user —
   /// on a password change, or an explicit "sign out everywhere".
@@ -26,6 +27,52 @@ model User {
   business      Business?
   notifications Notification[]
   resetTokens   PasswordReset[]
+  reseller      Reseller?
+}
+
+/// An agency, hosting company or SaaS that sells websites under its own brand.
+///
+/// The point is that their customer never learns WebSetu exists: the brand
+/// below replaces the platform's name, logo and colours on the reseller's own
+/// hostname, and their API key lets their product create a website in one call
+/// without a human in the loop.
+model Reseller {
+  id String @id @default(cuid())
+  /// The agency's own login. One reseller per account.
+  userId       String @unique
+  user         User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// What clients see. Empty means "use the platform's name".
+  brandName    String @default("")
+  logoUrl      String @default("")
+  supportEmail String @default("")
+  /// Brand colour for the platform pages served on their hostname.
+  primaryColor String @default("")
+  /// Their own app domain (app.theiragency.com). Empty = not set up yet.
+  hostname     String @unique @default("")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  apiKeys ApiKey[]
+  sites   Business[]
+
+  @@index([hostname])
+}
+
+/// One API key. The key itself is shown once, at creation, and only its hash is
+/// stored — a leaked database must not hand somebody the ability to mint sites.
+model ApiKey {
+  id         String    @id @default(cuid())
+  resellerId String
+  reseller   Reseller  @relation(fields: [resellerId], references: [id], onDelete: Cascade)
+  label      String    @default("")
+  hash       String    @unique
+  /// First characters of the key, so a human can tell two keys apart in a list.
+  prefix     String    @default("")
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([resellerId, createdAt])
 }
 
 model Business {
@@ -34,6 +81,13 @@ model Business {
   user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   name                String
   slug                String    @unique
+  /// Which reseller's client this is, when an agency created it through the API.
+  resellerId          String?
+  reseller            Reseller? @relation(fields: [resellerId], references: [id], onDelete: SetNull)
+  /// The caller's own id for this site (their project or order number). Repeating
+  /// a call with the same value returns the site that already exists instead of
+  /// building a second one.
+  apiRef              String    @default("")
   category            String
   tagline             String    @default("")
   description         String    @default("")
@@ -79,6 +133,10 @@ model Business {
   // { phone: { value, source: "google"|"link"|"owner", at } }. What is not in
   // here was typed by the owner, and nothing here was invented.
   factsJson           String    @default("{}")
+  /// How this business sells online: { enabled, deliveryCharge, freeDeliveryAbove,
+  /// minOrder, pickup, cod }. Written by the Orders settings card; read by the
+  /// storefront cart, so the shipping rule the customer sees is the owner's.
+  commerceJson        String    @default("{}")
   googleReviewsJson   String    @default("[]")
   googleReviewsAt     DateTime?
   aiPeriodStart       DateTime  @default(now()) // rolls forward every 30 days
@@ -95,12 +153,14 @@ model Business {
   faqs           Faq[]
   blogPosts      BlogPost[]
   leads          Lead[]
+  orders         Order[]
   subscription   Subscription?
   payments       Payment[]
   analytics      AnalyticsEvent[]
 
   @@index([status])
   @@index([templateId])
+  @@index([resellerId, apiRef])
 }
 
 model Website {
@@ -235,6 +295,53 @@ model Lead {
   @@index([businessId, createdAt])
   @@index([businessId, status])
   @@index([createdAt])
+}
+
+/// One thing a customer bought on a tenant's website.
+///
+/// Prices are copied onto the order at the moment it is placed, from the
+/// database and never from the request — a cart that says ₹1 for a ₹1,999
+/// product is a cart the owner would have to honour. The copy is also what
+/// makes an old order readable after the product is deleted or re-priced.
+model Order {
+  id           String   @id @default(cuid())
+  businessId   String
+  business     Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  /// The number the shop and the customer both quote, e.g. "ORD-1042".
+  number       String   @unique
+  customerName String
+  phone        String
+  email        String   @default("")
+  address      String   @default("")
+  notes        String   @default("")
+  /// [{ productId, name, qty, price }] as JSON — the lines as they were sold.
+  itemsJson    String   @default("[]")
+  subtotal     Float    @default(0)
+  delivery     Float    @default(0)
+  total        Float    @default(0)
+  /// DELIVERY | PICKUP
+  fulfilment   String   @default("DELIVERY")
+  /// COD | UPI | ENQUIRY
+  payment      String   @default("COD")
+  /// PENDING | PAID | REFUNDED
+  paymentStatus String  @default("PENDING")
+  /// What the customer typed after paying by UPI (a UTR, usually).
+  paymentRef   String   @default("")
+  /// NEW | CONFIRMED | PACKED | OUT_FOR_DELIVERY | DELIVERED | CANCELLED
+  status       String   @default("NEW")
+  /// The owner's private note about this order.
+  ownerNotes   String   @default("")
+  /// The enquiry this order also filed, so the lead inbox and the order list
+  /// point at each other instead of the order disappearing into a second inbox.
+  leadId       String   @default("")
+  /// Which visit placed it — the same id the analytics events carry.
+  visitId      String   @default("")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([businessId, createdAt])
+  @@index([businessId, status])
+  @@index([businessId, phone])
 }
 
 model Plan {

@@ -3,7 +3,10 @@ import { ok, readJson, route, str } from "@/lib/api";
 import { clientIp, rateLimit } from "@/lib/rate-limit";
 import { isVisitId } from "@/lib/visits";
 
-const EVENT_TYPES = ["VISIT", "CTA_CALL", "CTA_WHATSAPP", "CTA_EMAIL", "CTA_DIRECTIONS", "FORM_SUBMIT"];
+// ORDER_PLACED is deliberately absent: it is written by the order endpoint,
+// inside the same transaction as the order. An allow-listed "order" event would
+// let anybody inflate a shop's numbers without buying anything.
+const EVENT_TYPES = ["VISIT", "CART_ADD", "CTA_CALL", "CTA_WHATSAPP", "CTA_EMAIL", "CTA_DIRECTIONS", "FORM_SUBMIT"];
 
 /**
  * POST /api/analytics/event — public tracking on published websites.

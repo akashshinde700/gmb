@@ -516,3 +516,78 @@
     animation: none;
   }
 }
+
+/* ---------- Freeform editor: per-section style the owner sets by hand ----------
+
+   section.content.__style is a small closed vocabulary (lib/section-style.ts).
+   It is applied on the published page too, not just in the editor, so these
+   rules are part of the site, not part of the editing chrome.
+
+   The inner <section> keeps its own padding classes; [data-ws-pad] zeroes them
+   and the wrapper re-applies the chosen rhythm. That is the only structural
+   override here, and it is scoped to sections that actually carry a style. */
+[data-ws-pad] > section {
+  padding-block: 0;
+}
+[data-ws-pad] {
+  padding-block: 5rem;
+}
+[data-ws-pad="none"] { padding-block: 0; }
+[data-ws-pad="compact"] { padding-block: 2.5rem; }
+[data-ws-pad="airy"] { padding-block: 7.5rem; }
+
+/* Backgrounds. The section's own cards and body copy keep their explicit
+   colours; only the two section-heading tokens flip, because the heading above
+   a dark band is the one thing that would otherwise be unreadable. */
+[data-ws-bg] { position: relative; }
+[data-ws-bg="surface"] { background: var(--brand-surface); }
+[data-ws-bg="accent"] { background: color-mix(in srgb, var(--brand-accent) 14%, white); }
+[data-ws-bg="dark"] {
+  background: var(--brand-secondary);
+  --brand-heading: #ffffff;
+  --brand-subheading: rgb(255 255 255 / 0.78);
+}
+[data-ws-bg="gradient"] {
+  background: linear-gradient(135deg, var(--brand-secondary) 0%, var(--brand-primary) 100%);
+  --brand-heading: #ffffff;
+  --brand-subheading: rgb(255 255 255 / 0.82);
+}
+
+/* Heading scale: one variable, so every section type scales the same way
+   instead of each one needing its own rule. */
+[data-ws-head="s"] { --ws-head-scale: 0.85; }
+[data-ws-head="m"] { --ws-head-scale: 1; }
+[data-ws-head="l"] { --ws-head-scale: 1.15; }
+[data-ws-head="xl"] { --ws-head-scale: 1.3; }
+[data-ws-head] { --ws-head-base: 1.875rem; }
+[data-ws-head] h2 {
+  font-size: calc(var(--ws-head-base) * var(--ws-head-scale));
+  line-height: 1.15;
+}
+@media (min-width: 768px) {
+  [data-ws-head] { --ws-head-base: 2.25rem; }
+}
+
+[data-ws-align="center"] > section :is(h2, h3, p) {
+  text-align: center;
+}
+
+/* Columns: grids inside a section read the count from here when it is set.
+   Sections that lay out with flex (a filmstrip) deliberately ignore it. */
+[data-ws-cols] > section :is(.grid) {
+  grid-template-columns: repeat(var(--ws-cols, 1), minmax(0, 1fr)) !important;
+}
+[data-ws-cols="1"] { --ws-cols: 1; }
+[data-ws-cols="2"] { --ws-cols: 2; }
+[data-ws-cols="3"] { --ws-cols: 3; }
+[data-ws-cols="4"] { --ws-cols: 4; }
+@media (max-width: 640px) {
+  [data-ws-cols] > section :is(.grid) {
+    grid-template-columns: repeat(min(var(--ws-cols, 1), 2), minmax(0, 1fr)) !important;
+  }
+}
+
+/* A dense section the owner keeps on desktop but hides on a phone. */
+@media (max-width: 640px) {
+  [data-ws-hide-mobile] { display: none; }
+}

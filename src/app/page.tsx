@@ -1,6 +1,8 @@
+import { headers } from "next/headers";
 import LandingClient from "@/components/views/landing-client";
 import { currentUser } from "@/lib/guard";
 import { readPlatformTheme } from "@/lib/platform-theme-server";
+import { brandForHost } from "@/lib/reseller";
 import { db } from "@/lib/db";
 
 /**
@@ -20,9 +22,13 @@ import { db } from "@/lib/db";
 export const dynamic = "force-dynamic";
 
 export default async function Page() {
-  const [user, platformTheme, publishedPosts] = await Promise.all([
+  // Which host the visitor arrived on decides whose brand the page wears: the
+  // platform's, or — when an agency's domain points here — the agency's.
+  const host = (await headers()).get("host");
+  const [user, platformTheme, brand, publishedPosts] = await Promise.all([
     currentUser(),
-    readPlatformTheme(),
+    readPlatformTheme(host),
+    brandForHost(host),
     // Only to decide whether the header shows a Blog link. Counting is cheaper
     // than loading the posts, and this page does not render them.
     db.platformPost.count({ where: { published: true } }).catch(() => 0),
@@ -31,6 +37,7 @@ export default async function Page() {
     <LandingClient
       user={user}
       platformTheme={platformTheme}
+      brand={brand}
       hasBlogPosts={publishedPosts > 0}
     />
   );

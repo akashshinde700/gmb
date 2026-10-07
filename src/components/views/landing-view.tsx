@@ -198,9 +198,16 @@ function scrollToId(e: ReactMouseEvent<HTMLAnchorElement>, id: string) {
  */
 export default function LandingView({
   platformTheme: serverTheme,
+  brand,
   hasBlogPosts = false,
 }: {
   platformTheme?: PlatformTheme;
+  /**
+   * Whose name and logo this page wears. A reseller's own domain points here,
+   * and their customer must never read the platform's name — so every place the
+   * name appears reads it from here, with the platform as the default.
+   */
+  brand?: { name: string; logoUrl: string; whiteLabel: boolean };
   /** Whether the platform blog has at least one published post. */
   hasBlogPosts?: boolean;
 }) {
@@ -209,6 +216,14 @@ export default function LandingView({
   const storeTheme = useApp((s) => s.platformTheme);
   const platformTheme = serverTheme ?? storeTheme;
   const storePlans = useApp((s) => s.plans);
+  // Copy that names the platform has to name the agency instead when the page
+  // is served on the agency's domain — an agency's prospect reading "WebSetu"
+  // is the one thing white-label must never allow.
+  const plate = brand?.name ?? "WebSetu";
+  const wl = (text: string) =>
+    brand?.whiteLabel
+      ? text.replaceAll("WebSetu", plate).replaceAll("yourname.websetu.in", "a free address we set up for you")
+      : text;
   const setAuthMode = useApp((s) => s.setAuthMode);
   const openSite = useApp((s) => s.openSite);
   const { toast } = useToast();
@@ -316,7 +331,11 @@ export default function LandingView({
             <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500 to-teal-700 text-lg font-bold text-white shadow-sm">
               W
             </span>
-            <span className="text-lg font-bold tracking-tight text-foreground">WebSetu</span>
+            {brand?.logoUrl ? (
+              <img src={brand.logoUrl} alt={brand.name} className="h-7 w-auto" />
+            ) : (
+              <span className="text-lg font-bold tracking-tight text-foreground">{brand?.name ?? "WebSetu"}</span>
+            )}
           </a>
 
           <div className="hidden items-center gap-7 lg:flex">
@@ -780,7 +799,7 @@ export default function LandingView({
                     <AccordionTrigger className="text-left text-base font-semibold text-foreground hover:text-emerald-700 hover:no-underline">
                       {f.q}
                     </AccordionTrigger>
-                    <AccordionContent className="text-sm leading-relaxed text-muted-foreground">{f.a}</AccordionContent>
+                    <AccordionContent className="text-sm leading-relaxed text-muted-foreground">{wl(f.a)}</AccordionContent>
                   </AccordionItem>
                 ))}
               </Accordion>
@@ -855,7 +874,7 @@ export default function LandingView({
               Ready to bring your business online?
             </h2>
             <p className="relative mx-auto mt-4 max-w-xl text-emerald-100">
-              Join 500+ businesses already growing with WebSetu. Your website{SHOW_LEADS ? ", leads" : ""} and Google
+              Join 500+ businesses already growing with {plate}. Your website{SHOW_LEADS ? ", leads" : ""} and Google
               presence — all in one place.
             </p>
             <Button
@@ -905,7 +924,11 @@ export default function LandingView({
                 <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500 to-teal-700 text-lg font-bold text-white">
                   W
                 </span>
-                <span className="text-lg font-bold tracking-tight text-white">WebSetu</span>
+                {brand?.logoUrl ? (
+                  <img src={brand.logoUrl} alt={brand.name} className="h-7 w-auto" />
+                ) : (
+                  <span className="text-lg font-bold tracking-tight text-white">{brand?.name ?? "WebSetu"}</span>
+                )}
               </div>
               <p className="mt-4 max-w-sm text-sm leading-relaxed">
                 Aapke business ko online lane ka complete solution — website, Google presence, SEO,{SHOW_LEADS ? " leads," : ""}
@@ -1042,7 +1065,7 @@ export default function LandingView({
 
           {/* Bottom bar */}
           <div className="mt-12 flex flex-col items-center justify-between gap-4 border-t border-white/10 pt-6 text-xs sm:flex-row">
-            <p>© {new Date().getFullYear()} WebSetu. Made with ❤️ in India 🇮🇳</p>
+            <p>© {new Date().getFullYear()} {brand?.name ?? "WebSetu"}. Made with ❤️ in India 🇮🇳</p>
             <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2">
               <button
                 type="button"
@@ -1077,7 +1100,7 @@ export default function LandingView({
             <DialogTitle>{legal === "terms" ? "Terms of Service" : "Privacy Policy"}</DialogTitle>
             <DialogDescription>
               {legal === "terms"
-                ? "The short version of what you agree to when you use WebSetu."
+                ? `The short version of what you agree to when you use ${plate}.`
                 : "What we collect, why we collect it, and what we never do with it."}
             </DialogDescription>
           </DialogHeader>

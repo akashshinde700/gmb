@@ -32,7 +32,7 @@ export const GET = route(async (req: Request) => {
   const sinceDay = dayKey(since);
   const chartSinceDay = dayKey(chartSince);
 
-  const [rawByType, rolledByType, leadCount, rawVisits, rolledDaily] = await Promise.all([
+  const [rawByType, rolledByType, leadCount, orderCount, orderValue, rawVisits, rolledDaily] = await Promise.all([
     db.analyticsEvent.groupBy({
       by: ["type"],
       where: { businessId: business.id, createdAt: { gte: since } },
@@ -44,6 +44,14 @@ export const GET = route(async (req: Request) => {
       _sum: { count: true, uniquePaths: true },
     }),
     db.lead.count({ where: { businessId: business.id, createdAt: { gte: since } } }),
+    // The shop, counted the same window as everything else. Cancelled orders are
+    // excluded: a number an owner reads as "orders" must not include the ones
+    // that were called off.
+    db.order.count({ where: { businessId: business.id, createdAt: { gte: since }, status: { not: "CANCELLED" } } }),
+    db.order.aggregate({
+      where: { businessId: business.id, createdAt: { gte: since }, status: "DELIVERED" },
+      _sum: { total: true },
+    }),
     // Raw visits are fetched with their day and path so "unique" can be counted
     // the same way it always was: distinct (day, path) pairs.
     db.analyticsEvent.findMany({
@@ -112,6 +120,9 @@ export const GET = route(async (req: Request) => {
     ctaWhatsapp: count("CTA_WHATSAPP"),
     ctaEmail: count("CTA_EMAIL"),
     formSubmits: count("FORM_SUBMIT"),
+    cartAdds: count("CART_ADD"),
+    orders: orderCount,
+    orderValue: Math.round((orderValue._sum.total ?? 0) * 100) / 100,
     daily,
   };
   return ok(summary);

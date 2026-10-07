@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client'
+import { PrismaLibSQL } from '@prisma/adapter-libsql'
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined
@@ -15,6 +16,7 @@ const logLevels =
 export const db =
   globalForPrisma.prisma ??
   new PrismaClient({
+    adapter: new PrismaLibSQL({ url: process.env.DATABASE_URL ?? 'file:../db/custom.db' }) as never,
     log: [...logLevels],
   })
 

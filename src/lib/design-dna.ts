@@ -277,13 +277,13 @@ export function profileFor(input: {
 /* ---------------------------------------------------------------- tokens */
 
 const FONT_FOR_PERSONALITY: Record<string, FontChoice[]> = {
-  trusted: ["modern", "classic"],
-  warm: ["classic", "modern"],
-  expert: ["modern", "classic"],
-  bold: ["modern", "elegant"],
-  playful: ["modern", "classic"],
-  serene: ["elegant", "classic"],
-  helpful: ["modern", "classic"],
+  trusted: ["modern", "classic", "elegant"],
+  warm: ["classic", "modern", "elegant"],
+  expert: ["modern", "classic", "elegant"],
+  bold: ["modern", "elegant", "classic"],
+  playful: ["modern", "classic", "elegant"],
+  serene: ["elegant", "classic", "modern"],
+  helpful: ["modern", "classic", "elegant"],
 };
 
 const SHADOWS: Record<ShadowChoice, string> = {
@@ -307,19 +307,32 @@ const SPACING: Record<SpacingChoice, { section: string; gap: string }> = {
 };
 
 const MOTION_PACKS: Record<MotionPack, { range: [MotionLevel, MotionLevel]; label: string }> = {
-  minimal: { range: [0, 1], label: "Calm and almost still" },
-  corporate: { range: [1, 2], label: "Clean, steady reveals" },
-  modern: { range: [2, 3], label: "Moving gradients and reveals" },
-  premium: { range: [2, 3], label: "Slow parallax and cinematic reveals" },
-  playful: { range: [3, 4], label: "Bouncy, colourful movement" },
+  minimal: { range: [0, 2], label: "Calm and almost still" },
+  corporate: { range: [1, 3], label: "Clean, steady reveals" },
+  modern: { range: [1, 4], label: "Moving gradients and reveals" },
+  premium: { range: [2, 4], label: "Slow parallax and cinematic reveals" },
+  playful: { range: [1, 4], label: "Bouncy, colourful movement" },
 };
 
-function motionPackFor(personality: string, positioning: string): MotionPack {
-  if (personality === "playful") return "playful";
-  if (positioning === "luxury" || positioning === "premium") return "premium";
-  if (personality === "serene") return "minimal";
-  if (personality === "expert") return "corporate";
-  return "modern";
+/**
+ * The animation packs that suit one business, best first.
+ *
+ * This used to return a single pack per personality, which quietly made motion
+ * the least personal dimension in the genome: every electrician and plumber in
+ * the country carries the "trusted" personality, so every one of them got the
+ * same pack at nearly the same intensity, and motion — a tenth of the
+ * similarity score — was a constant. A personality sets the range of what is
+ * acceptable, not one point in it. A trusted trade can be steady or it can be
+ * brisk and modern; an expert can be corporate, modern, or quiet.
+ */
+function motionPacksFor(personality: string, positioning: string): MotionPack[] {
+  if (personality === "playful") return ["playful", "modern", "corporate"];
+  if (personality === "serene") return ["minimal", "premium", "corporate"];
+  if (positioning === "luxury" || positioning === "premium") return ["premium", "minimal", "modern"];
+  if (personality === "expert") return ["corporate", "modern", "minimal"];
+  if (personality === "bold") return ["modern", "playful", "premium"];
+  if (personality === "warm") return ["modern", "corporate", "playful"];
+  return ["modern", "corporate", "minimal"];
 }
 
 /* ------------------------------------------------------- section variants */
@@ -438,31 +451,39 @@ export function designDnaFor(input: DnaInput): DesignDna {
   // Corners, shadows and spacing all restate the positioning rather than
   // fighting it: a budget counter gets sharp corners and no shadow, a luxury
   // studio gets the opposite. The draw only chooses within what fits.
+  // The positioning sets the flavours a business draws from — everything in
+  // these lists is a defensible choice for that tier, so the tier is never
+  // contradicted, and the draw decides which of the defensible choices it is.
+  // Two options per tier (what this was) meant half the trade matched on every
+  // one of these tokens; three and four keep the tier and lose the uniformity.
   const premium = positioning === "premium" || positioning === "luxury";
   const budget = positioning === "budget" || positioning === "value";
-  const radius: RadiusChoice = premium
-    ? (["pill", "rounded"] as RadiusChoice[])[Math.floor(draw() * 2)]
-    : budget
-      ? (["sharp", "rounded"] as RadiusChoice[])[Math.floor(draw() * 2)]
-      : (["rounded", "pill", "sharp"] as RadiusChoice[])[Math.floor(draw() * 3)];
-  const shadow: ShadowChoice = premium
-    ? (["dramatic", "lifted"] as ShadowChoice[])[Math.floor(draw() * 2)]
-    : budget
-      ? (["none", "soft"] as ShadowChoice[])[Math.floor(draw() * 2)]
-      : (["soft", "lifted"] as ShadowChoice[])[Math.floor(draw() * 2)];
-  const cardStyle: CardChoice = shadow === "none" ? (draw() < 0.5 ? "outline" : "flat") : draw() < 0.5 ? "shadow" : "outline";
-  const spacing: SpacingChoice = premium ? "airy" : budget ? "tight" : "normal";
-  const button: ButtonChoice = premium
-    ? (["outline", "soft", "solid"] as ButtonChoice[])[Math.floor(draw() * 3)]
-    : (["solid", "gradient", "square"] as ButtonChoice[])[Math.floor(draw() * 3)];
-  const header: HeaderChoice = (["sticky", "minimal", "topbar", "centred"] as HeaderChoice[])[Math.floor(draw() * 4)]
-    ?? "sticky";
-  const footer: FooterChoice = (["columned", "compact", "statement"] as FooterChoice[])[Math.floor(draw() * 3)];
-  const imageTreatment: ImageTreatment = premium
-    ? (["framed", "soft-focus", "plain"] as ImageTreatment[])[Math.floor(draw() * 3)]
-    : (["plain", "duotone", "framed"] as ImageTreatment[])[Math.floor(draw() * 3)];
+  const drawFrom = <T,>(options: readonly T[]): T =>
+    options[Math.floor(draw() * options.length) % options.length];
+  const radius: RadiusChoice = drawFrom<RadiusChoice>(
+    premium ? ["pill", "rounded", "sharp"] : budget ? ["sharp", "rounded", "pill"] : ["rounded", "pill", "sharp"],
+  );
+  const shadow: ShadowChoice = drawFrom<ShadowChoice>(
+    premium ? ["dramatic", "lifted", "soft"] : budget ? ["none", "soft", "lifted"] : ["soft", "lifted", "dramatic"],
+  );
+  const cardStyle: CardChoice =
+    shadow === "none" ? drawFrom<CardChoice>(["outline", "flat"]) : drawFrom<CardChoice>(["shadow", "outline", "flat"]);
+  const spacing: SpacingChoice = drawFrom<SpacingChoice>(
+    premium ? ["airy", "normal", "tight"] : budget ? ["tight", "normal", "airy"] : ["normal", "airy", "tight"],
+  );
+  const button: ButtonChoice = drawFrom<ButtonChoice>(
+    premium
+      ? ["outline", "soft", "solid", "square"]
+      : ["solid", "gradient", "square", "outline"],
+  );
+  const header: HeaderChoice = drawFrom<HeaderChoice>(["sticky", "minimal", "topbar", "centred"]);
+  const footer: FooterChoice = drawFrom<FooterChoice>(["columned", "compact", "statement"]);
+  const imageTreatment: ImageTreatment = drawFrom<ImageTreatment>(
+    premium ? ["framed", "soft-focus", "plain", "duotone"] : ["plain", "duotone", "framed", "soft-focus"],
+  );
 
-  const pack = motionPackFor(personality, positioning);
+  const packs = motionPacksFor(personality, positioning);
+  const pack = packs[Math.floor(drawMotion() * packs.length) % packs.length];
   const [lo, hi] = MOTION_PACKS[pack].range;
   const level = (lo + Math.floor(drawMotion() * (hi - lo + 1))) as MotionLevel;
 

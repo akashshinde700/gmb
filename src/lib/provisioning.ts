@@ -38,6 +38,14 @@ export interface ProvisionInput {
     planId?: string;
     cycle?: "MONTHLY" | "YEARLY";
     trialDays?: number;
+    /** Which reseller's client this is (their API created it). */
+    resellerId?: string;
+    /** The caller's own id for this site, for idempotent retries. */
+    apiRef?: string;
+    /** Publish immediately. The reseller API sells a live site, not a draft. */
+    publish?: boolean;
+    /** Facts the caller already knows, carried into the generated copy. */
+    description?: string;
   };
 }
 
@@ -144,7 +152,7 @@ export async function provisionCustomer(input: ProvisionInput) {
           name: input.business.name,
           category: input.business.category,
           tagline: "",
-          description: "",
+          description: input.business.description ?? "",
           city: input.business.city ?? "",
           phone: input.business.phone ?? "",
           whatsapp: input.business.phone ?? "",
@@ -177,6 +185,8 @@ export async function provisionCustomer(input: ProvisionInput) {
           name: input.business.name,
           slug,
           category: input.business.category,
+          resellerId: input.business.resellerId ?? null,
+          apiRef: input.business.apiRef ?? "",
           ownerName: input.name.trim(),
           phone: input.business.phone ?? "",
           whatsapp: input.business.phone ?? "",
@@ -184,7 +194,9 @@ export async function provisionCustomer(input: ProvisionInput) {
           address: input.business.address ?? "",
           city: input.business.city ?? "",
           country: "India",
-          status: "DRAFT",
+          // A reseller's API sells a website, not a login: unless asked
+          // otherwise, the site they create is live the moment they get the URL.
+          status: input.business.publish ? "PUBLISHED" : "DRAFT",
           // The trade's own colours and a cover image of its own. Without these
           // every admin-created business came out on the schema defaults — the
           // same green, whichever trade it was.
@@ -205,6 +217,7 @@ export async function provisionCustomer(input: ProvisionInput) {
       await tx.website.create({
         data: {
           businessId: business.id,
+          publishedAt: input.business.publish ? new Date() : null,
           seoTitle: site.seoTitle,
           seoDescription: site.seoDescription,
           keywords: site.keywords,
@@ -232,9 +245,9 @@ export async function provisionCustomer(input: ProvisionInput) {
     await tx.notification.create({
       data: {
         userId: user.id,
-        title: "Your WebSetu account is ready 🎉",
+        title: input.business?.resellerId ? `${input.business.name} is live 🎉` : "Your WebSetu account is ready 🎉",
         body: input.business
-          ? `${input.business.name} has been set up for you. Log in to add content and publish.`
+          ? `${input.business.name} has been set up for you. ${input.business.publish ? "Your website is live — log in to add your photos and details." : "Log in to add content and publish."}`
           : "Log in and complete the setup wizard to launch your website.",
       },
     });

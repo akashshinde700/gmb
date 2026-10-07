@@ -1,6 +1,14 @@
 // WebSetu — Shared TypeScript contracts (used by frontend + backend)
 
-export type UserRole = "CUSTOMER" | "ADMIN";
+/**
+ * What an account is for.
+ *
+ * RESELLER is an agency that builds sites for its own clients through the
+ * Builder API: a normal account, plus a brand and API keys. It is not a
+ * permission level — a reseller has no more access to other people's data than
+ * a customer does. Admin is enabled out of band, never by signing up.
+ */
+export type UserRole = "CUSTOMER" | "ADMIN" | "RESELLER";
 
 export interface SessionUser {
   id: string;
@@ -10,6 +18,30 @@ export interface SessionUser {
 }
 
 export type BusinessStatus = "DRAFT" | "PUBLISHED" | "SUSPENDED" | "EXPIRED" | "ARCHIVED";
+
+/** What an order is doing. Terminal states: DELIVERED (can still re-open) and CANCELLED. */
+export type OrderStatus = "NEW" | "CONFIRMED" | "PACKED" | "OUT_FOR_DELIVERY" | "DELIVERED" | "CANCELLED";
+
+/** How the shop sells online. Stored per business in Business.commerceJson. */
+export interface CommerceSettings {
+  /** Off by default: a business that does not sell online must not sprout a cart. */
+  enabled: boolean;
+  deliveryCharge: number;
+  /** Delivery becomes free at or above this subtotal; 0 means "no such rule". */
+  freeDeliveryAbove: number;
+  /** Below this, an order cannot be placed; 0 means "no minimum". */
+  minOrder: number;
+  pickup: boolean;
+  cod: boolean;
+}
+
+/** One line of an order, as it was sold — name and price are a copy, not a join. */
+export interface OrderItem {
+  productId: string;
+  name: string;
+  qty: number;
+  price: number;
+}
 export type SubscriptionStatus = "TRIALING" | "ACTIVE" | "PAST_DUE" | "EXPIRED" | "CANCELED";
 export type LeadStatus = "NEW" | "CONTACTED" | "FOLLOW_UP" | "QUALIFIED" | "CONVERTED" | "CLOSED" | "SPAM";
 
@@ -178,6 +210,19 @@ export interface SiteTheme {
   /** Output of the quality checker (lib/site-quality.ts). */
   quality?: SiteQualityReport;
   /**
+   * Where this site's design came from, when it came in from a Figma file or a
+   * design-token export (lib/figma.ts). Kept on the theme so the panel can say
+   * it, the version history carries it, and a second import can be compared
+   * against the first rather than against a mystery.
+   */
+  figma?: {
+    source: "figma" | "tokens";
+    fileName: string;
+    fileKey: string;
+    importedAt: string;
+    confidence: "strong" | "partial" | "weak";
+  };
+  /**
    * The one test running on the site, if any (lib/experiments.ts). Stored with
    * the theme rather than in its own table: it is a property of the page, it
    * travels with the version history, and it has to be undone when it ends.
@@ -305,6 +350,12 @@ export interface AnalyticsVisitReport {
 export interface AnalyticsSummary {
   visits: number; uniqueVisits: number; leads: number;
   ctaCalls: number; ctaWhatsapp: number; ctaEmail: number; formSubmits: number;
+  /** Items added to a cart. Present on every payload; 0 for a business with no shop. */
+  cartAdds?: number;
+  /** Orders placed in the window, cancellations excluded. */
+  orders?: number;
+  /** Value of orders delivered in the window — earned, not merely placed. */
+  orderValue?: number;
   daily: { date: string; visits: number; leads: number }[];
 }
 
@@ -312,6 +363,28 @@ export interface HealthCheck { key: string; label: string; pass: boolean; weight
 export interface HealthReport { score: number; checks: HealthCheck[]; recommendations: string[]; }
 
 // Full public payload for rendering a tenant website
+export interface OrderRecord {
+  id: string;
+  number: string;
+  customerName: string;
+  phone: string;
+  email: string;
+  address: string;
+  notes: string;
+  ownerNotes: string;
+  items: OrderItem[];
+  subtotal: number;
+  delivery: number;
+  total: number;
+  fulfilment: "DELIVERY" | "PICKUP";
+  payment: "COD" | "UPI" | "ENQUIRY";
+  paymentStatus: "PENDING" | "PAID" | "REFUNDED";
+  paymentRef: string;
+  status: OrderStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface SitePayload {
   business: Business;
   website: WebsiteData;
@@ -323,6 +396,18 @@ export interface SitePayload {
   blogPosts: Pick<BlogPost, "id" | "title" | "slug" | "excerpt" | "cover" | "publishedAt">[];
   /** Canonical custom hostname, or null when the site lives under /s/<slug>. */
   primaryDomain: string | null;
+  /**
+   * The shop's rules, when it has a shop. The published site needs them to show
+   * the delivery charge before checkout, and to hide the cart entirely on a site
+   * that does not sell online.
+   */
+  commerce?: CommerceSettings;
+  /**
+   * The name the site's footer credit shows. The platform's by default; an
+   * agency's name when the site was built through that agency, so their
+   * customer never reads the platform's name on their own website.
+   */
+  credit?: string;
   subscriptionStatus: string;
   trialMode: boolean;
   published?: boolean;
