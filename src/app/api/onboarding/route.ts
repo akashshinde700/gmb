@@ -180,14 +180,17 @@ export const POST = route(async (req: Request) => {
   // A brand-new site with no photos still needs a cover for link previews, the
   // dashboard card and the OG tags — its own generated poster, which is
   // different for every business and matches the chosen palette.
-  const finalCover = coverUrl || posterUrl(slug);
-  const aboutImage = stock[0]?.url;
+  const finalCover = coverUrl || posterUrl(slug, "wide", 0, { section: "cover" });
+  // Every image a generated page shows is its own drawing: the hero, the about
+  // block and each gallery tile carry a different picture of the same business,
+  // rather than one picture cropped four ways.
+  const aboutImage = stock[0]?.url ?? posterUrl(slug, "portrait", 0, { section: "about" });
   // Gallery: real photos first, then generated posters of this business so a
   // thin photo search never leaves the section empty or repeated.
   const galleryPhotos = [
     ...stock.slice(1),
     ...Array.from({ length: Math.max(0, 3 - stock.slice(1).length) }, (_, i) => ({
-      url: posterUrl(slug, "square", i + 1),
+      url: posterUrl(slug, "square", i + 1, { section: "gallery" }),
       alt: `${name} — ${category} in ${city || "India"}`.trim(),
     })),
   ];
@@ -204,6 +207,9 @@ export const POST = route(async (req: Request) => {
     business: {
       name, category, tagline, description, city, phone, whatsapp, email, address,
       establishedYear: str(body.establishedYear, 4),
+      // The slug is what makes every generated picture this business's own: the
+      // section artwork is addressed by it.
+      slug,
       brandPrimary: firstDraft.palette[0], brandSecondary: firstDraft.palette[1], brandAccent: firstDraft.palette[2],
       coverUrl, mapsUrl,
       state: str(body.state, 100),
@@ -301,6 +307,7 @@ export const POST = route(async (req: Request) => {
     business: {
       name, category, tagline, description, city, phone, whatsapp, email, address,
       establishedYear: str(body.establishedYear, 4),
+      slug,
       brandPrimary, brandSecondary, brandAccent, coverUrl, mapsUrl,
       state: str(body.state, 100),
       pincode: str(body.pincode, 10),

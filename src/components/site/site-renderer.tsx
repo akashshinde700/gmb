@@ -875,8 +875,8 @@ function renderSection(
       );
     case "stats": return <Stats key={section.id} section={section} />;
     case "about": return <About key={section.id} section={section} layout={ctx.layout} />;
-    case "services": return <Services key={section.id} section={section} services={ctx.services} onCta={ctx.track} onEnquire={ctx.onEnquire} layout={ctx.layout} />;
-    case "products": return <Products key={section.id} section={section} products={ctx.products} onCta={ctx.track} onEnquire={ctx.onEnquire} />;
+    case "services": return <Services key={section.id} section={section} services={ctx.services} onCta={ctx.track} onEnquire={ctx.onEnquire} layout={ctx.layout} business={ctx.business} />;
+    case "products": return <Products key={section.id} section={section} products={ctx.products} onCta={ctx.track} onEnquire={ctx.onEnquire} business={ctx.business} />;
     case "whyUs": return <WhyUs key={section.id} section={section} />;
     case "gallery": return <Gallery key={section.id} section={section} gallery={ctx.gallery} />;
     case "testimonials": return <Testimonials key={section.id} section={section} testimonials={ctx.testimonials} />;
