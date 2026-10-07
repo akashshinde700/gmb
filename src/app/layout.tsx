@@ -1,20 +1,40 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
-import { Geist, Geist_Mono } from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
 import { SITE_DESCRIPTION } from "@/lib/marketing-flags";
 import { siteOrigin } from "@/lib/site-utils";
 import { brandForHost } from "@/lib/reseller";
 import { Toaster } from "@/components/ui/toaster";
 
-const geistSans = Geist({
+/**
+ * The typeface is served from this repository, not from Google.
+ *
+ * `next/font/google` downloads the font files at BUILD time and embeds them in
+ * the output — so `npm run build` needed an HTTPS connection to
+ * fonts.googleapis.com to succeed. That turned a third-party outage, a
+ * firewalled VPS or a CI runner without egress into "the deploy does not
+ * build", for a product whose whole pitch is that a customer's site stays up.
+ * Vercel's own guidance for this case is to self-host.
+ *
+ * Geist and Geist Mono are SIL Open Font License 1.1 (see ./fonts/OFL.txt),
+ * which permits redistribution. Only the variable weights are vendored: 117 KB
+ * for both files, against the ten static weights per family the package ships.
+ */
+const geistSans = localFont({
+  src: "./fonts/Geist-Variable.woff2",
   variable: "--font-geist-sans",
-  subsets: ["latin"],
+  weight: "100 900",
+  display: "swap",
+  fallback: ["system-ui", "Segoe UI", "Roboto", "Helvetica Neue", "Arial", "sans-serif"],
 });
 
-const geistMono = Geist_Mono({
+const geistMono = localFont({
+  src: "./fonts/GeistMono-Variable.woff2",
   variable: "--font-geist-mono",
-  subsets: ["latin"],
+  weight: "100 900",
+  display: "swap",
+  fallback: ["ui-monospace", "SFMono-Regular", "Menlo", "Consolas", "monospace"],
 });
 
 export async function generateMetadata(): Promise<Metadata> {

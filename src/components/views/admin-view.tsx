@@ -2,6 +2,7 @@
 // WebSetu — AdminView: Super Admin console (zinc-900 sidebar, emerald accents).
 // Tabs: Overview | Customers | Plans | Templates | Coupons | Platform Leads.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import { FormError } from "@/components/views/console-ui";
 import ConsoleBreadcrumb from "@/components/views/console-breadcrumb";
 import DomainRequestsTab from "@/components/views/admin-domain-requests";
@@ -15,7 +16,6 @@ import {
   Pencil, Plus, Power, RotateCcw, Search, TicketPercent, Timer, Trash2, TrendingUp,
   KeyRound, LogIn, MessageSquare, Newspaper, Palette, Sparkles, UserPlus, Users, Wallet, Cpu, type LucideIcon,
 } from "lucide-react";
-import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api } from "@/lib/api-client";
 import { useApp, type AdminTab } from "@/store/app-store";
 import { useDebounced } from "@/hooks/use-debounced";
@@ -49,6 +49,19 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/co
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
+
+/**
+ * The revenue sparkline, fetched only when the Overview tab renders it.
+ *
+ * Same reasoning as the customer's Analytics charts: recharts is the heaviest
+ * client dependency here and this one 96px-tall line is the only thing in the
+ * whole admin console that uses it. Loading it eagerly put it in the bundle of
+ * the Customers, Plans, Coupons and Domains tabs as well.
+ */
+const RevenueSparkline = dynamic(
+  () => import("@/components/views/charts").then((m) => m.RevenueSparkline),
+  { ssr: false, loading: () => <Skeleton className="h-full w-full rounded-lg" /> },
+);
 
 /* ================================== helpers ================================== */
 
@@ -571,24 +584,7 @@ function OverviewTab() {
             </div>
             <div className="mt-4 h-24">
               {chartData.length >= 2 ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={chartData} margin={{ top: 4, right: 4, bottom: 0, left: 4 }}>
-                    <XAxis dataKey="label" hide />
-                    <YAxis hide />
-                    <Tooltip
-                      formatter={(v) => inr(Number(v))}
-                      contentStyle={{ borderRadius: 10, borderColor: "#e4e4e7", fontSize: 12 }}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="amount"
-                      stroke="#059669"
-                      strokeWidth={2.5}
-                      dot={{ r: 2.5, fill: "#059669", strokeWidth: 0 }}
-                      activeDot={{ r: 4 }}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
+                <RevenueSparkline data={chartData} format={inr} />
               ) : (
                 <div className="flex h-full items-center justify-center rounded-lg border border-dashed border-border text-xs text-muted-foreground">
                   <TrendingUp className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />

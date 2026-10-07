@@ -48,19 +48,35 @@ export function sniffImage(buffer: Buffer): { ext: string; mime: string } | null
   return match ? { ext: match.ext, mime: match.mime } : null;
 }
 
-/** Write bytes under a generated name. The original filename is never reused. */
+/**
+ * Write bytes under a generated name. The original filename is never reused.
+ *
+ * The `turbopackIgnore` comments on the two filesystem calls below are load
+ * bearing, not decoration. The build traces what a route can read at runtime by
+ * resolving `path.*` calls statically; `UPLOADS_DIR` is an environment
+ * variable, so the path cannot be resolved, and the tracer's documented
+ * fallback for "unknown path" is to include EVERYTHING under the project root.
+ * In a standalone build that meant shipping a copy of the repository — the
+ * `.git` directory, `src/`, `e2e/` and, worst of all, `db/custom.db`, the live
+ * database with password hashes, leads and payments — inside the artifact that
+ * gets uploaded to the server on every deploy.
+ *
+ * The comment tells the tracer this read does not need tracing, which is true:
+ * uploads are written at runtime to a directory that is deliberately not part
+ * of the build (see the note at the top of this file).
+ */
 export async function storeImage(buffer: Buffer, ext: string): Promise<string> {
   const dir = uploadsDir();
   await mkdir(dir, { recursive: true });
   const name = `${randomUUID()}.${ext}`;
-  await writeFile(path.join(dir, name), buffer);
+  await writeFile(path.join(/* turbopackIgnore: true */ dir, name), buffer);
   return name;
 }
 
 /** Resolve a stored file, refusing anything that escapes the uploads directory. */
 export function resolveStoredFile(file: string): string | null {
   if (!/^[A-Za-z0-9._-]+$/.test(file) || file.includes("..")) return null;
-  const dir = path.resolve(uploadsDir());
+  const dir = path.resolve(/* turbopackIgnore: true */ uploadsDir());
   const target = path.resolve(dir, file);
   if (target !== dir && !target.startsWith(dir + path.sep)) return null;
   return target;
