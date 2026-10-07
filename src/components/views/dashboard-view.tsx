@@ -39,7 +39,7 @@ import { isValidUpiId, upiDeepLink, youtubeId } from "@/lib/site-utils";
 import { isQuoteOnlyPlan } from "@/lib/trial";
 import QRCode from "react-qr-code";
 import type {
-  AnalyticsSummary, AppearanceAllowance, BlogPost, Business, Faq, GalleryItem,
+  AnalyticsSummary, AnalyticsVisitReport, AppearanceAllowance, BlogPost, Business, Faq, GalleryItem,
   Plan, Product, Service, SitePayload, SiteSection, SiteTheme, Testimonial, WebsiteData,
 } from "@/lib/types";
 import SiteRenderer from "@/components/site/site-renderer";
@@ -4392,6 +4392,102 @@ function SeoTab({ business, content }: { business: BusinessWithMeta; content: Co
 
 const CHART_COLORS = { emerald: "#059669", amber: "#d97706", zinc: "#a1a1aa" };
 
+const VISIT_ACTION_LABEL: Record<string, { label: string; Icon: typeof Phone }> = {
+  VISIT: { label: "Opened the site", Icon: Eye },
+  CTA_CALL: { label: "Tapped Call", Icon: Phone },
+  CTA_WHATSAPP: { label: "Tapped WhatsApp", Icon: MessageCircle },
+  CTA_EMAIL: { label: "Tapped Email", Icon: Mail },
+  CTA_DIRECTIONS: { label: "Asked for directions", Icon: MapPin },
+  FORM_SUBMIT: { label: "Sent an enquiry", Icon: Inbox },
+};
+
+function timeOf(iso: string) {
+  return new Date(iso).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit" });
+}
+
+/**
+ * The last day of visits, one line each: what the visitor did, in the order
+ * they did it, and whether it turned into an enquiry.
+ *
+ * The counters above say how much happened. This says who did it — which is
+ * what an owner acts on: "someone tapped WhatsApp twice and then filled the
+ * form" is a follow-up, "12 visits" is a graph.
+ */
+function RecentVisitsCard() {
+  const { data, loading } = useFetch<AnalyticsVisitReport>(() => api.get<AnalyticsVisitReport>("/api/analytics/visits?hours=24"));
+
+  return (
+    <Card className="rounded-2xl p-6">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h2 className="text-base font-bold text-foreground">What visitors did</h2>
+          <p className="text-xs text-muted-foreground">Last 24 hours, one line per visit</p>
+        </div>
+        {data && data.visits.length > 0 && (
+          <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700">
+            {data.converted} of {data.visits.length} visit{data.visits.length === 1 ? "" : "s"} enquired
+          </span>
+        )}
+      </div>
+
+      {loading ? (
+        <Skeleton className="h-40 w-full rounded-2xl" />
+      ) : !data || data.visits.length === 0 ? (
+        <p className="py-6 text-center text-xs text-muted-foreground">
+          No visits in the last 24 hours. Share your website link — visits always show up here first.
+        </p>
+      ) : (
+        <ul className="divide-y divide-border">
+          {data.visits.map((visit) => (
+            <li key={visit.id} className="flex flex-wrap items-start gap-x-4 gap-y-2 py-3">
+              <div className="min-w-[86px]">
+                <p className="text-xs font-semibold text-foreground">{timeOf(visit.first)}</p>
+                <p className="text-[11px] text-muted-foreground">
+                  {visit.actions.length} action{visit.actions.length === 1 ? "" : "s"}
+                </p>
+              </div>
+              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+                {visit.actions.map((action, i) => {
+                  const known = VISIT_ACTION_LABEL[action.type];
+                  const Icon = known?.Icon ?? Eye;
+                  return (
+                    <span
+                      key={`${action.at}-${i}`}
+                      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                        action.type === "FORM_SUBMIT" ? "bg-amber-50 text-amber-700" : "bg-muted text-muted-foreground"
+                      }`}
+                      title={timeOf(action.at)}
+                    >
+                      <Icon className="h-3 w-3" />
+                      {known?.label ?? action.type}
+                    </span>
+                  );
+                })}
+              </div>
+              {visit.lead && (
+                <div className="text-right">
+                  <p className="text-xs font-semibold text-foreground">{visit.lead.name}</p>
+                  <p className="text-[11px] text-muted-foreground">
+                    {visit.lead.phone}
+                    {visit.lead.serviceName ? ` · ${visit.lead.serviceName}` : ""}
+                  </p>
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {data && data.untracked > 0 && (
+        <p className="mt-3 text-[11px] text-muted-foreground">
+          {data.untracked} earlier action{data.untracked === 1 ? "" : "s"} came from pages opened before visit tracking, so
+          they are counted in the totals above but not attributed to a visit here.
+        </p>
+      )}
+    </Card>
+  );
+}
+
 function AnalyticsTab({ business }: { business: BusinessWithMeta }) {
   const { data: summary, loading } = useFetch<AnalyticsSummary>(() => api.get<AnalyticsSummary>("/api/analytics/summary"));
 
@@ -4426,6 +4522,8 @@ function AnalyticsTab({ business }: { business: BusinessWithMeta }) {
         <StatCard icon={MessageCircle} label="WhatsApp clicks" value={loading ? "…" : (summary?.ctaWhatsapp ?? 0)} tint="amber" />
         <StatCard icon={Mail} label="Email clicks" value={loading ? "…" : (summary?.ctaEmail ?? 0)} tint="zinc" />
       </div>
+
+      <RecentVisitsCard />
 
       <div className="grid items-start gap-4 xl:grid-cols-3">
         <Card className="rounded-2xl p-6 xl:col-span-2">

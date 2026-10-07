@@ -5,6 +5,7 @@ import { subscriptionServesSite } from "@/lib/expiry";
 import { after } from "next/server";
 import { sendLeadAlert, sendLeadAutoReply } from "@/lib/emails";
 import { sendLeadSms, smsConfigured } from "@/lib/sms";
+import { isVisitId } from "@/lib/visits";
 
 const LEAD_STATUSES = ["NEW", "CONTACTED", "FOLLOW_UP", "QUALIFIED", "CONVERTED", "CLOSED", "SPAM"];
 
@@ -89,6 +90,7 @@ export const POST = route(async (req: Request) => {
   const body = await readJson<{
     slug?: string; name?: string; phone?: string; email?: string;
     message?: string; serviceName?: string; source?: string; website?: string;
+    visitor?: string; visit?: string;
   }>(req);
 
   // Honeypot: real users never see or fill this field, bots fill everything.
@@ -141,8 +143,17 @@ export const POST = route(async (req: Request) => {
       },
     });
 
+    // The enquiry event carries the visit it came from *and* the lead's id, so
+    // the owner's visit list can show which visit turned into work — and a lead
+    // can be read back as the trail that produced it.
+    const meta: Record<string, string> = { leadId: created.id };
+    const visitor = str(body.visitor, 40);
+    const visit = str(body.visit, 40);
+    if (isVisitId(visitor)) meta.visitor = visitor;
+    if (isVisitId(visit)) meta.visit = visit;
+
     await tx.analyticsEvent.create({
-      data: { businessId: business.id, type: "FORM_SUBMIT", path: "/contact" },
+      data: { businessId: business.id, type: "FORM_SUBMIT", path: "/contact", meta: JSON.stringify(meta) },
     });
 
     await tx.notification.create({

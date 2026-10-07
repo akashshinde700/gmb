@@ -2,6 +2,7 @@ import { db } from "@/lib/db";
 import type { AnalyticsSummary } from "@/lib/types";
 import { ok, requireBusiness, requireUser, route } from "@/lib/api";
 import { dayKey, sweepAnalytics } from "@/lib/analytics";
+import { distinctVisits } from "@/lib/visits";
 
 /**
  * GET /api/analytics/summary — aggregated stats for the tenant dashboard.
@@ -47,7 +48,7 @@ export const GET = route(async (req: Request) => {
     // the same way it always was: distinct (day, path) pairs.
     db.analyticsEvent.findMany({
       where: { businessId: business.id, type: "VISIT", createdAt: { gte: since } },
-      select: { path: true, createdAt: true },
+      select: { path: true, meta: true, type: true, createdAt: true },
       take: 50_000,
     }),
     db.analyticsDaily.findMany({
@@ -66,7 +67,12 @@ export const GET = route(async (req: Request) => {
     return raw + rolled;
   };
 
-  const uniqueRaw = new Set(rawVisits.map((v) => `${dayKey(v.createdAt)} ${v.path}`)).size;
+  // Unique used to mean "distinct (day, path)" — the best available before
+  // visits had ids. Once a site's pages carry visit ids, "unique" means what an
+  // owner reads it as: distinct visits. Rows from before (and the rollups) keep
+  // the old measure, so the number never silently drops.
+  const uniqueTracked = distinctVisits(rawVisits);
+  const uniqueRaw = uniqueTracked || new Set(rawVisits.map((v) => `${dayKey(v.createdAt)} ${v.path}`)).size;
   const uniqueRolled =
     rolledByType.find((r) => r.type === "VISIT")?._sum.uniquePaths ?? 0;
 

@@ -276,6 +276,32 @@ export interface TemplateDef {
   premium: boolean; gradient: string; coverImage: string; theme: Partial<SiteTheme>;
 }
 
+/**
+ * One visit's story, as the dashboard reads it: what the visitor did, in order,
+ * and whether any of it turned into an enquiry. Actions carry their own time
+ * because "tapped WhatsApp, then filled the form" is a different story from the
+ * same two taps the other way round.
+ */
+export interface AnalyticsVisit {
+  id: string;
+  first: string;
+  last: string;
+  path: string;
+  actions: { type: string; at: string }[];
+  leadId: string;
+  converted: boolean;
+  lead: { id: string; name: string; phone: string; serviceName: string; status: string } | null;
+}
+
+export interface AnalyticsVisitReport {
+  hours: number;
+  visits: AnalyticsVisit[];
+  /** Actions from pages cached before visits had ids — counted, not guessed at. */
+  untracked: number;
+  converted: number;
+  day: string;
+}
+
 export interface AnalyticsSummary {
   visits: number; uniqueVisits: number; leads: number;
   ctaCalls: number; ctaWhatsapp: number; ctaEmail: number; formSubmits: number;

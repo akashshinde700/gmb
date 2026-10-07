@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { openStatus } from "@/lib/hours";
-import { jsonLdScript, siteOrigin, usableTagline, visitorId } from "@/lib/site-utils";
+import { jsonLdScript, siteOrigin, usableTagline, visitMeta, visitorId } from "@/lib/site-utils";
 import { applyVariant } from "@/lib/experiments";
 import { schemaTypeFor } from "@/lib/schema-types";
 import { resolveIndustry, type SceneKind } from "@/lib/industries";
@@ -316,13 +316,20 @@ export default function SiteRenderer({ payload, mode = "live", device = "desktop
   // that go with it.
   const [ab, setAb] = useState<{ key: string; variant: "a" | "b"; sections: SiteSection[] } | null>(null);
   /**
-   * The test this visitor is in, attached to every event they generate — the
-   * visit, the call tap, the enquiry. Without it the owner would see two
-   * headlines in a dashboard and no way to tell which one earned the work.
+   * What every event from this page carries: the A/B test the visitor is in
+   * (without it the owner would see two headlines in the dashboard and no way
+   * to tell which one earned the work) and which visit it happened in (without
+   * it the dashboard can count actions but cannot say that one visit did four
+   * of them, or that the enquiry came from the visit that tapped WhatsApp).
    */
   const abMeta = useCallback(
-    (): { experiment?: string; variant?: string } =>
-      experiment && ab ? { experiment: String(experiment.key), variant: ab.variant } : {},
+    (): { experiment?: string; variant?: string; visitor?: string; visit?: string } => {
+      const ids = visitMeta();
+      return {
+        ...(experiment && ab ? { experiment: String(experiment.key), variant: ab.variant } : {}),
+        ...(ids.visit ? { visitor: ids.visitor, visit: ids.visit } : {}),
+      };
+    },
     [experiment, ab],
   );
   // Until the visitor's variant is known, the page renders exactly what the
@@ -413,7 +420,13 @@ export default function SiteRenderer({ payload, mode = "live", device = "desktop
       return null; // simulate success in preview
     }
     try {
-      await api.post("/api/leads", { slug: business.slug, ...data, source: "FORM" });
+      // The visit the enquiry came from travels with it, so the owner can see
+      // what this person looked at before writing in.
+      const ids = visitMeta();
+      await api.post("/api/leads", {
+        slug: business.slug, ...data, source: "FORM",
+        ...(ids.visit ? { visitor: ids.visitor, visit: ids.visit } : {}),
+      });
       return null;
     } catch (e) {
       return e instanceof Error ? e.message : "Could not submit enquiry";
