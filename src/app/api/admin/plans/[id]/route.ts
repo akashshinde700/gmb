@@ -14,6 +14,7 @@ export const PUT = route(async (req: Request, { params }: Params) => {
   const body = await readJson<{
     name?: string; tagline?: string; priceMonthly?: number; priceYearly?: number;
     features?: string[]; maxPages?: number; aiCredits?: number; maxPalettes?: number;
+    maxDomains?: number; maxThemeChanges?: number;
     popular?: boolean; active?: boolean;
   }>(req);
 
@@ -34,7 +35,10 @@ export const PUT = route(async (req: Request, { params }: Params) => {
     if (!Array.isArray(body.features)) throw new HttpError("Features must be a list");
     data.featuresJson = JSON.stringify(body.features.filter(Boolean).slice(0, 30).map((f) => str(f, 200)));
   }
-  for (const key of ["maxPages", "aiCredits", "maxPalettes"] as const) {
+  // maxDomains and maxThemeChanges are enforced by domain-rules/appearance-rules
+  // but had no way in: an admin could not set the allowance the API checks, so
+  // both meters were stuck at "whatever the seed wrote".
+  for (const key of ["maxPages", "aiCredits", "maxPalettes", "maxDomains", "maxThemeChanges"] as const) {
     if (body[key] === undefined) continue;
     const value = Number(body[key]);
     if (!Number.isFinite(value)) throw new HttpError(`${key} must be a number`);

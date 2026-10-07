@@ -254,7 +254,7 @@ const PRESETS: IndustryPreset[] = [
     keywords: ["real estate", "property", "realty", "estate agent", "broker", "developers", "plots", "rental services", "leasing"],
     palette: ["#27272a", "#09090b", "#d4af37"],
     theme: { font: "elegant", radius: "rounded", heroStyle: "image", cardStyle: "shadow" },
-    motif: { icons: ["building", "key", "house", "map-pin", "landmark", "star"], scene: "tech" },
+    motif: { icons: ["building", "key", "house", "map-pin", "landmark", "star"], scene: "build" },
     services: [
       { name: "Buy Property", description: "Verified flats, villas and plots matched to your budget and location.", icon: "house" },
       { name: "Sell Property", description: "Right pricing, genuine buyers and smooth paperwork.", icon: "tag" },
@@ -303,7 +303,7 @@ const PRESETS: IndustryPreset[] = [
     keywords: ["manufactur", "industries", "industrial", "distributor", "wholesale", "trader", "trading", "exporter", "fabrication", "engineering works", "importer", "packaging", "printing press", "plastic", "chemical", "foundry", "machine tools", "glass", "aluminium", "rubber", "paper mill", "textile", "spinning", "weaving"],
     palette: ["#0369a1", "#082f49", "#eab308"],
     theme: { font: "modern", radius: "sharp", heroStyle: "split", cardStyle: "outline" },
-    motif: { icons: ["factory", "cog", "boxes", "truck", "package", "badge-check"], scene: "tech" },
+    motif: { icons: ["factory", "cog", "boxes", "truck", "package", "badge-check"], scene: "build" },
     services: [
       { name: "Product Manufacturing", description: "Consistent, quality-checked production at the volumes you need.", icon: "factory" },
       { name: "Custom & OEM Orders", description: "Products built to your specifications, drawings or samples.", icon: "cog" },

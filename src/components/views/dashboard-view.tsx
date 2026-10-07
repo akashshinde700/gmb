@@ -8,7 +8,7 @@ import {
   ChevronDown, ChevronUp, Clock, Copy, CreditCard, ExternalLink, Eye, EyeOff,
   Globe, GripVertical, HelpCircle, Image as ImageIcon, ImagePlus, Inbox, Info, LayoutDashboard,
   LayoutTemplate, Link2, Loader2, LogOut, Mail, MapPin, Menu, MessageCircle, Monitor,
-  Newspaper, Package, Palette, Pencil, Phone, Plus, QrCode, Quote, Rocket, Save, Search, Settings,
+  Newspaper, Package, Palette, Pencil, PenLine, Phone, Play, Plus, QrCode, Quote, Rocket, Save, Search, Settings, FlaskConical, Download,
   ShieldCheck, Smartphone, Sparkles, Star, Tablet, Trash2, TrendingUp, Users, XCircle,
   Youtube,
 } from "lucide-react";
@@ -21,6 +21,9 @@ import { useApp } from "@/store/app-store";
 import type { BusinessWithMeta, DashboardTab } from "@/store/app-store";
 import { computeHealth } from "@/lib/health";
 import { DEFAULT_THEME, SECTION_LIBRARY } from "@/lib/sections";
+import { VARIANT_LABELS } from "@/lib/design-dna";
+import { QUALITY_DIMENSIONS } from "@/lib/site-quality";
+import { suggestionHeadline, suggestionsFor } from "@/lib/suggestions";
 import { INDUSTRY_PRESETS, industryByKey, resolveIndustry } from "@/lib/industries";
 import { usePalettes } from "@/hooks/use-palettes";
 import { openCheckout } from "@/lib/checkout";
@@ -51,7 +54,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Collapsible, CollapsibleContent, CollapsibleTrigger,
 } from "@/components/ui/collapsible";
@@ -226,25 +229,47 @@ function truncate(s: string, n: number): string {
   return s.length > n ? `${s.slice(0, n)}…` : s;
 }
 
-/** Small data-fetching hook */
-function useFetch<T>(fn: () => Promise<T>, deps: unknown[] = []) {
+/**
+ * Small data-fetching hook: run `fn` once, expose the result and a manual
+ * `refetch`.
+ *
+ * It used to take a caller-supplied `deps` array and hand it straight to
+ * useCallback, which the lint rule cannot verify (a dependency list that is not
+ * an array literal, plus a missing `fn`) — the two warnings that sat in
+ * `npm run lint` forever, next to an eslint-disable comment naming a rule that
+ * was not the one firing. Every call site passed an empty array, so the
+ * parameter was a promise this hook never had to keep: `fn` is read through a
+ * ref instead, which also means an inline arrow (a new identity every render)
+ * cannot restart the fetch in a loop.
+ */
+function useFetch<T>(fn: () => Promise<T>) {
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  const latest = useRef(fn);
+  useEffect(() => {
+    latest.current = fn;
+  });
+
   const run = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      setData(await fn());
+      setData(await latest.current());
     } catch (e) {
       setError(errMsg(e));
     } finally {
       setLoading(false);
     }
-    // `deps` is supplied by the caller, which the lint rule cannot verify.
-    // eslint-disable-next-line react-hooks/use-memo
-  }, deps);
+  }, []);
+
   useEffect(() => {
+    // Fetching on mount is the entire purpose of the hook: the state this sets
+    // is the response, not a render cascade, and the rule cannot see through
+    // the `await`. A data-library would remove the exception at the cost of a
+    // dependency this dashboard does not otherwise need.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void run();
   }, [run]);
   return { data, loading, error, refetch: run };
@@ -869,7 +894,7 @@ export default function DashboardView() {
             {tab === "leads" && (
               <LeadsTab onCountChange={setNewLeads} />
             )}
-            {tab === "analytics" && <AnalyticsTab />}
+            {tab === "analytics" && <AnalyticsTab business={business} />}
             {tab === "subscription" && <SubscriptionTab business={business} servicesCount={content.services.length} />}
             {tab === "settings" && <SettingsTab />}
             </div>
@@ -941,7 +966,7 @@ function OverviewTab({ business, content, contentLoading }: {
 }) {
   const setDashboardTab = useApp((s) => s.setDashboardTab);
   const openSite = useApp((s) => s.openSite);
-  const { data: summary } = useFetch<AnalyticsSummary>(() => api.get<AnalyticsSummary>("/api/analytics/summary"), []);
+  const { data: summary } = useFetch<AnalyticsSummary>(() => api.get<AnalyticsSummary>("/api/analytics/summary"));
 
   const counts = useMemo(
     () => ({
@@ -952,6 +977,56 @@ function OverviewTab({ business, content, contentLoading }: {
   );
   const health = useMemo(() => computeHealth(business, business.website ?? null, counts), [business, counts]);
   const ringColor = health.score >= 80 ? "text-emerald-600" : health.score >= 50 ? "text-amber-600" : "text-red-600";
+
+  // What the platform would tell this owner to do next, from its own data: the
+  // quality report, the visitor and enquiry numbers, and the gaps in the
+  // business's own facts. Publishing is the middle of the job, not the end.
+  const theme = business.website?.theme;
+  const suggestions = useMemo(
+    () =>
+      suggestionsFor({
+        quality: theme?.quality,
+        business: {
+          phone: business.phone, whatsapp: business.whatsapp, city: business.city,
+          address: business.address, description: business.description,
+        },
+        counts,
+        activity: summary
+          ? { visits: summary.visits, leads: summary.leads, ctaCalls: summary.ctaCalls, ctaWhatsapp: summary.ctaWhatsapp }
+          : undefined,
+        uniqueness: theme?.uniqueness,
+        goal: theme?.dna?.goal?.label ?? null,
+        // What a Google lookup already fetched. The reviews it brought onto the
+        // site are the ones tagged "Google review"; the rating travels in facts.
+        google: business.facts
+          ? {
+              linked: Boolean(business.gmbUrl),
+              reviewsOnSite: counts.testimonials,
+              rating: Number(business.facts.rating?.value) || null,
+              reviewCount: Number(business.facts.reviews?.value) || null,
+              hoursImported: Object.keys(business.hours ?? {}).length > 0,
+            }
+          : null,
+      }),
+    [business, counts, summary, theme],
+  );
+  const [applying, setApplying] = useState(false);
+  const [applied, setApplied] = useState<string[] | null>(null);
+  const patchBusiness = useApp((s) => s.patchBusiness);
+
+  async function applyImprovements() {
+    setApplying(true);
+    setApplied(null);
+    try {
+      const res = await api.post<{ changed: string[]; website: WebsiteData }>("/api/website/fix");
+      setApplied(res.changed.length ? res.changed : ["nothing left to do automatically"]);
+      patchBusiness({ website: res.website });
+    } catch (e) {
+      setApplied([e instanceof Error ? e.message : "Could not apply the changes"]);
+    } finally {
+      setApplying(false);
+    }
+  }
 
   const plans = useApp((s) => s.plans);
   const sub = business.subscription;
@@ -973,7 +1048,72 @@ function OverviewTab({ business, content, contentLoading }: {
         subtitle="Here is how your website is performing and what to improve next."
       />
 
+      {/* The marketing agent: what to do next, in order, from the platform's own
+          numbers rather than from a model's opinion. */}
+      {suggestions.length > 0 && (
+        <Card className="rounded-2xl p-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="flex items-center gap-2 text-sm font-bold text-foreground">
+                <Sparkles className="h-4 w-4 text-amber-500" /> What to do next
+              </h2>
+              <p className="mt-1 text-xs text-muted-foreground">{suggestionHeadline(suggestions)}</p>
+            </div>
+            {suggestions.some((s) => s.kind === "auto") && (
+              <Button
+                size="sm"
+                onClick={applyImprovements}
+                disabled={applying}
+                className="rounded-lg bg-emerald-600 text-xs hover:bg-emerald-700"
+              >
+                {applying ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                Apply what we can do now
+              </Button>
+            )}
+          </div>
+          <ul className="mt-4 space-y-3">
+            {suggestions.map((item) => (
+              <li key={item.id} className="flex items-start gap-3">
+                <span
+                  className={cn(
+                    "mt-0.5 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase",
+                    item.impact === "high"
+                      ? "bg-red-50 text-red-600"
+                      : item.impact === "medium"
+                        ? "bg-amber-50 text-amber-700"
+                        : "bg-muted text-muted-foreground",
+                  )}
+                >
+                  {item.impact}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-foreground">{item.title}</p>
+                  <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{item.why}</p>
+                </div>
+                {item.kind === "owner" && item.tab && (
+                  <button
+                    type="button"
+                    onClick={() => setDashboardTab(item.tab as DashboardTab)}
+                    className="shrink-0 rounded-lg border px-2.5 py-1 text-[11px] font-semibold text-foreground transition hover:bg-muted"
+                  >
+                    Do it
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+          {applied && (
+            <ul className="mt-3 space-y-1 rounded-xl bg-emerald-50 px-3 py-2 text-xs text-emerald-800 ring-1 ring-emerald-100">
+              {applied.map((line) => (
+                <li key={line}>· {line}</li>
+              ))}
+            </ul>
+          )}
+        </Card>
+      )}
+
       <div className="grid gap-4 lg:grid-cols-3">
+        <AutopilotCard business={business} onUpdated={(w) => patchBusiness({ website: w })} />
         {/* Health card */}
         <Card className="rounded-2xl p-6 lg:col-span-2">
           <div className="flex flex-col items-start gap-6 sm:flex-row">
@@ -1131,6 +1271,7 @@ function BuilderTab({ business, content }: { business: BusinessWithMeta; content
   // tab discarded the lot without a word.
   useUnsavedChanges(dirty);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [regenerating, setRegenerating] = useState<string | null>(null);
   const [device, setDevice] = useState<"desktop" | "tablet" | "mobile">("desktop");
   const [saving, setSaving] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
@@ -1152,6 +1293,35 @@ function BuilderTab({ business, content }: { business: BusinessWithMeta; content
     });
     setDirty(false);
   }, [website]);
+
+  /**
+   * Redraw or rewrite one section, saving everything else as it stands.
+   *
+   * The builder may hold unsaved edits, so they are saved first: regenerating
+   * a section against a stale copy on the server would quietly lose them.
+   */
+  async function regenerateSection(sectionId: string, mode: "layout" | "copy" | "both") {
+    setRegenerating(sectionId);
+    try {
+      if (dirty) await saveDraft(true);
+      const res = await api.post<{ changed: string[]; website: WebsiteData }>("/api/website/section/regenerate", {
+        sectionId,
+        mode,
+      });
+      setSections(res.website.sections ?? []);
+      setTheme({ ...DEFAULT_THEME, ...(res.website.theme ?? {}) });
+      setDirty(false);
+      toast({ title: "Section regenerated", description: res.changed.join(" · ") });
+    } catch (e) {
+      toast({
+        variant: "destructive",
+        title: "Could not regenerate that section",
+        description: e instanceof Error ? e.message : "Try again in a moment",
+      });
+    } finally {
+      setRegenerating(null);
+    }
+  }
 
   const published = business.status === "PUBLISHED";
   const editing = sections.find((s) => s.id === editingId) ?? null;
@@ -1456,6 +1626,7 @@ function BuilderTab({ business, content }: { business: BusinessWithMeta; content
             />
           ) : (
             <>
+              <DesignDnaPanel theme={theme} onFixed={(w) => { setTheme({ ...DEFAULT_THEME, ...(w.theme ?? {}) }); setSections(w.sections ?? []); setSeo({ seoTitle: w.seoTitle ?? "", seoDescription: w.seoDescription ?? "", keywords: w.keywords ?? "" }); }} />
               <ThemePanel
                 theme={theme}
                 setTheme={(t) => { setTheme(t); setDirty(true); }}
@@ -1529,6 +1700,32 @@ function BuilderTab({ business, content }: { business: BusinessWithMeta; content
                         <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-emerald-700" onClick={() => setEditingId(s.id)} aria-label={`Edit ${lib?.name ?? s.type}`}>
                           <Pencil className="h-4 w-4" />
                         </Button>
+                        {/* One section, redrawn or rewritten, without touching the
+                            rest of the page. */}
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-muted-foreground hover:text-emerald-700"
+                              disabled={regenerating === s.id}
+                              aria-label={`Regenerate ${lib?.name ?? s.type}`}
+                            >
+                              {regenerating === s.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-56">
+                            <DropdownMenuItem onClick={() => regenerateSection(s.id, "layout")}>
+                              <LayoutTemplate className="mr-2 h-4 w-4" /> Different layout
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => regenerateSection(s.id, "copy")}>
+                              <PenLine className="mr-2 h-4 w-4" /> Rewrite the words
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => regenerateSection(s.id, "both")}>
+                              <Sparkles className="mr-2 h-4 w-4" /> Both
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                         {s.type !== "hero" ? (
                           <DeleteConfirm
                             label={`The "${lib?.name ?? s.type}" section will be removed from your page.`}
@@ -1543,6 +1740,14 @@ function BuilderTab({ business, content }: { business: BusinessWithMeta; content
                 </div>
               </Card>
               <SeoCard seo={seo} setSeo={(s) => { setSeo(s); setDirty(true); }} />
+              <HistoryCard
+                onRestored={(w) => {
+                  setSections(w.sections ?? []);
+                  setTheme({ ...DEFAULT_THEME, ...(w.theme ?? {}) });
+                  setSeo({ seoTitle: w.seoTitle ?? "", seoDescription: w.seoDescription ?? "", keywords: w.keywords ?? "" });
+                  setDirty(false);
+                }}
+              />
             </>
           )}
         </div>
@@ -1566,6 +1771,1118 @@ function BuilderTab({ business, content }: { business: BusinessWithMeta; content
         </div>
       </div>
     </div>
+  );
+}
+
+/* ------------------------------- design DNA -------------------------------- */
+
+/**
+ * What the generator decided for this business, in the owner's language.
+ *
+ * Every site is built from a genome rather than a template: the same business
+ * always produces the same genome, and two businesses in one trade never get
+ * the same one. Until now that was invisible — the owner saw a finished page
+ * and had no name for its direction, nothing to compare against the sites that
+ * already exist in their trade, and no way to tell whether the generator had
+ * done a good job. This card shows the genome, the uniqueness score measured
+ * against same-trade sites, and anything the quality checker flagged.
+ */
+function DesignDnaPanel({ theme, onFixed }: { theme: SiteTheme; onFixed: (w: WebsiteData) => void }) {
+  const [open, setOpen] = useState(false);
+  const [fixing, setFixing] = useState(false);
+  const [fixedNote, setFixedNote] = useState<string[] | null>(null);
+  const [ask, setAsk] = useState("");
+  const [restyling, setRestyling] = useState(false);
+  const [restyleNote, setRestyleNote] = useState<{ label: string; note: string; changed: string[] } | null>(null);
+  const [restyleError, setRestyleError] = useState<string | null>(null);
+  const dna = theme.dna;
+  // A site generated before the DNA existed has none of this, and one the owner
+  // has hand-edited may have lost it. The card simply does not appear.
+  if (!dna || typeof dna !== "object") return null;
+
+  const quality = theme.quality;
+  const uniqueness = theme.uniqueness;
+  // Only the issues the platform can fix on its own get a button; the rest are
+  // things only the owner can answer (a phone number, reviews, three services).
+  const fixable = (quality?.issues ?? []).filter((i) => i.fix).length;
+
+  /**
+   * "Make it more premium" — a design request in the owner's own words.
+   *
+   * The server interprets it, changes the design language (not the content) and
+   * answers with the specific decisions that moved, which is what makes the
+   * result reviewable rather than magic.
+   */
+  async function restyle() {
+    const text = ask.trim();
+    if (!text) return;
+    setRestyling(true);
+    setRestyleError(null);
+    setRestyleNote(null);
+    try {
+      const res = await api.post<{
+        intent: { label: string; note: string };
+        changed: string[];
+        website: WebsiteData;
+      }>("/api/website/restyle", { text });
+      setRestyleNote({ label: res.intent.label, note: res.intent.note, changed: res.changed });
+      onFixed(res.website);
+      setAsk("");
+    } catch (e) {
+      setRestyleError(e instanceof Error ? e.message : "Could not apply that change");
+    } finally {
+      setRestyling(false);
+    }
+  }
+
+  async function fixAll() {
+    setFixing(true);
+    setFixedNote(null);
+    try {
+      const res = await api.post<{ changed: string[]; website: WebsiteData }>("/api/website/fix");
+      setFixedNote(res.changed.length ? res.changed : ["nothing left to fix automatically"]);
+      onFixed(res.website);
+    } catch (e) {
+      setFixedNote([e instanceof Error ? e.message : "Could not fix the issues right now"]);
+    } finally {
+      setFixing(false);
+    }
+  }
+  const chips = [dna.business?.subType, dna.business?.personality, dna.business?.audience].filter(Boolean) as string[];
+  const level = Math.max(0, Math.min(4, theme.motion?.level ?? 2));
+  const issueCount = quality?.issues?.length ?? 0;
+  const score = quality?.score ?? 0;
+  const qualityTone =
+    score >= 90 ? "text-emerald-600" : score >= 75 ? "text-amber-600" : "text-red-600";
+
+  return (
+    <Card className="rounded-2xl p-4">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Sparkles className="h-4 w-4 text-amber-500" />
+          <h2 className="text-sm font-bold text-foreground">Design DNA</h2>
+        </div>
+        {dna.styleName && <Badge className="rounded-full bg-emerald-50 text-[10px] font-semibold text-emerald-700 ring-1 ring-emerald-200">{dna.styleName}</Badge>}
+      </div>
+
+      {dna.goal && (
+        <p className="mt-3 rounded-xl bg-emerald-50 px-3 py-2 text-[11px] leading-relaxed text-emerald-900 ring-1 ring-emerald-100">
+          <span className="font-semibold">Built to earn {dna.goal.label.toLowerCase()}.</span>{" "}
+          {dna.goal.primary}
+          {dna.goal.secondary ? `, then ${dna.goal.secondary}` : ""}.
+        </p>
+      )}
+
+      {chips.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {chips.map((chip) => (
+            <span key={chip} className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+              {chip}
+            </span>
+          ))}
+        </div>
+      )}
+
+      <dl className="mt-4 space-y-2 text-[11px]">
+        <div className="flex items-center justify-between gap-3">
+          <dt className="flex items-center gap-1.5 text-muted-foreground">
+            <Clock className="h-3.5 w-3.5" /> Motion
+          </dt>
+          <dd className="flex items-center gap-1.5 text-right font-medium text-foreground">
+            <span className="line-clamp-1">{dna.motionLabel || theme.motion?.pack || "Standard"}</span>
+            <span className="flex gap-0.5" aria-label={`Animation intensity ${level} of 4`}>
+              {[0, 1, 2, 3].map((i) => (
+                <span key={i} className={cn("h-1.5 w-1.5 rounded-full", i < level ? "bg-emerald-500" : "bg-muted-foreground/25")} />
+              ))}
+            </span>
+          </dd>
+        </div>
+
+        <div className="flex items-center justify-between gap-3">
+          <dt className="flex items-center gap-1.5 text-muted-foreground">
+            <LayoutTemplate className="h-3.5 w-3.5" /> Uniqueness
+          </dt>
+          <dd className="text-right font-medium text-foreground">
+            {typeof uniqueness === "number" ? (
+              <span>
+                {uniqueness}% <span className="font-normal text-muted-foreground">vs other {dna.business?.industry || "same-trade"} sites</span>
+              </span>
+            ) : (
+              <span className="font-normal text-muted-foreground">Measured on the next publish</span>
+            )}
+          </dd>
+        </div>
+
+        {quality && (
+          <div className="flex items-center justify-between gap-3">
+            <dt className="flex items-center gap-1.5 text-muted-foreground">
+              <ShieldCheck className="h-3.5 w-3.5" /> Site check
+            </dt>
+            <dd className={cn("text-right font-semibold", qualityTone)}>
+              {score}/100
+              <span className="ml-1 font-normal text-muted-foreground">
+                {issueCount === 0 ? "no issues found" : `${issueCount} to fix`}
+              </span>
+            </dd>
+          </div>
+        )}
+      </dl>
+
+      {/* The eight scores, so "82/100" becomes something the owner can act on. */}
+      {quality?.dimensions && (
+        <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5">
+          {QUALITY_DIMENSIONS.map(({ key, label }) => {
+            const value = quality.dimensions?.[key] ?? 100;
+            return (
+              <div key={key} className="flex items-center gap-2 text-[11px]">
+                <span className="w-20 shrink-0 text-muted-foreground">{label}</span>
+                <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+                  <span
+                    className={cn("block h-full rounded-full", value >= 90 ? "bg-emerald-500" : value >= 70 ? "bg-amber-400" : "bg-red-400")}
+                    style={{ width: `${Math.max(4, value)}%` }}
+                  />
+                </span>
+                <span className="w-6 shrink-0 text-right font-medium text-foreground">{value}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {typeof uniqueness === "number" && (
+        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted" role="img" aria-label={`Uniqueness ${uniqueness}%`}>
+          <div className="h-full rounded-full bg-emerald-500" style={{ width: `${Math.max(4, Math.min(100, uniqueness))}%` }} />
+        </div>
+      )}
+
+      {/* The restyle box. Shown on every generated site, because "this does not
+          feel like us yet" is the first thing an owner thinks. */}
+      <div className="mt-4 border-t pt-3">
+        <label className="mb-1.5 block text-[11px] font-semibold text-foreground" htmlFor="ws-restyle">
+          Make my website better
+        </label>
+        <div className="flex gap-2">
+          <input
+            id="ws-restyle"
+            value={ask}
+            onChange={(e) => setAsk(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") void restyle(); }}
+            placeholder="more premium · simpler · for older customers"
+            className="h-8 min-w-0 flex-1 rounded-lg border bg-background px-2.5 text-[11px] outline-none focus:ring-2 focus:ring-emerald-500"
+          />
+          <Button size="sm" onClick={restyle} disabled={restyling || !ask.trim()} className="h-8 rounded-lg text-[11px]">
+            {restyling ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Apply"}
+          </Button>
+        </div>
+        <div className="mt-1.5 flex flex-wrap gap-1.5">
+          {["more premium", "simpler", "more professional", "for older customers", "bolder", "warmer"].map((chip) => (
+            <button
+              key={chip}
+              type="button"
+              onClick={() => setAsk(chip)}
+              className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground transition hover:bg-muted-foreground/15"
+            >
+              {chip}
+            </button>
+          ))}
+        </div>
+        {restyleError && <p className="mt-2 rounded-lg bg-red-50 px-2 py-1.5 text-[11px] text-red-700">{restyleError}</p>}
+        {restyleNote && (
+          <div className="mt-2 rounded-lg bg-emerald-50 px-2.5 py-2 text-[11px] text-emerald-900 ring-1 ring-emerald-100">
+            <p className="font-semibold">{restyleNote.label} applied</p>
+            <p className="mt-0.5 leading-relaxed">{restyleNote.note}</p>
+            {restyleNote.changed.length > 0 && (
+              <ul className="mt-1 space-y-0.5 text-emerald-800">
+                {restyleNote.changed.map((line) => (
+                  <li key={line}>· {line}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+      </div>
+
+      {fixable > 0 && (
+        <Button
+          size="sm"
+          onClick={fixAll}
+          disabled={fixing}
+          className="mt-3 h-8 w-full rounded-lg bg-emerald-600 text-[11px] hover:bg-emerald-700"
+        >
+          {fixing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+          Fix {fixable} issue{fixable > 1 ? "s" : ""} automatically
+        </Button>
+      )}
+      {fixedNote && (
+        <ul className="mt-2 space-y-1 rounded-lg bg-emerald-50 px-3 py-2 text-[11px] text-emerald-800 ring-1 ring-emerald-100">
+          {fixedNote.map((line) => (
+            <li key={line} className="flex gap-1.5">
+              <Check className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+              <span>{line}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {issueCount > 0 && (
+        <ul className="mt-3 space-y-1.5">
+          {quality?.issues?.slice(0, 4).map((issue) => (
+            <li key={issue.message} className="flex gap-1.5 text-[11px] text-muted-foreground">
+              <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" aria-hidden="true" />
+              <span>{issue.message}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <Collapsible open={open} onOpenChange={setOpen}>
+        <CollapsibleTrigger asChild>
+          <button type="button" className="mt-3 flex w-full items-center justify-between text-[11px] font-semibold text-muted-foreground" aria-expanded={open}>
+            The director's brief — how this site was planned
+            <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", open && "rotate-180")} />
+          </button>
+        </CollapsibleTrigger>
+        <CollapsibleContent className="mt-2 space-y-3">
+          {/* The director's brief, in the order it was decided. This is the
+              answer to "why does my site look like this?", and the thing a
+              restyle or a manual change is measured against. */}
+          {(dna.stages ?? []).length > 0 && (
+            <ol className="space-y-2">
+              {(dna.stages ?? []).map((stage, i) => (
+                <li key={stage.name} className="flex gap-2 text-[11px]">
+                  <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-muted text-[9px] font-semibold text-muted-foreground">
+                    {i + 1}
+                  </span>
+                  <span>
+                    <span className="font-semibold text-foreground">{stage.name}</span>
+                    <span className="mt-0.5 block leading-relaxed text-muted-foreground">{stage.detail}</span>
+                  </span>
+                </li>
+              ))}
+            </ol>
+          )}
+          <div className="space-y-1 border-t pt-2">
+            {(dna.sectionPlan ?? []).map((entry) => (
+              <div key={`${entry.type}-${entry.variant}`} className="flex items-baseline gap-2 text-[11px]">
+                <span className="w-16 shrink-0 font-mono text-[10px] uppercase text-muted-foreground">{entry.type}</span>
+                <span className="text-foreground">{VARIANT_LABELS[`${entry.type}:${entry.variant}`] ?? entry.variant}</span>
+              </div>
+            ))}
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
+    </Card>
+  );
+}
+
+/* -------------------------- testing two headlines --------------------------- */
+
+interface ExperimentPayload {
+  experiment: {
+    key: string;
+    status: "running" | "stopped";
+    variants: { id: "a" | "b"; content: Record<string, string>; source: "site" | "owner" | "ai" }[];
+    startedAt: string;
+  } | null;
+  result: {
+    variants: { id: "a" | "b"; visits: number; actions: number; calls: number; whatsapp: number; enquiries: number }[];
+    leading: "a" | "b" | null;
+    decided: boolean;
+    verdict: string;
+  } | null;
+}
+
+/**
+ * Two headlines, one page, and the numbers to settle it.
+ *
+ * The promise here is deliberately small: one test at a time, two versions, and
+ * a result written in the same numbers the rest of the analytics tab reports.
+ * What it must not do is pretend to statistics it does not have — with twenty
+ * visitors the honest answer is "too early to call", and that is what it says.
+ */
+function ExperimentCard({ business }: { business: BusinessWithMeta }) {
+  const patchBusiness = useApp((s) => s.patchBusiness);
+  const [data, setData] = useState<ExperimentPayload | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [headlineB, setHeadlineB] = useState("");
+  const [open, setOpen] = useState(false);
+
+  const hero = business.website?.sections?.find((s) => s.type === "hero");
+
+  const load = useCallback(async () => {
+    try {
+      setData(await api.get<ExperimentPayload>("/api/website/experiment"));
+    } catch {
+      setData(null);
+    }
+  }, []);
+  // The test's state lives on the server (visitors are seeing it whether this
+  // tab is open or not), so this effect is a fetch, not derived state.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { void load(); }, [load]);
+
+  async function start(withOwn: boolean) {
+    setBusy(true);
+    try {
+      await api.post<{ website: WebsiteData }>("/api/website/experiment", {
+        action: "start",
+        sectionId: "hero",
+        ...(withOwn && headlineB.trim() ? { variantB: { heading: headlineB.trim() } } : {}),
+      });
+      await load();
+      setHeadlineB("");
+      toast({
+        title: "Test is running",
+        description: "Half your visitors see the new headline. The result appears in a few days.",
+      });
+    } catch (e) {
+      toast({ variant: "destructive", title: "Could not start the test", description: errMsg(e) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function stop() {
+    setBusy(true);
+    try {
+      await api.post("/api/website/experiment", { action: "stop" });
+      await load();
+      toast({ title: "Test stopped", description: "The headline you have now stays as it is." });
+    } catch (e) {
+      toast({ variant: "destructive", title: "Could not stop the test", description: errMsg(e) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function keep(variant: "a" | "b") {
+    setBusy(true);
+    try {
+      const res = await api.post<{ website: WebsiteData }>("/api/website/experiment", { action: "keep", variant });
+      patchBusiness({ website: res.website });
+      await load();
+      toast({ title: variant === "b" ? "New headline kept" : "Original headline kept" });
+    } catch (e) {
+      toast({ variant: "destructive", title: "Could not keep that one", description: errMsg(e) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const experiment = data?.experiment ?? null;
+  const result = data?.result ?? null;
+  const variantText = (id: "a" | "b") => {
+    const v = experiment?.variants.find((x) => x.id === id);
+    return v?.content.heading ?? v?.content.title ?? "";
+  };
+  const tally = (id: "a" | "b") => result?.variants.find((v) => v.id === id);
+  const rate = (id: "a" | "b") => {
+    const t = tally(id);
+    return t && t.visits ? `${Math.round((t.actions / t.visits) * 1000) / 10}%` : "—";
+  };
+
+  return (
+    <Card className="rounded-2xl">
+      <CardHeader>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <FlaskConical className="h-4 w-4 text-emerald-600" /> Test two headlines
+            </CardTitle>
+            <CardDescription>
+              Find out which opening line brings more enquiries instead of guessing. One test at a time.
+            </CardDescription>
+          </div>
+          {!experiment && (
+            <Button size="sm" variant="outline" className="h-8 shrink-0 rounded-lg text-xs" onClick={() => setOpen((v) => !v)}>
+              {open ? "Cancel" : "Start a test"}
+            </Button>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {!experiment && open && (
+          <div className="space-y-2 rounded-xl border border-emerald-200 bg-emerald-50/40 p-3">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Version 1 (live now)</p>
+              <p className="text-sm text-foreground">{String(hero?.content?.heading ?? "—")}</p>
+            </div>
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Version 2</p>
+              <Input
+                className="h-9 rounded-lg bg-white text-sm"
+                value={headlineB}
+                onChange={(e) => setHeadlineB(e.target.value)}
+                placeholder="Type a different angle, or let us write one"
+              />
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                className="h-8 rounded-lg bg-emerald-600 text-xs hover:bg-emerald-700"
+                disabled={busy || !headlineB.trim()}
+                onClick={() => start(true)}
+              >
+                {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                Test mine
+              </Button>
+              <Button size="sm" variant="outline" className="h-8 rounded-lg text-xs" disabled={busy} onClick={() => start(false)}>
+                <Sparkles className="h-3.5 w-3.5" /> Write one for me
+              </Button>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Half your visitors see each version. Your words, photos and colours are untouched — only the headline changes
+              for the half who see version 2.
+            </p>
+          </div>
+        )}
+
+        {experiment && (
+          <>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {(["a", "b"] as const).map((id) => {
+                const t = tally(id);
+                const leading = result?.leading === id;
+                return (
+                  <div key={id} className={cn("rounded-xl border p-3", leading ? "border-emerald-300 bg-emerald-50/40" : "border-border")}>
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                        Version {id === "a" ? "1" : "2"}
+                        {experiment.variants.find((v) => v.id === id)?.source === "ai" ? " · written by AI" : ""}
+                      </p>
+                      {leading && <Badge className="rounded-full bg-emerald-100 text-[10px] text-emerald-800 hover:bg-emerald-100">ahead</Badge>}
+                    </div>
+                    <p className="mt-1 text-sm font-medium text-foreground">{variantText(id) || "—"}</p>
+                    <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-muted-foreground">
+                      <span>{t?.visits ?? 0} visitors</span>
+                      <span>{t?.actions ?? 0} enquiries</span>
+                      <span className="font-semibold text-foreground">{rate(id)} enquire</span>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="mt-2 h-7 w-full rounded-lg text-[11px]"
+                      disabled={busy}
+                      onClick={() => keep(id)}
+                    >
+                      Keep this one
+                    </Button>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="text-xs text-muted-foreground">{result?.verdict ?? "Gathering numbers…"}</p>
+            {experiment.status === "running" && (
+              <Button size="sm" variant="ghost" className="h-7 rounded-lg text-[11px] text-muted-foreground" disabled={busy} onClick={stop}>
+                Stop the test (keeps the current headline)
+              </Button>
+            )}
+          </>
+        )}
+
+        {!experiment && !open && (
+          <p className="text-xs text-muted-foreground">
+            No test running. A different angle usually beats a cleverer sentence — try one on the headline.
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/* ------------------------------ google import ------------------------------- */
+
+interface GoogleOption {
+  id: string; field: string; label: string; current: string; next: string; source: string; display: string;
+}
+interface GoogleLookup {
+  via: "link" | "places-api";
+  partial: boolean;
+  note: string | null;
+  found: string[];
+  options: GoogleOption[];
+  reviews: { author: string; text: string; rating: number }[];
+  totalReviews: number;
+  rating: number | null;
+  photoCount: number;
+  categories: string[];
+}
+
+/**
+ * Bring the business's Google details onto the site, with the owner's consent.
+ *
+ * Two things make this different from pasting a link into a form. First, the
+ * lookup shows its work: every line says what Google said and what the site has
+ * now, so nothing changes on the strength of a guess. Second, what was applied
+ * is remembered per field — the footer below lists which details came from
+ * Google and when, because a website that quietly presents imported data as the
+ * owner's own words is a website nobody should trust.
+ */
+interface WebsiteLookup {
+  url: string;
+  title: string;
+  summary: string[];
+  missing: string[];
+  options: { id: string; field: string; label: string; current: string; next: string; display: string }[];
+  services: { name: string; description: string }[];
+  faqs: { question: string; answer: string }[];
+  photos: { url: string; alt: string }[];
+  social: string[];
+  hourDays: number;
+}
+
+/**
+ * The owner's *old* website, read title by title.
+ *
+ * Google gives a business its facts; the owner's own site gives it the things
+ * Google never had — the about paragraph they wrote, the services they list, the
+ * questions they answer, the photos they own. All of it is offered as ticked
+ * boxes with what the page actually said next to each one, and every write is
+ * tagged "website" so the profile can say where a line came from.
+ *
+ * The design is deliberately not imported. Same trade or not, the new site is
+ * built from this business's own design genome.
+ */
+function WebsiteImportCard({ business, onApplied }: {
+  business: BusinessWithMeta;
+  onApplied: (b: Business) => void;
+}) {
+  const patchBusiness = useApp((s) => s.patchBusiness);
+  const [url, setUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<WebsiteLookup | null>(null);
+  // What an earlier import already brought over, so the card is honest about
+  // which lines on this profile came from the owner's old website.
+  const already = useMemo(
+    () => Object.entries(business.facts ?? {}).filter(([, fact]) => fact.source === "website"),
+    [business.facts],
+  );
+  const [chosen, setChosen] = useState<string[]>([]);
+  const [withServices, setWithServices] = useState(false);
+  const [withFaqs, setWithFaqs] = useState(false);
+  const [withPhotos, setWithPhotos] = useState(false);
+
+  async function read() {
+    const target = url.trim();
+    if (!target) return;
+    setBusy(true);
+    setResult(null);
+    try {
+      const res = await api.post<WebsiteLookup>("/api/business/website-import", { mode: "lookup", url: target });
+      setResult(res);
+      // Additions ticked, replacements offered — same rule as the Google card.
+      setChosen(res.options.filter((o) => !o.current).map((o) => o.id));
+      setWithServices(res.services.length > 0);
+      setWithFaqs(res.faqs.length > 0);
+      setWithPhotos(res.photos.length > 0);
+    } catch (e) {
+      toast({ variant: "destructive", title: "Could not read that page", description: errMsg(e) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function apply() {
+    if (!result) return;
+    setBusy(true);
+    try {
+      const res = await api.post<{
+        applied: { label: string; value: string }[];
+        servicesAdded: number; faqsAdded: number; photosAdded: number;
+        business: Business;
+      }>("/api/business/website-import", {
+        mode: "apply", url, fields: chosen,
+        services: withServices, faqs: withFaqs, photos: withPhotos,
+      });
+      patchBusiness(res.business);
+      onApplied(res.business);
+      const parts = [
+        res.applied.length ? `${res.applied.length} field(s)` : "",
+        res.servicesAdded ? `${res.servicesAdded} services` : "",
+        res.faqsAdded ? `${res.faqsAdded} questions` : "",
+        res.photosAdded ? `${res.photosAdded} photos` : "",
+      ].filter(Boolean);
+      toast({
+        title: "Brought over from your website",
+        description: parts.length ? `${parts.join(" · ")}. Press Save below to keep the rest of your edits.` : "Nothing new was found.",
+      });
+      setResult(null);
+      setUrl("");
+    } catch (e) {
+      toast({ variant: "destructive", title: "Could not bring that over", description: errMsg(e) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="rounded-xl border p-3">
+      <p className="flex items-center gap-2 text-xs font-semibold text-foreground">
+        <Globe className="h-3.5 w-3.5 text-emerald-600" /> Bring your old website across
+      </p>
+      <p className="mt-1 text-[11px] text-muted-foreground">
+        Paste your existing site: we read its phone, address, about text, services, questions and photos. Your words and
+        your pictures — never its layout.
+      </p>
+      {already.length > 0 && (
+        <p className="mt-1 text-[11px] text-emerald-700">
+          Already brought over from your website: {already.map(([field]) => field).join(", ")}.
+        </p>
+      )}
+      <div className="mt-2 flex gap-2">
+        <Input
+          className="h-9 rounded-lg text-sm"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void read(); } }}
+          placeholder="yourbusiness.com"
+          inputMode="url"
+        />
+        <Button size="sm" className="h-9 shrink-0 rounded-lg bg-emerald-600 text-xs hover:bg-emerald-700" disabled={busy || !url.trim()} onClick={() => void read()}>
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />} Read
+        </Button>
+      </div>
+
+      {result && (
+        <div className="mt-3 rounded-lg border bg-white p-3">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            {result.title || result.url}
+          </p>
+          <p className="mt-0.5 text-[11px] text-muted-foreground">{result.summary.join(" · ") || "Page read"}</p>
+
+          {result.options.length > 0 && (
+            <div className="mt-2 space-y-1.5 border-t pt-2">
+              {result.options.map((o) => (
+                <label key={o.id} className="flex cursor-pointer items-start gap-2 text-[11px]">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 h-3.5 w-3.5 accent-emerald-600"
+                    checked={chosen.includes(o.id)}
+                    onChange={(e) => setChosen((p) => (e.target.checked ? [...p, o.id] : p.filter((id) => id !== o.id)))}
+                  />
+                  <span className="min-w-0">
+                    <span className="font-medium text-foreground">{o.label}</span>
+                    {o.current
+                      ? <span className="block truncate text-muted-foreground">{o.current} → <span className="text-foreground">{o.display}</span></span>
+                      : <span className="block truncate text-muted-foreground">{o.display}</span>}
+                  </span>
+                </label>
+              ))}
+            </div>
+          )}
+
+          <div className="mt-2 space-y-1.5 border-t pt-2">
+            {result.services.length > 0 && (
+              <label className="flex cursor-pointer items-start gap-2 text-[11px]">
+                <input type="checkbox" className="mt-0.5 h-3.5 w-3.5 accent-emerald-600" checked={withServices} onChange={() => setWithServices((v) => !v)} />
+                <span className="text-muted-foreground"><span className="font-medium text-foreground">{result.services.length} services</span> — {result.services.map((s) => s.name).slice(0, 5).join(", ")}{result.services.length > 5 ? "…" : ""}</span>
+              </label>
+            )}
+            {result.faqs.length > 0 && (
+              <label className="flex cursor-pointer items-start gap-2 text-[11px]">
+                <input type="checkbox" className="mt-0.5 h-3.5 w-3.5 accent-emerald-600" checked={withFaqs} onChange={() => setWithFaqs((v) => !v)} />
+                <span className="text-muted-foreground"><span className="font-medium text-foreground">{result.faqs.length} questions you already answer</span> — {result.faqs[0].question.slice(0, 60)}…</span>
+              </label>
+            )}
+            {result.photos.length > 0 && (
+              <label className="flex cursor-pointer items-start gap-2 text-[11px]">
+                <input type="checkbox" className="mt-0.5 h-3.5 w-3.5 accent-emerald-600" checked={withPhotos} onChange={() => setWithPhotos((v) => !v)} />
+                <span className="text-muted-foreground"><span className="font-medium text-foreground">{result.photos.length} of your photos</span> for the gallery</span>
+              </label>
+            )}
+          </div>
+
+          {result.missing.length > 0 && (
+            <p className="mt-2 text-[11px] text-muted-foreground">Not on that page, so we did not guess: {result.missing.join(", ")}.</p>
+          )}
+
+          <div className="mt-2 flex gap-2">
+            <Button size="sm" className="h-8 rounded-lg bg-emerald-600 text-xs hover:bg-emerald-700" disabled={busy} onClick={() => void apply()}>
+              <Check className="h-3.5 w-3.5" /> Bring these over
+            </Button>
+            <Button size="sm" variant="ghost" className="h-8 rounded-lg text-xs" disabled={busy} onClick={() => { setResult(null); setUrl(""); }}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function GoogleImportCard({ business, onApplied }: {
+  business: BusinessWithMeta;
+  onApplied: (b: Business) => void;
+}) {
+  const patchBusiness = useApp((s) => s.patchBusiness);
+  const [input, setInput] = useState(business.gmbUrl ?? "");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<GoogleLookup | null>(null);
+  const [chosen, setChosen] = useState<string[]>([]);
+  const [withReviews, setWithReviews] = useState(false);
+
+  async function find() {
+    setBusy(true);
+    setResult(null);
+    try {
+      const res = await api.post<GoogleLookup>("/api/business/google", { mode: "lookup", input });
+      setResult(res);
+      // Additions are ticked; anything that would replace something the owner
+      // already typed is offered but left alone until they say so.
+      setChosen(res.options.filter((o) => !o.current).map((o) => o.id));
+      setWithReviews(res.reviews.length > 0);
+    } catch (e) {
+      toast({ title: "Could not look that up", description: errMsg(e), variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function apply() {
+    if (!result) return;
+    setBusy(true);
+    try {
+      const res = await api.post<{ applied: { label: string; value: string }[]; reviewsSaved: number; business: Business }>(
+        "/api/business/google",
+        { mode: "apply", input, fields: chosen, reviews: withReviews },
+      );
+      patchBusiness(res.business);
+      onApplied(res.business);
+      toast({
+        title: res.applied.length ? `${res.applied.length} detail(s) brought over` : "Google reviews saved",
+        description: [
+          res.applied.map((a) => a.label).join(", "),
+          res.reviewsSaved ? `${res.reviewsSaved} reviews saved to your site` : "",
+        ].filter(Boolean).join(" · ") || undefined,
+      });
+      setResult(null);
+    } catch (e) {
+      toast({ title: "Could not apply that", description: errMsg(e), variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const verified = Object.entries((business.facts ?? {}) as Record<string, { source?: string; value?: string; at?: string }>)
+    .filter(([, f]) => f.source === "google" || f.source === "link");
+
+  return (
+    <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-3">
+      <div className="flex items-center gap-2">
+        <Search className="h-4 w-4 text-emerald-700" />
+        <p className="text-sm font-semibold text-foreground">Bring your Google details over</p>
+      </div>
+      <p className="mt-1 text-[11px] text-muted-foreground">
+        Paste your Google Maps link (or type your business name and city). You will see exactly what Google says
+        before anything is written — and nothing is invented.
+      </p>
+
+      <div className="mt-2 flex gap-2">
+        <Input
+          className="h-9 rounded-lg bg-white text-xs"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder="https://maps.app.goo.gl/… or “Skyline Dental, Pune”"
+          aria-label="Google link or business search"
+        />
+        <Button size="sm" className="h-9 shrink-0 rounded-lg bg-emerald-600 text-xs hover:bg-emerald-700" onClick={find} disabled={busy || !input.trim()}>
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
+          Find
+        </Button>
+      </div>
+
+      {result && (
+        <div className="mt-3 rounded-lg border bg-white p-3">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            {result.via === "places-api" ? "From Google" : "From the link you pasted"}
+          </p>
+          {result.found.length > 0 && (
+            <ul className="mt-1 space-y-0.5 text-[11px] text-foreground">
+              {result.found.slice(0, 6).map((line) => <li key={line}>· {line}</li>)}
+            </ul>
+          )}
+          {result.note && <p className="mt-1 text-[11px] text-amber-700">{result.note}</p>}
+
+          {result.options.length > 0 && (
+            <div className="mt-2 space-y-1.5 border-t pt-2">
+              {result.options.map((o) => (
+                <label key={o.id} className="flex cursor-pointer items-start gap-2 text-[11px]">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 h-3.5 w-3.5 accent-emerald-600"
+                    checked={chosen.includes(o.id)}
+                    onChange={(e) => setChosen((p) => (e.target.checked ? [...p, o.id] : p.filter((id) => id !== o.id)))}
+                  />
+                  <span className="min-w-0">
+                    <span className="font-medium text-foreground">{o.label}</span>
+                    {o.current
+                      ? <span className="block truncate text-muted-foreground">{o.current} → <span className="text-foreground">{o.display}</span></span>
+                      : <span className="block truncate text-muted-foreground">{o.display}</span>}
+                  </span>
+                </label>
+              ))}
+            </div>
+          )}
+
+          {result.reviews.length > 0 && (
+            <label className="mt-2 flex cursor-pointer items-start gap-2 border-t pt-2 text-[11px]">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-3.5 w-3.5 accent-emerald-600"
+                checked={withReviews}
+                onChange={(e) => setWithReviews(e.target.checked)}
+              />
+              <span>
+                <span className="font-medium text-foreground">Use my {result.reviews.length} Google reviews</span>
+                <span className="block text-muted-foreground">
+                  Saved onto your site, credited to the reviewer and marked as coming from Google.
+                </span>
+              </span>
+            </label>
+          )}
+
+          {result.options.length === 0 && result.reviews.length === 0 && (
+            <p className="mt-2 text-[11px] text-muted-foreground">
+              Everything here already matches your site.
+              {result.totalReviews > 0 ? ` Your profile shows ${result.rating ?? "–"}★ from ${result.totalReviews} reviews.` : ""}
+            </p>
+          )}
+
+          {(result.options.length > 0 || result.reviews.length > 0) && (
+            <Button size="sm" className="mt-2 h-8 w-full rounded-lg bg-emerald-600 text-[11px] hover:bg-emerald-700" onClick={apply} disabled={busy || (chosen.length === 0 && !withReviews)}>
+              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+              Use what I ticked
+            </Button>
+          )}
+        </div>
+      )}
+
+      {verified.length > 0 && (
+        <p className="mt-2 text-[11px] text-muted-foreground">
+          Verified by Google: {verified.map(([field]) => field).join(", ")}
+          {verified[0]?.[1]?.at ? ` · last checked ${new Date(verified[0][1].at as string).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}` : ""}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/* -------------------------------- autopilot --------------------------------- */
+
+/**
+ * The switch for the platform's own maintenance pass, and what it last did.
+ *
+ * Autopilot re-checks a published site, applies the structural fixes it can do
+ * without asking anything (a section switched off, a missing About or contact
+ * block, the page title and description) and writes a version first, so anything
+ * it does can be undone from the history. It never touches the owner's words,
+ * photos or colours.
+ */
+function AutopilotCard({ business, onUpdated }: {
+  business: BusinessWithMeta;
+  onUpdated: (w: WebsiteData) => void;
+}) {
+  const [state, setState] = useState<{ enabled: boolean; lastRunAt: string | null; lastChanged: string[]; lastScore: number | null } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      setState(await api.get<{ enabled: boolean; lastRunAt: string | null; lastChanged: string[]; lastScore: number | null }>("/api/website/autopilot"));
+    } catch {
+      setState(null);
+    }
+  }, []);
+  // Autopilot's state lives on the server (it runs on a schedule whether this
+  // tab is open or not), so this effect is a fetch, not derived state.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { void load(); }, [load]);
+
+  const enabled = state?.enabled ?? (business.website?.theme?.autopilot?.enabled !== false);
+  const lastChanged = state?.lastChanged ?? business.website?.theme?.autopilot?.lastChanged ?? [];
+  const lastRunAt = state?.lastRunAt ?? business.website?.theme?.autopilot?.lastRunAt ?? null;
+
+  async function toggle(next: boolean) {
+    setBusy(true);
+    try {
+      const res = await api.post<{ enabled: boolean; website: WebsiteData }>("/api/website/autopilot", { enabled: next });
+      setState((s) => (s ? { ...s, enabled: res.enabled } : s));
+      onUpdated(res.website);
+      toast({ title: next ? "Autopilot is on" : "Autopilot is off" });
+    } catch (e) {
+      toast({ variant: "destructive", title: "Could not change that", description: e instanceof Error ? e.message : "" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runNow() {
+    setBusy(true);
+    try {
+      const res = await api.post<{ result: { changed: string[]; before: number; after: number }; website: WebsiteData | null }>(
+        "/api/website/autopilot",
+        { run: true },
+      );
+      if (res.website) onUpdated(res.website);
+      await load();
+      toast({
+        title: res.result.changed.length ? `Fixed ${res.result.changed.length} thing(s)` : "Nothing needed fixing",
+        description: res.result.changed.length
+          ? `${res.result.before} → ${res.result.after}/100`
+          : `The site is already at ${res.result.before}/100`,
+      });
+    } catch (e) {
+      toast({ variant: "destructive", title: "Autopilot could not run", description: e instanceof Error ? e.message : "" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const when = lastRunAt
+    ? new Date(lastRunAt).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })
+    : null;
+
+  return (
+    <Card className="rounded-2xl p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <ShieldCheck className="h-4 w-4 text-emerald-600" />
+          <div>
+            <h2 className="text-sm font-bold text-foreground">Autopilot</h2>
+            <p className="text-[11px] text-muted-foreground">
+              Keeps your published site in order on its own — never your words or photos.
+            </p>
+          </div>
+        </div>
+        <Switch checked={enabled} disabled={busy} onCheckedChange={toggle} aria-label="Autopilot" />
+      </div>
+
+      {when && (
+        <p className="mt-2 text-[11px] text-muted-foreground">Last pass {when}</p>
+      )}
+      {lastChanged.length > 0 && (
+        <ul className="mt-2 space-y-0.5 text-[11px] text-muted-foreground">
+          {lastChanged.slice(0, 3).map((line) => (
+            <li key={line}>· {line}</li>
+          ))}
+        </ul>
+      )}
+
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={runNow}
+        disabled={busy}
+        className="mt-3 h-8 w-full rounded-lg text-[11px]"
+      >
+        {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Rocket className="h-3.5 w-3.5" />}
+        Run a check now
+      </Button>
+    </Card>
+  );
+}
+
+/* ------------------------------ site history -------------------------------- */
+
+/**
+ * Every version of the site, newest first, with one press to go back.
+ *
+ * A generator that edits a live website has to be able to undo it: the owner
+ * pressed a button, the page changed, and "put it back" is the only acceptable
+ * answer to not liking the result. Restoring writes the old state as a new
+ * version, so going back is itself undoable.
+ */
+function HistoryCard({ onRestored }: { onRestored: (w: WebsiteData) => void }) {
+  const [versions, setVersions] = useState<{ id: string; label: string; actor: string; score?: number; createdAt: string }[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await api.get<{ versions: typeof versions }>("/api/website/history");
+      setVersions(res.versions ?? []);
+    } catch {
+      setVersions([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // The history is only fetched when the card is opened: it is a list nobody
+  // needs until they are looking for it.
+  useEffect(() => {
+    if (open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      void load();
+    }
+  }, [open, load]);
+
+  async function restore(versionId: string) {
+    setBusy(versionId);
+    try {
+      const res = await api.post<{ restored: string; website: WebsiteData }>("/api/website/restore", { versionId });
+      onRestored(res.website);
+      toast({ title: "Restored", description: res.restored });
+      void load();
+    } catch (e) {
+      toast({ variant: "destructive", title: "Could not restore", description: e instanceof Error ? e.message : "" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const when = (iso: string) => {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "";
+    return d.toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+  };
+
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <Card className="rounded-2xl p-4">
+        <CollapsibleTrigger asChild>
+          <button type="button" className="flex w-full items-center justify-between" aria-expanded={open}>
+            <span className="flex items-center gap-2 text-sm font-bold text-foreground">
+              <Clock className="h-4 w-4 text-muted-foreground" /> History
+            </span>
+            <ChevronDown className={cn("h-4 w-4 text-muted-foreground transition-transform", open && "rotate-180")} />
+          </button>
+        </CollapsibleTrigger>
+        <CollapsibleContent className="mt-3">
+          {loading ? (
+            <p className="text-xs text-muted-foreground">Loading…</p>
+          ) : versions.length === 0 ? (
+            <p className="text-xs text-muted-foreground">No versions recorded yet — they appear as soon as anything changes.</p>
+          ) : (
+            <ul className="space-y-2">
+              {versions.map((v) => (
+                <li key={v.id} className="flex items-start justify-between gap-3 text-[11px]">
+                  <div className="min-w-0">
+                    <p className="truncate font-medium text-foreground">{v.label}</p>
+                    <p className="text-muted-foreground">
+                      {v.actor} · {when(v.createdAt)}
+                      {typeof v.score === "number" ? ` · ${v.score}/100` : ""}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => restore(v.id)}
+                    disabled={busy !== null}
+                    className="shrink-0 rounded-lg border px-2 py-0.5 font-semibold text-foreground transition hover:bg-muted disabled:opacity-50"
+                  >
+                    {busy === v.id ? "Restoring…" : "Restore"}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="mt-3 text-[11px] text-muted-foreground">
+            The last {versions.length || 8} versions are kept. Restoring changes the live site back to that point.
+          </p>
+        </CollapsibleContent>
+      </Card>
+    </Collapsible>
   );
 }
 
@@ -2180,6 +3497,24 @@ function BusinessTab({ business }: { business: BusinessWithMeta }) {
                 onChange={(v) => setF("coverUrl", v)}
                 hint="Wide photo of your shop, team or work — used in the hero & about sections."
                 maxWidth={1400}
+              />
+              <WebsiteImportCard
+                business={business}
+                onApplied={(b) => setForm((p) => ({
+                  ...p,
+                  name: b.name, tagline: b.tagline, description: b.description,
+                  phone: b.phone, whatsapp: b.whatsapp, email: b.email,
+                  address: b.address, city: b.city, state: b.state, pincode: b.pincode,
+                  logoUrl: b.logoUrl, coverUrl: b.coverUrl,
+                }))}
+              />
+              <GoogleImportCard
+                business={business}
+                onApplied={(b) => setForm((p) => ({
+                  ...p,
+                  name: b.name, phone: b.phone, address: b.address, city: b.city, pincode: b.pincode,
+                  gmbUrl: b.gmbUrl, mapsUrl: b.mapsUrl,
+                }))}
               />
               <Labeled label="Google Business Profile URL" hint="Link your GMB listing for local SEO">
                 <Input className="rounded-xl" value={form.gmbUrl} onChange={(e) => setF("gmbUrl", e.target.value)} placeholder="https://business.google.com/…" />
@@ -3057,8 +4392,8 @@ function SeoTab({ business, content }: { business: BusinessWithMeta; content: Co
 
 const CHART_COLORS = { emerald: "#059669", amber: "#d97706", zinc: "#a1a1aa" };
 
-function AnalyticsTab() {
-  const { data: summary, loading } = useFetch<AnalyticsSummary>(() => api.get<AnalyticsSummary>("/api/analytics/summary"), []);
+function AnalyticsTab({ business }: { business: BusinessWithMeta }) {
+  const { data: summary, loading } = useFetch<AnalyticsSummary>(() => api.get<AnalyticsSummary>("/api/analytics/summary"));
 
   const chartData = useMemo(
     () => (summary?.daily ?? []).map((d) => ({
@@ -3078,6 +4413,10 @@ function AnalyticsTab() {
   return (
     <div className="space-y-6">
       <PageHeader title="Analytics" subtitle="Last 30 days across your website, WhatsApp and calls." />
+
+      {/* Testing lives here rather than on its own screen: the whole point is to
+          read the result in the same numbers shown below it. */}
+      <ExperimentCard business={business} />
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6">
         <StatCard icon={Users} label="Visits" value={loading ? "…" : (summary?.visits ?? 0)} />
@@ -3184,7 +4523,7 @@ function SubscriptionTab({ business, servicesCount }: { business: BusinessWithMe
     gateway: string | null;
     testMode: boolean;
     gstRate: number;
-  }>(() => api.get("/api/subscription"), []);
+  }>(() => api.get("/api/subscription"));
 
   const sub = business.subscription ?? (data?.subscription as BusinessWithMeta["subscription"] ?? null);
   // Seeded from the current subscription rather than synced in an effect: the
@@ -3640,7 +4979,6 @@ function SettingsTab() {
   // nothing was ever sent to the server, so a reload silently reverted them.
   const { data: account, loading, error, refetch } = useFetch<AccountInfo>(
     () => api.get<AccountInfo>("/api/account"),
-    [],
   );
   const [prefs, setPrefs] = useState<AccountInfo["prefs"] | null>(null);
   const [savingPref, setSavingPref] = useState<string | null>(null);

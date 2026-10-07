@@ -7,6 +7,9 @@ import { db } from "@/lib/db";
 import { TRIAL_DAYS } from "@/lib/trial";
 import { hashPassword, uniqueSlug } from "@/lib/auth";
 import { generateSite } from "@/lib/sections";
+import { blueprintFor } from "@/lib/blueprint";
+import { posterUrl } from "@/lib/site-art";
+import { bestCandidate, profileFromSite, type SiteProfile } from "@/lib/uniqueness";
 import { HttpError } from "@/lib/api";
 import { randomInt } from "node:crypto";
 
@@ -64,7 +67,78 @@ export async function provisionCustomer(input: ProvisionInput) {
   const trialDays = input.business?.trialDays ?? TRIAL_DAYS;
   const cycle = input.business?.cycle === "YEARLY" ? "YEARLY" : "MONTHLY";
 
-  const site = input.business
+  // An admin-created business gets the same treatment as one from the wizard:
+  // its own palette, its own services, its own section order — from the one
+  // blueprint function, so "create customer" does not produce a green site for
+  // every trade the way it used to.
+  // Same treatment as the wizard: a palette nobody else in the trade is using,
+  // and the most distinct of a few candidate genomes (see the note in
+  // app/api/onboarding/route.ts — an admin-created customer must not look like
+  // the previous one either).
+  const tradeMates = input.business
+    ? await db.business.findMany({
+        where: { category: input.business.category },
+        select: {
+          brandPrimary: true, brandSecondary: true, brandAccent: true,
+          website: { select: { themeJson: true, sectionsJson: true } },
+        },
+        take: 500,
+      })
+    : [];
+  const takenPalettes = tradeMates.map((b) => `${b.brandPrimary},${b.brandSecondary},${b.brandAccent}`);
+  const existingProfiles: SiteProfile[] = tradeMates
+    .map((b) => {
+      try {
+        return profileFromSite({
+          brandPrimary: b.brandPrimary,
+          brandSecondary: b.brandSecondary,
+          brandAccent: b.brandAccent,
+          theme: b.website ? (JSON.parse(b.website.themeJson || "{}") as Record<string, never>) : {},
+          sections: b.website ? (JSON.parse(b.website.sectionsJson || "[]") as { type: string; content?: Record<string, unknown> }[]) : [],
+        });
+      } catch {
+        return null;
+      }
+    })
+    .filter((x): x is SiteProfile => x !== null);
+
+  const candidates = input.business
+    ? [0, 1, 2].map((attempt) =>
+        blueprintFor({
+          name: input.business!.name,
+          city: input.business!.city ?? "",
+          category: input.business!.category,
+          taken: takenPalettes,
+          attempt,
+        }),
+      )
+    : [];
+  const picked = candidates.length
+    ? bestCandidate(
+        candidates,
+        (candidate) =>
+          profileFromSite({
+            brandPrimary: candidate.palette[0],
+            brandSecondary: candidate.palette[1],
+            brandAccent: candidate.palette[2],
+            theme: {
+              ...candidate.look,
+              shadow: candidate.dna.design.shadow,
+              spacing: candidate.dna.design.spacing,
+              button: candidate.dna.design.button,
+              header: candidate.dna.design.header,
+              footer: candidate.dna.design.footer,
+              imageTreatment: candidate.dna.design.imageTreatment,
+              motion: candidate.dna.motion,
+            },
+            sections: candidate.dna.sectionPlan.map((c) => ({ type: c.type, content: { variant: c.variant } })),
+          }),
+        existingProfiles,
+      )
+    : null;
+  const blueprint = picked?.chosen ?? null;
+
+  const site = input.business && blueprint
     ? generateSite({
         business: {
           name: input.business.name,
@@ -77,13 +151,15 @@ export async function provisionCustomer(input: ProvisionInput) {
           email,
           address: input.business.address ?? "",
           establishedYear: "",
-          brandPrimary: "#059669",
-          brandSecondary: "#064e3b",
-          brandAccent: "#f59e0b",
+          brandPrimary: blueprint.palette[0],
+          brandSecondary: blueprint.palette[1],
+          brandAccent: blueprint.palette[2],
           coverUrl: "",
           mapsUrl: "",
         },
         ai: null,
+        blueprint,
+        dna: blueprint.dna,
       })
     : null;
 
@@ -108,6 +184,13 @@ export async function provisionCustomer(input: ProvisionInput) {
           city: input.business.city ?? "",
           country: "India",
           status: "DRAFT",
+          // The trade's own colours and a cover image of its own. Without these
+          // every admin-created business came out on the schema defaults — the
+          // same green, whichever trade it was.
+          brandPrimary: blueprint!.palette[0],
+          brandSecondary: blueprint!.palette[1],
+          brandAccent: blueprint!.palette[2],
+          coverUrl: slug ? posterUrl(slug) : "",
           hoursJson: JSON.stringify({
             Monday: "9:00 AM – 7:00 PM", Tuesday: "9:00 AM – 7:00 PM", Wednesday: "9:00 AM – 7:00 PM",
             Thursday: "9:00 AM – 7:00 PM", Friday: "9:00 AM – 7:00 PM", Saturday: "9:00 AM – 7:00 PM",

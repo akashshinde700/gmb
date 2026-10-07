@@ -1,14 +1,15 @@
 "use client";
 // WebSetu — SiteRenderer: renders a complete tenant website from SitePayload.
 // Used in live view + dashboard preview (mode="preview" disables tracking/lead POSTs).
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Phone, Menu, X, Star, Facebook, Instagram, Youtube, Linkedin, Twitter, Globe,
   MessageCircle, Mail, MapPin, Moon, ArrowUp,
 } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { openStatus } from "@/lib/hours";
-import { jsonLdScript, siteOrigin, usableTagline } from "@/lib/site-utils";
+import { jsonLdScript, siteOrigin, usableTagline, visitorId } from "@/lib/site-utils";
+import { applyVariant } from "@/lib/experiments";
 import { schemaTypeFor } from "@/lib/schema-types";
 import { resolveIndustry, type SceneKind } from "@/lib/industries";
 import SiteReveal from "@/components/site/site-reveal";
@@ -22,6 +23,25 @@ import {
 } from "@/components/site/sections";
 
 export type Device = "desktop" | "tablet" | "mobile";
+
+const SHADOW_MAP: Record<NonNullable<SiteTheme["shadow"]>, string> = {
+  none: "none",
+  soft: "0 1px 2px rgba(15,23,42,.06), 0 1px 3px rgba(15,23,42,.08)",
+  lifted: "0 8px 24px -12px rgba(15,23,42,.28)",
+  dramatic: "0 24px 60px -20px rgba(15,23,42,.45)",
+};
+const SPACING_MAP: Record<NonNullable<SiteTheme["spacing"]>, { section: string; gap: string }> = {
+  tight: { section: "py-12 md:py-14", gap: "gap-4 md:gap-5" },
+  normal: { section: "py-16 md:py-20", gap: "gap-6" },
+  airy: { section: "py-20 md:py-28", gap: "gap-7 md:gap-9" },
+};
+const BUTTON_MAP: Record<NonNullable<SiteTheme["button"]>, { radius: string; shadow: string }> = {
+  solid: { radius: "var(--brand-radius)", shadow: "0 1px 2px rgba(15,23,42,.12)" },
+  square: { radius: "0px", shadow: "none" },
+  outline: { radius: "var(--brand-radius)", shadow: "none" },
+  soft: { radius: "var(--brand-radius)", shadow: "none" },
+  gradient: { radius: "var(--brand-radius)", shadow: "0 6px 18px -8px rgba(15,23,42,.5)" },
+};
 
 const RADIUS_MAP: Record<SiteTheme["radius"], { sm: string; lg: string }> = {
   sharp: { sm: "2px", lg: "4px" },
@@ -271,7 +291,7 @@ interface SiteRendererProps {
 
 export default function SiteRenderer({ payload, mode = "live", device = "desktop" }: SiteRendererProps) {
   const { business, website, services, products, gallery, testimonials, faqs, blogPosts } = payload;
-  const sections = useMemo(
+  const baseSections = useMemo(
     () =>
       (website.sections || [])
         .filter((s) => s.visible !== false)
@@ -283,6 +303,31 @@ export default function SiteRenderer({ payload, mode = "live", device = "desktop
     [website.sections, website.theme],
   );
   const trackedVisit = useRef(false);
+  // The A/B test running on this site, if any. The visitor's variant is decided
+  // by a hash of their own id, so the same person always sees the same headline
+  // — and it is applied after mount rather than during render, so the HTML the
+  // server sent and the HTML the client first renders are identical.
+  const experiment = useMemo(() => {
+    const raw = website.theme?.experiments;
+    if (!raw || raw.status !== "running" || raw.variants?.length < 2) return null;
+    return raw;
+  }, [website.theme?.experiments]);
+  // One test, one assignment: which variant this visitor got, and the sections
+  // that go with it.
+  const [ab, setAb] = useState<{ key: string; variant: "a" | "b"; sections: SiteSection[] } | null>(null);
+  /**
+   * The test this visitor is in, attached to every event they generate — the
+   * visit, the call tap, the enquiry. Without it the owner would see two
+   * headlines in a dashboard and no way to tell which one earned the work.
+   */
+  const abMeta = useCallback(
+    (): { experiment?: string; variant?: string } =>
+      experiment && ab ? { experiment: String(experiment.key), variant: ab.variant } : {},
+    [experiment, ab],
+  );
+  // Until the visitor's variant is known, the page renders exactly what the
+  // owner approved — the control is the real page, not a copy of it.
+  const sections = ab?.sections ?? baseSections;
   const [menuOpen, setMenuOpen] = useState(false);
   // Which service/product the visitor clicked "Enquire" on, so the contact form
   // arrives pre-filled and the lead records what they actually asked about.
@@ -299,10 +344,27 @@ export default function SiteRenderer({ payload, mode = "live", device = "desktop
   // Derived from the owner's own hours; "unknown" renders nothing.
   const hours = useMemo(() => openStatus(business.hours), [business.hours]);
 
-  // theme → CSS variables
+  useEffect(() => {
+    if (!experiment || mode === "preview") return;
+    // Which variant this visitor gets comes from localStorage (their own stable
+    // id) — an external store that cannot be read during render without
+    // breaking hydration, so the read and the state it produces belong in this
+    // effect rather than in the render.
+    const applied = applyVariant(baseSections, experiment, visitorId());
+    if (!applied.applied) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setAb({ ...applied.applied, sections: applied.sections });
+  }, [experiment, baseSections, mode]);
+
+  // theme → CSS variables. Every value is optional, so a site published before
+  // the Design DNA existed keeps the exact look it had.
   const themeVars = useMemo(() => {
     const radius = RADIUS_MAP[website.theme?.radius || "rounded"];
     const font = FONT_MAP[website.theme?.font || "modern"];
+    const shadow = SHADOW_MAP[website.theme?.shadow || "soft"];
+    const spacing = SPACING_MAP[website.theme?.spacing || "normal"];
+    const button = BUTTON_MAP[website.theme?.button || "solid"];
+    const treatment = website.theme?.imageTreatment || "plain";
     return {
       "--brand-primary": business.brandPrimary,
       "--brand-secondary": business.brandSecondary,
@@ -315,6 +377,18 @@ export default function SiteRenderer({ payload, mode = "live", device = "desktop
       "--brand-border": "#e7e5e4",
       "--brand-muted": "#78716c",
       "--brand-body": "#44403c",
+      // Design DNA
+      "--brand-shadow": shadow,
+      "--brand-card-shadow": website.theme?.cardStyle === "flat" ? "none" : shadow,
+      "--brand-card-ring": website.theme?.cardStyle === "outline" ? "1px solid var(--brand-border)" : "none",
+      "--brand-section-pad": spacing.section,
+      "--brand-gap": spacing.gap,
+      "--brand-button-radius": button.radius,
+      "--brand-button-shadow": button.shadow,
+      "--brand-image-filter": treatment === "duotone" ? "saturate(0.72) contrast(1.04)" : "none",
+      "--brand-image-radius": treatment === "framed" ? "0px" : "var(--brand-radius-lg)",
+      "--brand-image-ring": treatment === "framed" ? "1px solid var(--brand-border)" : "none",
+      "--brand-image-pad": treatment === "framed" ? "10px" : "0px",
     } as React.CSSProperties;
   }, [business, website.theme]);
 
@@ -322,13 +396,14 @@ export default function SiteRenderer({ payload, mode = "live", device = "desktop
   useEffect(() => {
     if (mode !== "live" || trackedVisit.current) return;
     trackedVisit.current = true;
-    api.post("/api/analytics/event", { slug: business.slug, type: "VISIT", path: "/" }).catch(() => {});
-  }, [mode, business.slug]);
+    api.post("/api/analytics/event", { slug: business.slug, type: "VISIT", path: "/", ...abMeta() }).catch(() => {});
+  }, [mode, business.slug, abMeta]);
 
   function track(type: string) {
     if (mode !== "live") return;
-    api.post("/api/analytics/event", { slug: business.slug, type, path: "/" }).catch(() => {});
+    api.post("/api/analytics/event", { slug: business.slug, type, path: "/", ...abMeta() }).catch(() => {});
   }
+
 
   async function submitLead(data: {
     name: string; phone: string; email: string; message: string; website: string; serviceName?: string;
@@ -394,6 +469,14 @@ export default function SiteRenderer({ payload, mode = "live", device = "desktop
       label: s.type === "whyUs" ? "Why Us" : s.type === "payment" ? "Pay Now" : s.type.charAt(0).toUpperCase() + s.type.slice(1),
     }));
 
+  // Motion intensity from the genome (0–4). Anything above 3 is capped: past
+  // that a page stops feeling alive and starts feeling noisy, and the cost on a
+  // mid-range phone is real. A site with no DNA reads as level 2, which is what
+  // every existing site does today.
+  const animLevel = Math.max(0, Math.min(3, website.theme?.motion?.level ?? 2));
+  // Header arrangement from the genome. "sticky" is what every existing site
+  // does, so an absent value keeps the current behaviour exactly.
+  const headerStyle = website.theme?.header || "sticky";
   const deviceWidth = device === "mobile" ? "max-w-[420px]" : device === "tablet" ? "max-w-[820px]" : "max-w-full";
   // The preview sits inside the dashboard's own <main>; nesting landmarks
   // breaks assistive navigation, so only the live site gets the landmark.
@@ -402,6 +485,7 @@ export default function SiteRenderer({ payload, mode = "live", device = "desktop
   return (
     <div
       style={themeVars}
+      data-anim={animLevel}
       className={`site-renderer mx-auto w-full ${deviceWidth} bg-white font-[family-name:var(--brand-font-body)] transition-all duration-300`}
     >
       {/* Without this the sticky header covers the heading we just jumped to. */}
@@ -421,7 +505,11 @@ export default function SiteRenderer({ payload, mode = "live", device = "desktop
       </a>
 
       {/* HEADER */}
-      <header className="sticky top-0 z-40 border-b border-[var(--brand-border)] bg-white/90 backdrop-blur">
+      <header
+        className={`${
+          headerStyle === "sticky" ? "sticky top-0" : headerStyle === "topbar" ? "sticky top-0 bg-[var(--brand-secondary)]" : "relative"
+        } z-40 border-b border-[var(--brand-border)] bg-white/90 backdrop-blur`}
+      >
         <div className={`mx-auto flex ${containerWidth} items-center justify-between gap-4 px-4 py-3 sm:px-6`}>
           <a href="#top" onClick={(e) => jump(e, "#top")} className="flex min-w-0 items-center gap-2.5">
             {business.logoUrl ? (
@@ -450,7 +538,7 @@ export default function SiteRenderer({ payload, mode = "live", device = "desktop
             )}
             <span className="min-w-0">
               <span
-                className="block truncate font-bold text-[var(--brand-secondary)]"
+                className={`block truncate font-bold ${headerStyle === "topbar" ? "text-white" : "text-[var(--brand-secondary)]"}`}
                 style={{ fontFamily: "var(--brand-font-heading)" }}
               >
                 {business.name}
@@ -782,6 +870,7 @@ function renderSection(
           heroStyle={ctx.heroStyle}
           scene={ctx.scene}
           sceneVariant={ctx.sceneVariant}
+          chips={ctx.services.slice(0, 8).map((sv) => sv.name)}
         />
       );
     case "stats": return <Stats key={section.id} section={section} />;

@@ -15,7 +15,7 @@ export const DASHBOARD_TABS = [
 
 export const ADMIN_TABS = [
   "overview", "customers", "plans", "templates", "coupons", "leads",
-  "blog", "appearance", "domains",
+  "blog", "appearance", "domains", "ai",
 ] as const;
 
 export type DashboardTabSlug = (typeof DASHBOARD_TABS)[number];
@@ -51,6 +51,7 @@ const TITLES: Record<string, string> = {
   coupons: "Coupons",
   appearance: "Appearance",
   domains: "Domains",
+  ai: "AI Manager",
 };
 
 export function tabTitle(slug: string): string {

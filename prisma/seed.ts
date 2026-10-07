@@ -48,7 +48,20 @@ async function main() {
   // ---------- users ----------
   // The platform admin is whoever deploy.py put in the environment; the
   // fallback is only for a local `tsx prisma/seed.ts` with no env set.
+  //
+  // "only for local" was an assumption about the operator, not a property of
+  // the script: run against a production database without ADMIN_PASSWORD set —
+  // a fresh deploy, a CI job, a restored environment — and it happily creates
+  // the platform admin with a password that is in this repository. Seeding a
+  // production database is refused outright instead, so the mistake is a failed
+  // command rather than a silent back door into every customer's account.
   const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "admin@websetu.in";
+  if (process.env.NODE_ENV === "production" && !process.env.ADMIN_PASSWORD) {
+    throw new Error(
+      "Refusing to seed a production database without ADMIN_PASSWORD. " +
+        "Set ADMIN_EMAIL and ADMIN_PASSWORD, or run the seed with NODE_ENV=development.",
+    );
+  }
   const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin1234";
   const ADMIN_NAME = process.env.ADMIN_NAME || "Platform Admin";
   const admin = await db.user.create({

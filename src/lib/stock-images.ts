@@ -143,6 +143,8 @@ async function search(query: string, n: number, page: number): Promise<SearchRes
 export function searchesFor(opts: {
   category: string;
   description?: string;
+  /** Service names the owner chose — the most specific signal available. */
+  services?: readonly { name: string }[];
   curated?: readonly string[];
 }): string[] {
   const out: string[] = [];
@@ -162,6 +164,15 @@ export function searchesFor(opts: {
     .filter((w) => w.length > 3 && !DESCRIPTION_NOISE.has(w));
   if (words.length) add(words.slice(0, 3).join(" "));
   if (words.length) add(`${words[0]} ${opts.category}`.trim());
+
+  // The service names come from the trade preset or from what the owner wrote,
+  // so they are more specific than the category: "Bridal Collection" searches
+  // for something a generic "Jewellery" query never would.
+  for (const svc of (opts.services ?? []).slice(0, 4)) {
+    const name = svc.name.toLowerCase().replace(/[^a-z0-9\s]/g, "").trim();
+    // Skip the ones that are just the trade again (keeps the query list useful).
+    if (name.length > 3 && name !== opts.category.toLowerCase()) add(name);
+  }
 
   for (const c of opts.curated ?? []) add(c);
   return out;

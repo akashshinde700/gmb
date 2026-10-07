@@ -4,13 +4,24 @@ import { parseJson, SECTION_LIBRARY } from "@/lib/sections";
 import type { SiteSection, SiteTheme } from "@/lib/types";
 import { HttpError, ok, readJson, requireBusiness, requireUser, route, safeUrl, str } from "@/lib/api";
 import { allowanceFor, consumeThemeChange } from "@/lib/appearance";
+import { recordVersion } from "@/lib/site-history";
 import { INDUSTRY_KEYS } from "@/lib/industries";
 
 const SECTION_TYPES = new Set(SECTION_LIBRARY.map((s) => s.type as string));
 const MAX_SECTIONS = 40;
 const MAX_SECTIONS_JSON = 400_000;
 
-const THEME_VALUES: Record<keyof SiteTheme, string[]> = {
+/**
+ * Values the Theme panel may set. The Design DNA keys (shadow, spacing, header,
+ * footer, image treatment) are accepted so the dashboard can offer them, but
+ * `motion`, `dna`, `quality` and `uniqueness` are deliberately absent: those are
+ * written by the generator and the checker, and a client-supplied value for them
+ * would let a customer's browser claim a uniqueness score or an animation it
+ * never had.
+ */
+type ThemeKey = Exclude<keyof SiteTheme, "motion" | "dna" | "quality" | "uniqueness" | "autopilot" | "experiments">;
+
+const THEME_VALUES: Record<ThemeKey, string[]> = {
   font: ["modern", "classic", "elegant"],
   radius: ["sharp", "rounded", "pill"],
   heroStyle: ["image", "gradient", "split"],
@@ -18,6 +29,12 @@ const THEME_VALUES: Record<keyof SiteTheme, string[]> = {
   containerWidth: ["normal", "wide"],
   motif: ["auto", "none"],
   industry: [...INDUSTRY_KEYS],
+  shadow: ["none", "soft", "lifted", "dramatic"],
+  button: ["solid", "outline", "soft", "gradient", "square"],
+  spacing: ["tight", "normal", "airy"],
+  header: ["sticky", "minimal", "topbar", "centred"],
+  footer: ["columned", "compact", "statement"],
+  imageTreatment: ["plain", "duotone", "framed", "soft-focus"],
 };
 
 export const GET = route(async (req: Request) => {
@@ -90,6 +107,14 @@ export const PUT = route(async (req: Request) => {
   if (!Object.keys(data).length) throw new HttpError("Nothing to update");
 
   const updated = await db.website.update({ where: { businessId: business.id }, data });
+
+  // Saving is a version. The builder is where an owner can do the most damage
+  // to their own site by accident, so it is the change that most needs an undo.
+  await recordVersion({
+    website: updated,
+    label: data.sectionsJson !== undefined ? "Edited the page" : "Changed the theme",
+    actor: business.ownerName || "Owner",
+  });
 
   const fresh = await db.business.findUnique({
     where: { id: business.id },

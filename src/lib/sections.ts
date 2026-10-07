@@ -5,6 +5,8 @@ import { usableTagline } from "@/lib/site-utils";
 import {
   CLOSINGS, HEADINGS, LOOKS, pick, SECONDARY_CTAS, shuffle, stream, SUBHEADINGS, variantsFor,
 } from "@/lib/variants";
+import type { SiteBlueprint } from "@/lib/blueprint";
+import { motionLabel, type DesignDna } from "@/lib/design-dna";
 
 export const SECTION_LIBRARY: {
   type: SectionType; name: string; description: string; icon: string;
@@ -64,6 +66,25 @@ interface BuildInput {
   seed?: string;
   /** Second stock photo, used beside the About text. */
   aboutImage?: string;
+  /**
+   * The owner's own hero photo. Empty means the hero keeps its animated scene —
+   * a stock photo here is what made every business in a trade look identical
+   * above the fold.
+   */
+  heroImage?: string;
+  /**
+   * The design decisions for this business, from lib/blueprint.ts. Supplying it
+   * makes this function take its look, section order and promise from the same
+   * place the wizard did, instead of drawing its own — which is how the preview
+   * and the published site used to disagree.
+   */
+  blueprint?: SiteBlueprint;
+  /**
+   * The genome to build from. Usually the blueprint's own (so the site, the
+   * wizard preview and the stored design agree); callers that only have a DNA —
+   * a regenerate endpoint, a test — can pass it on its own.
+   */
+  dna?: DesignDna;
 }
 
 export interface AiSiteContent {
@@ -87,7 +108,7 @@ export interface AiSiteContent {
 }
 
 /** Generate the initial website (sections + theme + SEO) from business info + optional AI content. */
-export function generateSite({ business, ai, industry, aboutImage, seed }: BuildInput): GeneratedSite {
+export function generateSite({ business, ai, industry, aboutImage, heroImage, blueprint, dna: dnaInput, seed }: BuildInput): GeneratedSite {
   // Industry preset supplies everything the AI did not: copy, layout and theme
   // differ for a transporter, a cement dealer and a water brand.
   const preset = resolveIndustry(business.category, industry ?? ai?.industry);
@@ -99,7 +120,9 @@ export function generateSite({ business, ai, industry, aboutImage, seed }: Build
   const key = seed || business.name;
   const draw = (label: string) => stream(key, label);
   const variants = variantsFor(preset.key);
-  const promise = pick(draw("promise"), variants.promises);
+  // The blueprint the wizard already showed the customer wins; without one
+  // (older callers, tests) this draws exactly as it always did.
+  const promise = blueprint?.promise || pick(draw("promise"), variants.promises);
   const serviceNames = (ai?.services?.length ? ai.services : preset.services).map((x) => x.name);
 
   const ownTagline = usableTagline(business.tagline);
@@ -115,6 +138,16 @@ export function generateSite({ business, ai, industry, aboutImage, seed }: Build
           .replaceAll("{closing}", pick(draw("closing"), CLOSINGS)),
         vars,
       );
+  // Which arrangement each section takes, from the genome. Absent for older
+  // callers, in which case every section renders its default layout.
+  const dna = dnaInput ?? blueprint?.dna;
+  const chosenVariants = new Map((dna?.sectionPlan ?? []).map((c) => [c.type, c.variant]));
+  const withVariant = (secs: typeof sections): typeof sections =>
+    secs.map((sec) => {
+      const variant = chosenVariants.get(sec.type);
+      return variant ? { ...sec, content: { ...sec.content, variant } } : sec;
+    });
+
   const years = Number(business.establishedYear);
   const presetStats = shuffle(draw("stats"), preset.stats).map((s) => ({ value: fill(s.value), label: fill(s.label) }));
   // A real founding year beats a generic claim, so it takes the first slot.
@@ -135,9 +168,14 @@ export function generateSite({ business, ai, industry, aboutImage, seed }: Build
         badge: ai?.heroBadge || fill(preset.hero.badge),
         heading: heroHeading,
         subheading: heroSubheading,
-        ctaPrimary: ai?.ctaPrimary || preset.hero.ctaPrimary,
-        ctaSecondary: ai?.ctaSecondary || pick(draw("cta"), SECONDARY_CTAS),
-        image: business.coverUrl,
+        // The director's goal decides what the page asks for. The owner's own
+        // words still win where they exist (ai?.ctaPrimary), because a business
+        // that knows what it sells must not be argued with.
+        ctaPrimary: ai?.ctaPrimary || blueprint?.goal.primary.label || preset.hero.ctaPrimary,
+        ctaSecondary: ai?.ctaSecondary || blueprint?.goal.secondary?.label || pick(draw("cta"), SECONDARY_CTAS),
+        ctaPrimaryAction: blueprint?.goal.primary.action ?? "form",
+        ctaSecondaryAction: blueprint?.goal.secondary?.action ?? "call",
+        image: heroImage !== undefined ? heroImage : business.coverUrl,
       },
     },
     { id: sid(), type: "stats", visible: true, content: { items: stats } },
@@ -183,7 +221,12 @@ export function generateSite({ business, ai, industry, aboutImage, seed }: Build
       content: {
         title: fill(preset.ctaTitle),
         subtitle: "Get in touch today — call, WhatsApp or send an enquiry. We respond fast.",
-        primary: "Call Now", secondary: "WhatsApp Us",
+        // The band is the last thing before the footer, so it repeats the goal
+        // rather than a generic "Call Now" that ignores what the business sells.
+        primary: blueprint?.goal.primary.label ?? "Call Now",
+        secondary: blueprint?.goal.secondary?.label ?? "WhatsApp Us",
+        primaryAction: blueprint?.goal.primary.action ?? "call",
+        secondaryAction: blueprint?.goal.secondary?.action ?? "whatsapp",
       },
     },
     {
@@ -210,10 +253,44 @@ export function generateSite({ business, ai, industry, aboutImage, seed }: Build
   const theme: SiteTheme = {
     ...DEFAULT_THEME,
     ...preset.theme,
-    ...pick(draw("look"), LOOKS),
+    ...(blueprint?.look ?? pick(draw("look"), LOOKS)),
     heroStyle,
     motif: "auto",
     industry: preset.key,
+    // The rest of the genome. Absent DNA (older callers) leaves these undefined
+    // and the renderer behaves exactly as it did before they existed.
+    ...(dna
+      ? {
+          shadow: dna.design.shadow,
+          button: dna.design.button,
+          spacing: dna.design.spacing,
+          header: dna.design.header,
+          footer: dna.design.footer,
+          imageTreatment: dna.design.imageTreatment,
+          motion: { pack: dna.motion.pack, level: dna.motion.level },
+          dna: {
+            seed: dna.seed,
+            styleName: dna.design.styleName,
+            business: dna.business,
+            motionLabel: motionLabel(dna.motion.pack),
+            sectionPlan: dna.sectionPlan,
+            // The director's brief, so the dashboard can show why the page looks
+            // the way it does and a later restyle has something to change.
+            ...(blueprint
+              ? {
+                  goal: {
+                    key: blueprint.goal.key,
+                    label: blueprint.goal.label,
+                    primary: blueprint.goal.primary.label,
+                    secondary: blueprint.goal.secondary?.label ?? null,
+                    action: blueprint.goal.primary.action,
+                  },
+                  stages: blueprint.brief.stages,
+                }
+              : {}),
+          },
+        }
+      : {}),
   };
   const seoTitle = ai?.seoTitle || `${business.name} — ${tagline}`;
   const seoDescription = ai?.seoDescription ||
@@ -223,7 +300,13 @@ export function generateSite({ business, ai, industry, aboutImage, seed }: Build
     business.city, `${business.category} in ${business.city}`, business.state,
   ].filter(Boolean).join(", ").toLowerCase();
 
-  return { sections: arrangeSections(sections, draw("order")), theme, seoTitle, seoDescription, keywords };
+  return {
+    sections: arrangeSections(withVariant(sections), blueprint?.sectionOrder ?? pick(draw("order"), SECTION_ORDERS)),
+    theme,
+    seoTitle,
+    seoDescription,
+    keywords,
+  };
 }
 
 /**
@@ -248,12 +331,11 @@ const SECTION_ORDERS: readonly (readonly SectionType[])[] = [
   ["stats", "services", "about", "testimonials", "gallery", "whyUs", "faq", "cta", "blog", "payment", "hours"],
 ];
 
-function arrangeSections(sections: SiteSection[], r: () => number): SiteSection[] {
+function arrangeSections(sections: SiteSection[], order: readonly SectionType[]): SiteSection[] {
   const hero = sections.filter((x) => x.type === "hero");
   const contact = sections.filter((x) => x.type === "contact");
   const middle = sections.filter((x) => x.type !== "hero" && x.type !== "contact");
 
-  const order = pick(r, SECTION_ORDERS);
   const rank = new Map(order.map((t, i) => [t, i]));
   const placed = [...middle].sort(
     (a, b) => (rank.get(a.type) ?? order.length) - (rank.get(b.type) ?? order.length),

@@ -3,14 +3,15 @@
 // 3 steps: Business → Contact → Create. Nothing is chosen up front: design,
 // colours, services, photos and copy are generated for the business type and
 // edited later from the dashboard.
-// Draft persists to localStorage (DRAFT_KEY); cleared after success.
+// Draft persists to localStorage (ONBOARDING_DRAFT_KEY); cleared after success
+// and on sign-out — see src/lib/onboarding-draft.ts for why.
 import { useEffect, useState } from "react";
 import { useUnsavedChanges } from "@/hooks/use-unsaved-changes";
 import { useRouter } from "next/navigation";
 import { TRIAL_LABEL } from "@/lib/trial";
 import {
-  AlertCircle, ArrowLeft, ArrowRight, Briefcase, Building2, Check, Globe, Loader2, LogOut, MapPin,
-  Phone, Plus, Rocket, Search, X,
+  AlertCircle, ArrowLeft, ArrowRight, Briefcase, Building2, Check, Download, Globe, Loader2, LogOut,
+  MapPin, Phone, Plus, Repeat, Rocket, Search, Sparkles, X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,14 +27,19 @@ import { api, ApiError } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 import type { AiSiteContent } from "@/lib/sections";
 import { isValidUpiId } from "@/lib/site-utils";
-import { fallbackServices, industryByKey, industryFor, isPresetCategory } from "@/lib/industries";
+import { clearOnboardingDraft, ONBOARDING_DRAFT_KEY } from "@/lib/onboarding-draft";
+import SiteRenderer from "@/components/site/site-renderer";
+import type { Concept } from "@/lib/concepts";
+import { industryFor, isPresetCategory } from "@/lib/industries";
+import { blueprintFor, designSeed } from "@/lib/blueprint";
 import { useApp } from "@/store/app-store";
 import type { BusinessWithMeta } from "@/store/app-store";
 
 // ---------------------------------------------------------------- constants
 
 // v2: the wizard shrank from 7 steps to 3, so older drafts are not restored.
-const DRAFT_KEY = "websetu_onboarding_draft_v2";
+// The key itself lives in lib so the store can clear it on sign-out.
+const DRAFT_KEY = ONBOARDING_DRAFT_KEY;
 const TOTAL_STEPS = 4;
 const STEP_LABELS = ["Business", "Services", "Contact", "Create"];
 
@@ -123,6 +129,13 @@ interface OnboardingForm {
   ai: AiSiteContent | null;
   /** Which business type the generated fields above belong to. */
   industryKey: string;
+  /**
+   * Every colour option for this trade, and the trade's full service list —
+   * both from lib/blueprint.ts, the same function the server runs, so what the
+   * customer picks here is what gets written and previewed.
+   */
+  paletteChoices: [string, string, string][];
+  suggestedServices: { name: string; description: string }[];
 }
 
 const DEFAULT_FORM: OnboardingForm = {
@@ -151,6 +164,8 @@ const DEFAULT_FORM: OnboardingForm = {
   tone: "professional",
   ai: null,
   industryKey: "",
+  paletteChoices: [],
+  suggestedServices: [],
 };
 
 const WIZARD_STYLES = `
@@ -184,6 +199,10 @@ export default function OnboardingView() {
   const [industryLoading, setIndustryLoading] = useState(false);
   const [svcName, setSvcName] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  // The three concepts the generator drew, shown before anything is created.
+  const [concepts, setConcepts] = useState<Concept[] | null>(null);
+  const [conceptKey, setConceptKey] = useState<number | null>(null);
+  const [drawingConcepts, setDrawingConcepts] = useState(false);
   const [success, setSuccess] = useState<BusinessWithMeta | null>(null);
 
   const finalCategory = form.category === "Other" ? form.customCategory.trim() : form.category;
@@ -261,8 +280,18 @@ export default function OnboardingView() {
   }
 
   /**
-   * Generate services and colours for the chosen business type. A trade the
-   * presets do not know is written by the AI instead.
+   * Generate services and colours for the chosen business type.
+   *
+   * Every choice comes from lib/blueprint.ts — the same function the server
+   * runs when it writes the site. That is deliberate: this used to set the
+   * colours to one fixed palette per trade and post them to the API, where they
+   * overrode the per-business palette the server had drawn. Two customers in
+   * one trade therefore got the identical website, and the per-business
+   * variation that already existed could never be reached. One seed, one
+   * function, one answer — and the customer can override the colours right here.
+   *
+   * A trade the presets do not know is still written by the AI first, and what
+   * the model returns feeds into the blueprint.
    */
   async function applyIndustry(cat: string) {
     const preset = industryFor(cat);
@@ -271,10 +300,10 @@ export default function OnboardingView() {
     if (form.industryKey === key) return;
     const vars = { name: form.name.trim(), city: form.city.trim(), category: cat };
 
-    let services = fallbackServices(cat, vars);
-    let look = preset;
     let ai: AiSiteContent | null = form.ai;
     if (!listed) {
+      // A trade the presets do not know has no services without the model, so
+      // this one has to finish before the step is usable.
       setIndustryLoading(true);
       try {
         const res = await api.post<{ content: AiSiteContent }>("/api/ai/generate", {
@@ -282,23 +311,42 @@ export default function OnboardingView() {
           description: form.description.trim(), tone: form.tone,
         });
         ai = res.content;
-        if (ai.services?.length) services = ai.services.map((x) => ({ name: x.name, description: x.description, icon: x.icon || "sparkles" }));
-        look = industryByKey(ai.industry) ?? preset;
       } catch {
-        // Generic services are still a usable start; the customer can edit them.
+        // The trade's own services are a usable start; the customer edits them.
       } finally {
         setIndustryLoading(false);
       }
+    } else {
+      // A listed trade already has a good, trade-correct list, so the wizard
+      // does not wait for the model: the step opens instantly on the blueprint
+      // and the model's own version — written around the owner's description —
+      // replaces it a moment later. Waiting here made "Next" feel broken on a
+      // slow model, and the customer can edit the list either way.
+      void tailorServicesInBackground(cat, vars);
     }
+
+    // Built from what the customer has typed so far, so the services are
+    // ordered towards what they actually described.
+    const blueprint = blueprintFor({
+      name: vars.name || "Your business",
+      city: vars.city,
+      category: cat,
+      industryKey: ai?.industry,
+      description: form.description.trim(),
+      seed: designSeed(vars.name || "your business", vars.city),
+    });
+    const services = ai?.services?.length ? ai.services : blueprint.services;
 
     setForm((f) => ({
       ...f,
       industryKey: key,
       ai,
-      services: services.map((x, i) => ({ id: `auto_${look.key}_${i}`, name: x.name, description: x.description })),
-      brandPrimary: look.palette[0],
-      brandSecondary: look.palette[1],
-      brandAccent: look.palette[2],
+      paletteChoices: blueprint.paletteChoices.map((c) => [c[0], c[1], c[2]] as [string, string, string]),
+      suggestedServices: blueprint.suggestedServices,
+      services: services.map((x, i) => ({ id: `auto_${blueprint.industryKey}_${i}`, name: x.name, description: x.description })),
+      brandPrimary: blueprint.palette[0],
+      brandSecondary: blueprint.palette[1],
+      brandAccent: blueprint.palette[2],
     }));
     toast({
       title: listed ? `Set up for ${preset.label}` : `Website content created for ${cat}`,
@@ -314,7 +362,7 @@ export default function OnboardingView() {
     setForm((f) => ({ ...f, [key]: value }));
   }
 
-  function addService(name: string) {
+  function addService(name: string, description = "") {
     const n = name.trim();
     if (!n) return;
     if (form.services.some((s) => s.name.toLowerCase() === n.toLowerCase())) {
@@ -323,8 +371,48 @@ export default function OnboardingView() {
     }
     setForm((f) => ({
       ...f,
-      services: [...f.services, { id: `own_${Date.now().toString(36)}`, name: n, description: "" }],
+      services: [...f.services, { id: `own_${Date.now().toString(36)}`, name: n, description }],
     }));
+  }
+
+  /**
+   * Ask the model for services written around what this owner described, and
+   * swap them in when they arrive.
+   *
+   * Only rows the wizard generated (`auto_…`) are replaced. Anything the
+   * customer typed themselves (`own_…`), or edited, is left exactly as it is —
+   * a response landing two seconds late must never undo their typing.
+   */
+  async function tailorServicesInBackground(cat: string, vars: { name: string; city: string; category: string }) {
+    setIndustryLoading(true);
+    try {
+      const res = await api.post<{ content: AiSiteContent; generated: boolean }>("/api/ai/generate", {
+        name: vars.name, category: cat, city: vars.city, services: [],
+        description: form.description.trim(), tone: form.tone,
+      });
+      // `generated: false` means the deterministic template came back — the
+      // blueprint version is already on screen and is at least as good.
+      if (!res.generated || !res.content?.services?.length) return;
+      const written = res.content.services.filter((x) => x.name).map((x) => ({ name: x.name, description: x.description ?? "" }));
+      setForm((f) => ({
+        ...f,
+        ai: res.content,
+        services: [
+          ...f.services.filter((x) => !x.id.startsWith("auto_")),
+          ...written.map((x, i) => ({ id: `auto_ai_${Date.now().toString(36)}_${i}`, name: x.name, description: x.description })),
+        ],
+      }));
+    } catch {
+      // Offline, rate-limited or out of credits: the blueprint list stands.
+    } finally {
+      setIndustryLoading(false);
+    }
+  }
+
+  /** Remove by name — used by the suggestion chips, which have no id. */
+  function removeServiceByName(name: string) {
+    const n = name.trim().toLowerCase();
+    setForm((f) => ({ ...f, services: f.services.filter((s) => s.name.trim().toLowerCase() !== n) }));
   }
 
   function updateService(id: string, field: "name" | "description", value: string) {
@@ -367,6 +455,37 @@ export default function OnboardingView() {
         ai = null;
       }
     }
+    // Three finished looks are drawn before the site exists, and the owner
+    // picks. Choosing is a step in this flow, not a setting to find later: a
+    // generator that decides everything and shows you afterwards is the model
+    // every competitor already ships.
+    if (!concepts) {
+      setDrawingConcepts(true);
+      try {
+        const drawn = await api.post<{ concepts: Concept[] }>("/api/onboarding/concepts", {
+          name: form.name.trim(), category: finalCategory, tagline: form.tagline.trim(),
+          description: form.description.trim(), city: form.city.trim(), phone: form.phone.trim(),
+          whatsapp, email: form.email.trim(), address: form.address.trim(), state: form.state.trim(),
+          pincode: form.pincode.trim(), establishedYear: form.establishedYear.trim(),
+          mapsUrl: form.mapsUrl.trim(), ai,
+          services: form.services.map((s) => ({ name: s.name, description: s.description })),
+          brandPrimary: form.brandPrimary, brandSecondary: form.brandSecondary, brandAccent: form.brandAccent,
+        });
+        setConcepts(drawn.concepts);
+        setSubmitting(false);
+        setDrawingConcepts(false);
+        return;
+      } catch (e) {
+        // A failed draw must not block the signup — the generator's own choice
+        // is a perfectly good website, and it is what used to happen anyway.
+        setDrawingConcepts(false);
+        toast({
+          title: "Could not draw the previews",
+          description: e instanceof ApiError ? e.message : "We will pick the most different design for you.",
+        });
+      }
+    }
+
     try {
       const res = await api.post<{ business: BusinessWithMeta }>("/api/onboarding", {
         name: form.name.trim(),
@@ -388,19 +507,25 @@ export default function OnboardingView() {
         mapsUrl: form.mapsUrl.trim(),
         ai,
         services: form.services.map((s) => ({ name: s.name, description: s.description })),
+        // The palette the customer chose (or the one we drew for them) travels
+        // with the form. The API used to accept these and nothing ever sent
+        // them, so the colours picked on this step never reached the site.
+        brandPrimary: form.brandPrimary,
+        brandSecondary: form.brandSecondary,
+        brandAccent: form.brandAccent,
+        // The concept the owner picked, when they picked one. The API uses it
+        // instead of choosing the most distinct genome on their behalf.
+        ...(conceptKey !== null ? { concept: conceptKey } : {}),
       });
       const biz = res.business;
       setBusiness(biz);
-      try {
-        localStorage.removeItem(DRAFT_KEY);
-      } catch {
-        // ignore
-      }
+      clearOnboardingDraft();
       toast({
         title: "🎉 Your website is ready!",
         description: `${biz.name} was created — ${TRIAL_LABEL} started.`,
       });
       setSuccess(biz);
+      setConcepts(null);
       window.scrollTo({ top: 0 });
     } catch (e) {
       const msg2 = e instanceof ApiError ? e.message : "Something went wrong. Please try again.";
@@ -409,6 +534,110 @@ export default function OnboardingView() {
     } finally {
       setSubmitting(false);
     }
+  }
+
+  // =============================================================== CONCEPTS
+
+  // Three drawn websites, rendered by the real site renderer in preview mode.
+  // Nothing has been created yet: the pick is what creates the site, with that
+  // genome.
+  if (concepts) {
+    return (
+      <div className="min-h-screen bg-background">
+        <style>{WIZARD_STYLES}</style>
+        <main className="mx-auto max-w-6xl px-4 py-10">
+          <div className="text-center">
+            <Badge className="rounded-full bg-emerald-100 text-emerald-800 hover:bg-emerald-100">
+              Drawn for {form.name.trim() || "your business"}
+            </Badge>
+            <h1 className="mt-4 text-3xl font-bold text-foreground">Three websites. Pick the one you like.</h1>
+            <p className="mx-auto mt-2 max-w-2xl text-sm text-muted-foreground">
+              Every one of these is a real website built from your details — same words, same services, different
+              design. The one you choose is the one you get, and you can change the look any time from your dashboard.
+            </p>
+          </div>
+
+          <div className="mt-8 grid gap-5 md:grid-cols-3">
+            {concepts.map((c) => (
+              <div
+                key={c.key}
+                className={cn(
+                  "overflow-hidden rounded-2xl border bg-card transition",
+                  conceptKey === c.key ? "border-emerald-600 ring-2 ring-emerald-600/30" : "border-border hover:border-emerald-300",
+                )}
+              >
+                <button
+                  type="button"
+                  onClick={() => setConceptKey(c.key)}
+                  className="block w-full text-left"
+                  aria-pressed={conceptKey === c.key}
+                >
+                  {/* The preview is the site itself, scaled down: the same
+                      renderer the customer's visitors will get. */}
+                  <div className="relative h-[320px] overflow-hidden border-b bg-white">
+                    <div className="pointer-events-none absolute left-0 top-0 h-[1100px] w-[1100px] origin-top-left scale-[0.36]">
+                      <SiteRenderer payload={c.payload} mode="preview" device="desktop" />
+                    </div>
+                  </div>
+                  <div className="p-4">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm font-bold text-foreground">
+                        {c.styleName}
+                        <span className="ml-1.5 text-xs font-medium text-muted-foreground">{c.colourName}</span>
+                      </p>
+                      <span className="flex gap-1">
+                        {[c.colors.primary, c.colors.secondary, c.colors.accent].map((hex) => (
+                          <span key={hex} className="h-4 w-4 rounded-full border" style={{ backgroundColor: hex }} />
+                        ))}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-[11px] text-muted-foreground">{c.character}</p>
+                    <div className="mt-2 flex flex-wrap gap-1.5 text-[10px]">
+                      <span className="rounded-full bg-muted px-2 py-0.5 font-medium text-muted-foreground">
+                        Score {c.quality}/100
+                      </span>
+                      <span className="rounded-full bg-muted px-2 py-0.5 font-medium text-muted-foreground">
+                        {c.uniqueness}% unlike your area&rsquo;s sites
+                      </span>
+                      <span className="rounded-full bg-muted px-2 py-0.5 font-medium text-muted-foreground">
+                        {c.motion.level <= 1 ? "No heavy animation" : c.motion.level >= 3 ? "Animated" : "Light animation"}
+                      </span>
+                    </div>
+                  </div>
+                </button>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-8 flex flex-col items-center gap-3">
+            <Button
+              size="lg"
+              className="h-12 w-full max-w-sm rounded-xl bg-emerald-600 text-base hover:bg-emerald-700"
+              disabled={conceptKey === null || submitting}
+              onClick={submitOnboarding}
+            >
+              {submitting ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <Sparkles className="mr-2 h-5 w-5" />}
+              {submitting ? "Building your website…" : "Build this one"}
+            </Button>
+            <button
+              type="button"
+              className="text-xs font-medium text-muted-foreground underline hover:text-foreground"
+              disabled={submitting}
+              onClick={() => {
+                // Nobody has to choose: the generator keeps the most distinct
+                // design, which is what it did before this step existed.
+                setConceptKey(null);
+                setConcepts(null);
+                setSubmitting(false);
+                void submitOnboarding();
+              }}
+            >
+              I can&rsquo;t decide — pick the one that suits my business
+            </button>
+          </div>
+        </main>
+      </div>
+    );
   }
 
   // =============================================================== SUCCESS
@@ -587,6 +816,31 @@ export default function OnboardingView() {
                   sub="This shapes your website content, design and SEO."
                 />
 
+                <WebsiteImportBox
+                  onApply={(values, services) => {
+                    setForm((f) => {
+                      const next: OnboardingForm = { ...f };
+                      const writable = next as unknown as Record<string, string>;
+                      for (const [key, value] of Object.entries(values)) {
+                        if (key in next) writable[key] = value;
+                      }
+                      // Services merge rather than replace: whatever the wizard
+                      // had already suggested stays, and duplicates by name are
+                      // dropped so the step does not show the same row twice.
+                      const seen = new Set(next.services.map((s) => s.name.trim().toLowerCase()));
+                      const merged = [...next.services];
+                      for (const service of services) {
+                        const name = service.name.trim();
+                        if (!name || seen.has(name.toLowerCase()) || merged.length >= 12) continue;
+                        seen.add(name.toLowerCase());
+                        merged.push({ id: `imp-${seen.size}-${name.slice(0, 12)}`, name, description: service.description || "" });
+                      }
+                      return { ...next, services: merged };
+                    });
+                    setError("");
+                  }}
+                />
+
                 <div className="space-y-2">
                   <Label htmlFor="cat-search">Business category *</Label>
                   <div className="relative">
@@ -736,6 +990,39 @@ export default function OnboardingView() {
                   </div>
                 )}
 
+                {form.suggestedServices.length > 0 && (
+                  <div className="rounded-xl border border-dashed border-border bg-muted/30 p-3">
+                    <p className="text-xs font-semibold text-muted-foreground">
+                      Typical for {industryFor(finalCategory).label} — tap to add or remove
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {form.suggestedServices.map((sv) => {
+                        const picked = form.services.some(
+                          (x) => x.name.trim().toLowerCase() === sv.name.trim().toLowerCase(),
+                        );
+                        return (
+                          <button
+                            key={sv.name}
+                            type="button"
+                            aria-pressed={picked}
+                            title={sv.description}
+                            onClick={() => (picked ? removeServiceByName(sv.name) : addService(sv.name, sv.description))}
+                            className={cn(
+                              "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+                              picked
+                                ? "border-emerald-600 bg-emerald-600 text-white"
+                                : "border-border bg-card text-foreground hover:border-emerald-300 hover:bg-emerald-50",
+                            )}
+                          >
+                            {picked ? <Check className="h-3.5 w-3.5" aria-hidden="true" /> : <Plus className="h-3.5 w-3.5" aria-hidden="true" />}
+                            {sv.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
                 {form.services.length > 0 && (
                   <ul className="space-y-2">
                     {form.services.map((sv) => (
@@ -795,6 +1082,60 @@ export default function OnboardingView() {
                   >
                     <Plus className="h-4 w-4" aria-hidden="true" /> Add
                   </Button>
+                </div>
+
+                {/* Colours. Every business starts on its own palette, drawn from the ones
+                    that suit its trade — so two shops in one trade do not look alike —
+                    and this is where the customer changes it if they want to. */}
+                <div className="rounded-xl border border-border p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-sm font-semibold text-foreground">Your colours</p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="rounded-lg"
+                      disabled={form.paletteChoices.length < 2}
+                      onClick={() => {
+                        const i = form.paletteChoices.findIndex((c) => c[0] === form.brandPrimary);
+                        const next = form.paletteChoices[(i + 1) % form.paletteChoices.length];
+                        setForm((f) => ({ ...f, brandPrimary: next[0], brandSecondary: next[1], brandAccent: next[2] }));
+                      }}
+                    >
+                      <Repeat className="h-3.5 w-3.5" aria-hidden="true" />
+                      Show me another
+                    </Button>
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Picked to suit {finalCategory || "your business"}. Tap any palette to use it.
+                  </p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {(form.paletteChoices.length
+                      ? form.paletteChoices
+                      : ([[form.brandPrimary, form.brandSecondary, form.brandAccent]] as [string, string, string][])
+                    ).map((c, i) => {
+                      const active = c[0].toLowerCase() === form.brandPrimary.toLowerCase();
+                      return (
+                        <button
+                          key={`${c[0]}-${i}`}
+                          type="button"
+                          aria-label={`Use palette ${i + 1}`}
+                          aria-pressed={active}
+                          onClick={() =>
+                            setForm((f) => ({ ...f, brandPrimary: c[0], brandSecondary: c[1], brandAccent: c[2] }))
+                          }
+                          className={cn(
+                            "flex h-9 w-16 overflow-hidden rounded-lg border-2 transition-transform hover:scale-105",
+                            active ? "border-emerald-600 ring-2 ring-emerald-200" : "border-border",
+                          )}
+                        >
+                          <span className="h-full flex-1" style={{ background: c[0] }} />
+                          <span className="h-full flex-1" style={{ background: c[1] }} />
+                          <span className="h-full flex-1" style={{ background: c[2] }} />
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
 
                 <p className="text-xs text-muted-foreground">
@@ -1060,15 +1401,19 @@ export default function OnboardingView() {
                     type="button"
                     size="lg"
                     onClick={submitOnboarding}
-                    disabled={submitting || industryLoading}
+                    disabled={submitting || drawingConcepts || industryLoading}
                     className="h-12 w-full rounded-xl bg-emerald-600 px-6 text-base font-semibold text-white shadow-lg shadow-emerald-600/25 hover:bg-emerald-700 sm:w-auto"
                   >
-                    {submitting ? (
+                    {submitting || drawingConcepts ? (
                       <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" />
                     ) : (
                       <Rocket className="h-5 w-5" aria-hidden="true" />
                     )}
-                    {submitting ? "Creating your website…" : "Create My Website"}
+                    {drawingConcepts
+                      ? "Drawing three designs for you…"
+                      : submitting
+                        ? "Creating your website…"
+                        : "Create My Website"}
                   </Button>
                   <p className="text-xs text-muted-foreground">
                     {TRIAL_LABEL} starts today — no payment now. Colours, photos, services and text can all be
@@ -1106,15 +1451,15 @@ export default function OnboardingView() {
                 <Button
                   type="button"
                   onClick={submitOnboarding}
-                  disabled={submitting}
+                  disabled={submitting || drawingConcepts}
                   className="rounded-xl bg-emerald-600 text-white hover:bg-emerald-700"
                 >
-                  {submitting ? (
+                  {submitting || drawingConcepts ? (
                     <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
                   ) : (
                     <Rocket className="h-4 w-4" aria-hidden="true" />
                   )}
-                  Create My Website 🚀
+                  {drawingConcepts ? "Drawing three designs…" : "Create My Website 🚀"}
                 </Button>
               )}
             </div>
@@ -1130,6 +1475,199 @@ export default function OnboardingView() {
 }
 
 // ---------------------------------------------------------------- small parts
+
+/* --------------------- bringing an existing site across -------------------- */
+
+interface ImportPreview {
+  url: string;
+  title: string;
+  summary: string[];
+  missing: string[];
+  found: {
+    name: string | null; tagline: string | null; description: string | null;
+    phone: string | null; whatsapp: string | null; email: string | null;
+    address: string | null; city: string | null; state: string | null; pincode: string | null;
+  };
+  services: { name: string; description: string }[];
+  faqs: number;
+  photos: number;
+}
+
+const IMPORT_FIELDS = [
+  ["name", "Business name"], ["tagline", "Tagline"], ["description", "About"],
+  ["phone", "Phone"], ["whatsapp", "WhatsApp"], ["email", "Email"],
+  ["address", "Address"], ["city", "City"], ["state", "State"], ["pincode", "PIN code"],
+] as const;
+
+/**
+ * "You already have a website — let it fill this in."
+ *
+ * Reads the owner's current page and offers what it actually says, field by
+ * field, so they can keep whichever parts are still true. Nothing is written
+ * from here: the values land in the form they are already filling in, and the
+ * page they came from is named on every line. What the page does not say is
+ * listed too, rather than quietly filled with something plausible.
+ */
+function WebsiteImportBox({ onApply }: {
+  onApply: (values: Record<string, string>, services: { name: string; description: string }[]) => void;
+}) {
+  const { toast } = useToast();
+  const [url, setUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [preview, setPreview] = useState<ImportPreview | null>(null);
+  const [chosen, setChosen] = useState<Set<string>>(new Set());
+  const [withServices, setWithServices] = useState(true);
+
+  async function look() {
+    const target = url.trim();
+    if (!target) return;
+    setBusy(true);
+    setPreview(null);
+    try {
+      const res = await api.post<ImportPreview>("/api/business/website-import/preview", { url: target });
+      setPreview(res);
+      // Everything found is ticked to begin with — the common case is "yes,
+      // that is my business", and unticking is faster than ticking ten boxes.
+      setChosen(new Set(IMPORT_FIELDS.filter(([key]) => res.found[key as keyof ImportPreview["found"]]).map(([key]) => key)));
+      setWithServices(res.services.length > 0);
+    } catch (e) {
+      toast({ variant: "destructive", title: "Could not read that page", description: e instanceof Error ? e.message : "Check the address and try again." });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function apply() {
+    if (!preview) return;
+    const values: Record<string, string> = {};
+    for (const [key] of IMPORT_FIELDS) {
+      const value = preview.found[key as keyof ImportPreview["found"]];
+      if (chosen.has(key) && value) values[key] = String(value);
+    }
+    onApply(values, withServices ? preview.services : []);
+    toast({
+      title: "Filled in from your website",
+      description: [
+        `${Object.keys(values).length} field(s)`,
+        withServices && preview.services.length ? `${preview.services.length} services` : "",
+      ].filter(Boolean).join(" · ") + " — check each one, then carry on.",
+    });
+    setPreview(null);
+    setUrl("");
+  }
+
+  const present = IMPORT_FIELDS.filter(([key]) => preview?.found[key as keyof ImportPreview["found"]]);
+
+  return (
+    <div className="rounded-2xl border border-emerald-200 bg-emerald-50/40 p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <Globe className="h-4 w-4 text-emerald-700" aria-hidden="true" />
+        <p className="text-sm font-semibold text-foreground">Already have a website? Fill this in from it.</p>
+      </div>
+      <p className="mt-1 text-xs text-muted-foreground">
+        Paste your current site&apos;s address and we will read what it says — your words, your phone number, your address.
+        Nothing is copied from its design: your new site is built fresh, and you can change anything below.
+      </p>
+
+      <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+        <Input
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void look(); } }}
+          placeholder="yourbusiness.com or https://yourbusiness.com"
+          className="rounded-xl bg-white"
+          autoComplete="url"
+          inputMode="url"
+          aria-label="Address of your current website"
+        />
+        <Button type="button" onClick={() => void look()} disabled={busy || !url.trim()} className="shrink-0 rounded-xl bg-emerald-600 hover:bg-emerald-700">
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+          Read my site
+        </Button>
+      </div>
+      {busy && <p className="mt-2 text-xs text-muted-foreground">Reading… this usually takes a couple of seconds.</p>}
+
+      {preview && (
+        <div className="mt-3 space-y-3 rounded-xl border border-emerald-200 bg-white p-3">
+          <div>
+            <p className="text-xs font-semibold text-foreground">{preview.title || preview.url}</p>
+            <p className="text-[11px] text-muted-foreground">
+              {preview.summary.length ? preview.summary.join(" · ") : "We read the page"}
+            </p>
+          </div>
+
+          {present.length === 0 && (
+            <p className="text-xs text-muted-foreground">
+              This page did not state anything we could bring over — no phone number, address or description we could
+              read. Fill the form in yourself, or try a different page (the one with your contact details on it).
+            </p>
+          )}
+
+          {present.length > 0 && (
+            <div className="space-y-1.5">
+              {present.map(([key, label]) => {
+                const value = String(preview.found[key as keyof ImportPreview["found"]] ?? "");
+                return (
+                  <label key={key} className="flex cursor-pointer items-start gap-2 text-xs">
+                    <input
+                      type="checkbox"
+                      checked={chosen.has(key)}
+                      onChange={() => setChosen((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(key)) next.delete(key); else next.add(key);
+                        return next;
+                      })}
+                      className="mt-0.5 h-3.5 w-3.5 accent-emerald-600"
+                    />
+                    <span className="text-muted-foreground"><span className="font-medium text-foreground">{label}:</span> {value.slice(0, 120)}{value.length > 120 ? "…" : ""}</span>
+                  </label>
+                );
+              })}
+            </div>
+          )}
+
+          {preview.services.length > 0 && (
+            <label className="flex cursor-pointer items-start gap-2 border-t border-border pt-2 text-xs">
+              <input
+                type="checkbox"
+                checked={withServices}
+                onChange={() => setWithServices((v) => !v)}
+                className="mt-0.5 h-3.5 w-3.5 accent-emerald-600"
+              />
+              <span className="text-muted-foreground">
+                <span className="font-medium text-foreground">{preview.services.length} services:</span>{" "}
+                {preview.services.map((s) => s.name).slice(0, 6).join(", ")}{preview.services.length > 6 ? "…" : ""}
+              </span>
+            </label>
+          )}
+
+          {preview.missing.length > 0 && (
+            <p className="text-[11px] text-muted-foreground">
+              Not on that page, so we did not invent it: {preview.missing.join(", ")}.
+            </p>
+          )}
+          {(preview.faqs > 0 || preview.photos > 0) && (
+            <p className="text-[11px] text-muted-foreground">
+              {[preview.faqs ? `${preview.faqs} of your questions` : "", preview.photos ? `${preview.photos} photos` : ""]
+                .filter(Boolean)
+                .join(" and ")}{" "}
+              can be brought over from your dashboard after signup.
+            </p>
+          )}
+
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" onClick={apply} disabled={(!present.length && !withServices)} className="rounded-xl bg-emerald-600 hover:bg-emerald-700">
+              <Check className="h-4 w-4" /> Fill these in
+            </Button>
+            <Button type="button" variant="outline" onClick={() => { setPreview(null); setUrl(""); }} className="rounded-xl">
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function StepHeader({ icon, title, sub }: { icon: React.ReactNode; title: string; sub: string }) {
   return (
