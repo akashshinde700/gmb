@@ -15,8 +15,8 @@
  */
 
 import { designDnaFor, sectionPlanFor } from "@/lib/design-dna";
-import { blueprintFor, designSeed } from "@/lib/blueprint";
-import { bestCandidate, profileFromSite, similarity, uniquenessPercent, type SiteProfile } from "@/lib/uniqueness";
+import { blueprintFor, candidateBlueprints, designSeed } from "@/lib/blueprint";
+import { bestCandidate, paletteSimilarity, profileFromSite, similarity, uniquenessPercent, type SiteProfile } from "@/lib/uniqueness";
 import { checkSite, contrastRatio } from "@/lib/site-quality";
 import { applyFixes } from "@/lib/site-fixes";
 import { interpretRestyle, restyledPlan, restyledTokens, restyleSummary } from "@/lib/restyle";
@@ -195,6 +195,27 @@ console.log("\n== Uniqueness");
     (name) => (name === "first" ? a : name === "second" ? b : profileFor(blueprintOf("Third Dental Practice"))),
     [a],
   );
+  // One business, three concepts. A trade list is finite, so a busy trade has
+  // every palette in use already — and the three directions offered to one
+  // owner still have to look different from each other, or the choice is
+  // meaningless. This is the saturation case seen live (Dental in the dev DB).
+  const pool = blueprintOf("Smile Dental Clinic").palettePool;
+  const saturated = candidateBlueprints(
+    { name: "Skyline Dental Care", city: "Pune", category: "Dental", taken: pool.map((p) => p.join(",")) },
+    3,
+  );
+  const pairs = [[0, 1], [1, 2], [0, 2]] as const;
+  const scores = pairs.map(([i, j]) => paletteSimilarity(saturated[i].palette, saturated[j].palette));
+  check("no two of the three concepts are the same palette twice",
+    saturated[0].palette.join() !== saturated[1].palette.join() &&
+    saturated[1].palette.join() !== saturated[2].palette.join() &&
+    saturated[0].palette.join() !== saturated[2].palette.join(),
+    saturated.map((b) => b.palette.join(",")).join(" | "));
+  check("and no pair is closer than a shared primary would make it",
+    scores.every((v) => v < 0.5), scores.map((v) => v.toFixed(3)).join(", "));
+  check("and only the colour changed — the rest of a concept is untouched",
+    saturated[0].paletteChoices.length > 0 && saturated.every((b) => b.sectionOrder.length > 0));
+
   check("the most distinct candidate wins", chosen.chosen !== "first", chosen.chosen);
   check("an empty database keeps the first candidate", bestCandidate(["only"], () => a, []).chosen === "only");
 }

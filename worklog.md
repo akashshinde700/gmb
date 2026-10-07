@@ -345,3 +345,74 @@ Stage Summary:
 - Concepts: 3 concepts in ~35ms, 22 KB total, three different palettes (violet / blue / clay), 2 distinct style names and 3 distinct plans; picking concept 1 produced a site whose styleName, colours, font/radius/button, motion and full section plan all matched. A bogus index falls back to the most distinct genome
 - npm run test:all green (api-smoke 105/0), tsc 0, eslint 0. Commits: c3166bc (Google import), 7846dfa (three concepts)
 - Still open: A/B testing, a provider cost/quota view, server-side cron for Autopilot, per-trade artwork variety, URL-to-site recreation
+
+---
+
+Task ID: 15-a
+Agent: main (Arena Agent)
+Task: Route every AI call by task, cost and quota — and count what actually happened
+
+Work Log:
+- src/lib/llm-chain.ts + src/lib/llm-router.ts (new): one place decides which provider serves a call. Chain order is custom → groq → openrouter → gemini → zai → nvidia → openai → anthropic → ollama; each task (site generation, copy, concepts, restyle, quality, suggestions, section rewrite) has a profile — quality floor, cost ceiling, latency budget — and the router walks the chain until one answers, silently. A failed or quota-empty provider is skipped, never surfaced as "our AI is down"
+- src/lib/llm-usage.ts (new) + LlmUsage model + GET /api/admin/ai-usage: every attempt is recorded, successes and failures alike, so the admin view can show today's calls per provider against the configured cap. src/lib/llm.ts is now an adapter only — generateJson({ task, businessId }) records the attempt and returns the same shape it always did
+- tests/llm-router.test.mts (23 checks) covers the ordering, the fallback and the quota maths
+
+Stage Summary:
+- Live: with the custom provider answering 429 and groq refusing to connect, both attempts were recorded ("custom 429 rate limited", "groq fetch failed") and the call still returned content — the fallback is invisible to the caller, which is the contract
+- Admin row showed today 4 / cap 1 — the cap is a soft signal for the operator, not a hard stop mid-conversation
+- npm run test:all green, tsc 0, eslint 0. Commit: 37094bd
+
+---
+
+Task ID: 16-a
+Agent: main (Arena Agent)
+Task: Let two headlines compete, and let the enquiries decide
+
+Work Log:
+- src/lib/experiments.ts (new): an experiment is a key, a startedAt, two variants and the section they rewrite. The visitor's variant is a hash of their own visitor id, so the same person sees the same page every time — no flicker, no cookie, nothing to clean up. The verdict needs 30 visitors and 3 actions per variant before it will call a winner, and only a 1.3× difference counts
+- Variant A is byte-identical to the live page; B rewrites only the section under test. Applying happens after mount (src/components/site/site-renderer.tsx), so the HTML the server sent and the HTML the client first renders are identical
+- POST /api/website/experiment (start / keep / stop) and the analytics event route now carries experiment + variant, so a call tap in variant B is counted against variant B
+- Dashboard: an Experiment card in Analytics — the two variants side by side with visits, actions, calls and enquiries, and one button to keep the winner
+
+Stage Summary:
+- Live: start 200 → 87 events split { a: 46, b: 34 }, verdict verbatim "…is winning — 17.6% enquire against 2.2%. Make it the only version.", keep b 200 → the hero changed and the experiment went null. Duplicate start answered 409; with no provider configured the start answered 503 "No AI provider answered… Type one yourself", and a typed headline was accepted instead
+- npm run test:all green (experiments 27 checks), tsc 0, eslint 0. Commit: c808bb7
+
+---
+
+Task ID: 17-a
+Agent: main (Arena Agent)
+Task: Read the owner's existing website, and leave its design behind
+
+Work Log:
+- src/lib/site-import.ts + src/lib/net.ts (new): paste your current site and we read it — JSON-LD first (what the owner told search engines), then meta tags, then the visible page. The three are never merged for one field, so every value can be traced to where it came from, and no model is involved anywhere in the file
+- Services come from structured data and the page's own headings minus navigation words; FAQs from FAQPage markup; photos are og:image plus the real images on the page, deduped by file name, with logos moved into the logo slot where they belong; opening hours are normalised into the shape the "open now" badge already understands. What the page does not say is reported as missing — "phone number, address, opening hours" — rather than guessed at. That list is the feature
+- SSRF guard on every hop including redirect targets, 2 MB / 12 s / at most 3 redirects, and private-network addresses refused (a dev-only IMPORT_ALLOW_PRIVATE=1 escape exists for testing against a local stub)
+- POST /api/business/website-import (lookup + apply, for an owner who already has an account) and .../preview (for the wizard, before the business exists). Apply re-fetches the page server-side and writes only the ticked lines, tagged source: "website"; services, questions and photos are added and deduplicated on re-apply. The wizard's first step carries the box, and the dashboard has a card that also shows what was already brought over
+- tests/site-import.test.mts (45 checks) in test:all
+
+Stage Summary:
+- Live, against a local stub page: wizard preview 200 → 3 services, 1 FAQ, 3 photos; refusals "422 That address is missing a domain name" / "422 That does not look like a website address"; a dead page answered "502 That page does not exist any more (404)". Dashboard lookup offered [add] Tagline / About your business / State / PIN code / Opening hours and [replace] Email / Address / Cover photo (replacements unticked by default)
+- Apply 200 applied exactly the ticked 5 fields and added 3 services, 1 FAQ and 3 photos, tagged source "website"; a second apply added 0 / 0 / 0; GET summary listed the 5 imported fields plus services 4 / faqs 9 / photos 6. A thin page with the private-host escape returned 200 with every field null and missing: ["phone number","email address","address","opening hours","service list","photos"]; the same probe without the escape returned 502 "That address is on a private network"
+- npm run test:all green (site-import 45 checks), tsc 0, eslint 0. Commit: aded04c
+- Still open: per-trade artwork variety, per-section images, per-visit lead tracking, server-side cron for Autopilot
+
+---
+
+Task ID: 18-a
+Agent: main (Arena Agent)
+Task: Read a lead as a journey — what one visit actually did
+
+Work Log:
+- src/lib/visits.ts (new): a visitor id answers "who came back"; it cannot answer the question a shopkeeper asks about a lead — "what did this person do before they wrote to me?". So every action in one sitting now carries the same visit id, and a visit ends after thirty minutes without a page (the idle window analytics has used for years). nextVisit() is pure — the caller passes "now" and the fresh id — so the rule is testable without a browser and a device clock moving backwards cannot split a visit on every request
+- src/lib/site-utils.ts: visitMeta() keeps the visit next to the visitor id in the same local storage (12 lines, no cookie, nothing sent anywhere except as part of the event it explains). src/components/site/site-renderer.tsx attaches it to every event and to the enquiry itself, so the lead arrives with the visit that produced it
+- POST /api/analytics/event accepts visitor + visit (validated — it is an open write path) and stores them in the event's meta beside the A/B variant; POST /api/leads writes a FORM_SUBMIT event carrying both the visit id and the new lead's id, inside the same transaction as the lead
+- GET /api/analytics/visits (new): the last day of visits, one line each — actions in the order they happened, and the enquiry's name/phone/service when that visit produced one. Actions from pages cached before this existed are counted as "untracked" rather than guessed into a visit
+- /api/analytics/summary: "unique visits" now means distinct visits once pages carry ids, falling back to the old (day, path) measure for older rows and rollups, so the number never silently drops
+- Dashboard Analytics tab: a "What visitors did" card — time, the action trail as chips ("Opened the site → Tapped WhatsApp → Sent an enquiry"), the visitor's name on the right when it converted, and the "1 of 2 visits enquired" line
+- tests/visits.test.mts (20 checks) in test:all: window boundaries, a backwards clock, corrupted storage, action order, conversion attribution, the cap, malformed meta and the distinct-visit counter
+
+Stage Summary:
+- Live: a published probe clinic, one visit with VISIT → CTA_CALL → CTA_WHATSAPP then an enquiry from the same visit, plus a second visit that only looked. GET /api/analytics/visits returned "2 visits, 1 converted, untracked 0": s…0002 "VISIT" and s…0001 "VISIT > CTA_CALL > CTA_WHATSAPP > FORM_SUBMIT [lead Ravi Sharma / +919800011122]". Summary showed visits 2, uniqueVisits 2, formSubmits 1, ctaCalls 1
+- npm run test:all green (visits 20 checks), tsc 0, eslint 0
+- Still open: server-side cron for Autopilot (the script is ready; the crontab entry belongs on the host), and a provider image key if per-section photographic imagery is wanted on top of the generated artwork
