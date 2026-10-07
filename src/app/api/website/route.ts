@@ -10,7 +10,17 @@ const SECTION_TYPES = new Set(SECTION_LIBRARY.map((s) => s.type as string));
 const MAX_SECTIONS = 40;
 const MAX_SECTIONS_JSON = 400_000;
 
-const THEME_VALUES: Record<keyof SiteTheme, string[]> = {
+/**
+ * Values the Theme panel may set. The Design DNA keys (shadow, spacing, header,
+ * footer, image treatment) are accepted so the dashboard can offer them, but
+ * `motion`, `dna`, `quality` and `uniqueness` are deliberately absent: those are
+ * written by the generator and the checker, and a client-supplied value for them
+ * would let a customer's browser claim a uniqueness score or an animation it
+ * never had.
+ */
+type ThemeKey = Exclude<keyof SiteTheme, "motion" | "dna" | "quality" | "uniqueness">;
+
+const THEME_VALUES: Record<ThemeKey, string[]> = {
   font: ["modern", "classic", "elegant"],
   radius: ["sharp", "rounded", "pill"],
   heroStyle: ["image", "gradient", "split"],
@@ -18,6 +28,12 @@ const THEME_VALUES: Record<keyof SiteTheme, string[]> = {
   containerWidth: ["normal", "wide"],
   motif: ["auto", "none"],
   industry: [...INDUSTRY_KEYS],
+  shadow: ["none", "soft", "lifted", "dramatic"],
+  button: ["solid", "outline", "soft", "gradient", "square"],
+  spacing: ["tight", "normal", "airy"],
+  header: ["sticky", "minimal", "topbar", "centred"],
+  footer: ["columned", "compact", "statement"],
+  imageTreatment: ["plain", "duotone", "framed", "soft-focus"],
 };
 
 export const GET = route(async (req: Request) => {

@@ -1,5 +1,17 @@
 # Code Review — WebSetu (gmbzi)
 
+> **Status, 7 October 2026** — addressed in the review pass recorded in
+> `REVIEW-2026-10-07.md`:
+> **1.2** (seed refuses a production database without `ADMIN_PASSWORD`) ✔
+> **1.3** (both counters now claimed with one conditional statement; the
+> overspend is reproduced and fixed in `tests/usage-race.mjs`) ✔
+> **1.4** (a failed generation is refunded — same suite) ✔
+> **1.6** (the onboarding draft is cleared on sign-out) ✔
+> **1.5** stays a deployment decision, tracked with numbers in `SCALE-AUDIT.md`.
+> **1.1** is the one item that is not a code change and is the most urgent: the
+> public repository's *history* still carries `db/custom.db` and `.env`.
+> `REVIEW-2026-10-07.md` §B has the fetch evidence and the exact commands.
+
 ## Context
 
 - **Repository**: `C:\Users\ACER\Downloads\gmbzi` (branch `main`, uncommitted working-tree diff)
@@ -35,7 +47,7 @@
     3. Audit whether `db/custom.db`/`.env` were ever pushed to a shared remote (GitHub/GitLab/etc.) or only exist locally; if pushed, also rotate `APP_SECRET` and any other values that were in `.env` at any point in history (the current `.env` content shown is only `DATABASE_URL`, but earlier revisions were not checked line-by-line and should be audited too).
     4. Add a pre-commit hook or CI check (e.g. `git-secrets`, `gitleaks`) to prevent `*.db` / `.env*` from ever being staged again.
 
-- [ ] CR-ITEM-1.2 [Weak default/generated credentials for provisioned accounts]:
+- [x] CR-ITEM-1.2 [Weak default/generated credentials for provisioned accounts]:
   - **Severity**: High
   - **Location**: `prisma/seed.ts` lines ~38-41 (`ADMIN_PASSWORD` fallback `"admin1234"`); `src/lib/provisioning.ts` lines 18-23 (`generatePassword()`).
   - **Description**:
@@ -45,7 +57,7 @@
     - Make the seed script refuse to create/reset the admin account with a hardcoded fallback when `NODE_ENV === "production"` — require `ADMIN_PASSWORD` explicitly, or generate and print a strong random password once and exit.
     - Increase `generatePassword()` entropy (e.g. `randomBytes` base32/base62 of 12+ chars) and/or set a `mustChangePassword` flag that forces a password reset on the admin-provisioned customer's first login.
 
-- [ ] CR-ITEM-1.3 [Race condition in usage-counter enforcement (AI credits, theme changes)]:
+- [x] CR-ITEM-1.3 [Race condition in usage-counter enforcement (AI credits, theme changes)]:
   - **Severity**: Medium
   - **Location**: `src/app/api/ai/generate/route.ts` (credit check/increment, ~lines 38-53); `src/lib/appearance.ts` `consumeThemeChange()` (lines 20-56).
   - **Description**: Both flows read the current usage count, compare it to the plan's allowance, and — only if under the limit — perform a **separate** `db.business.update({ data: { ...Count: { increment: 1 } } })` call. This is a classic check-then-act race: two concurrent requests (e.g. two browser tabs, or a retried request) can both pass the `used >= allowance` check before either write lands, letting a tenant consume one more unit than their plan allows. Notably, the codebase already knows the correct pattern and applies it correctly elsewhere — `src/lib/billing.ts` `activateSubscription()` claims a coupon with a **conditional** `updateMany({ where: { code, active: true }, data: { usedCount: { increment: 1 } } })` and checks `claimed.count`, specifically to avoid this exact race. The AI-credit and theme-change paths were not brought in line with that pattern.
@@ -59,7 +71,7 @@
     ```
     (Adjust for the period-rollover branch in `ai/generate/route.ts`, which will need the rollover write done conditionally too, e.g. gated on `aiPeriodStart` in the `where` clause.)
 
-- [ ] CR-ITEM-1.4 [AI credit consumed even when generation fails and only the deterministic fallback is served]:
+- [x] CR-ITEM-1.4 [AI credit consumed even when generation fails and only the deterministic fallback is served]:
   - **Severity**: Medium
   - **Location**: `src/app/api/ai/generate/route.ts`, lines ~38-53 vs. ~93-100.
   - **Description**: The route increments `aiUsedCount` (or resets the period) immediately after the allowance check, *before* calling `generateJson()`. `generateJson()` can legitimately return `null` (all configured providers failed, timed out, or returned unparseable output — see `src/lib/llm.ts` `generateJson`, which swallows every provider error and returns `null`), in which case the route falls back to deterministic template copy (`fallback` object, lines ~118-133) and reports `generated: false` to the client. The customer is nonetheless charged one of their limited monthly AI credits for a response that was not AI-generated at all.
@@ -71,7 +83,7 @@
   - **Description**: The file is explicit and self-aware about this ("*the app runs as a single PM2 fork process... If the deployment ever scales to multiple instances this must move to a shared store (Redis)*"), which is good practice, but there is no enforcement mechanism: if the app is later deployed behind a load balancer with N instances (a very plausible growth path for a SaaS), every rate limit in the app — login brute-force protection, per-account lockout, lead-form spam protection, coupon-enumeration protection, AI-credit throttling, subscription-order throttling — silently divides its effective strength by N with no error, warning, or metric to surface the regression. This is exactly the kind of security control that fails open silently.
   - **Recommendation**: Before any horizontal scaling, move `rateLimit()` to a shared store (Redis `INCR`+`EXPIRE`, or equivalent) behind the same function signature (the module comment already flags this as the intended migration point, which makes it low-effort). In the interim, consider a startup-time log/assertion if `process.env.INSTANCE_COUNT`/orchestrator metadata indicates more than one replica, so a misconfiguration is visible in logs rather than only in degraded security posture.
 
-- [ ] CR-ITEM-1.6 [Onboarding wizard persists business PII to `localStorage` in plaintext]:
+- [x] CR-ITEM-1.6 [Onboarding wizard persists business PII to `localStorage` in plaintext]:
   - **Severity**: Low
   - **Location**: `src/components/views/onboarding-view.tsx` — `DRAFT_KEY` usage (draft save ~line 308, restore ~line 289-292, clear ~line 544).
   - **Description**: The onboarding draft (business name, phone, email, address, description, etc.) is saved to `localStorage` unencrypted so a page reload can recover it. This is a reasonable UX tradeoff and is not the session-token problem the diff correctly fixed elsewhere (`api-client.ts` now uses httpOnly cookies), but on a shared/public computer this PII persists after the browser tab is closed and is readable by any script that later runs on the same origin (e.g. a future XSS, or a browser extension).

@@ -13,7 +13,8 @@ export const POST = route(async (req: Request) => {
 
   const body = await readJson<{
     name?: string; tagline?: string; priceMonthly?: number; priceYearly?: number;
-    features?: string[]; maxPages?: number; aiCredits?: number; maxPalettes?: number; popular?: boolean;
+    features?: string[]; maxPages?: number; aiCredits?: number; maxPalettes?: number;
+    maxDomains?: number; maxThemeChanges?: number; popular?: boolean;
   }>(req);
 
   const name = str(body.name, 60);
@@ -33,6 +34,9 @@ export const POST = route(async (req: Request) => {
   const aiCredits = Number(body.aiCredits ?? 0);
   // -1 keeps the whole palette library available on this plan.
   const maxPalettes = Number(body.maxPalettes ?? -1);
+  // -1 = unlimited for both. Defaults match the schema (@default(-1)).
+  const maxDomains = Number(body.maxDomains ?? -1);
+  const maxThemeChanges = Number(body.maxThemeChanges ?? -1);
 
   const plan = await db.plan.create({
     data: {
@@ -47,6 +51,8 @@ export const POST = route(async (req: Request) => {
       maxPages: Number.isFinite(maxPages) ? Math.trunc(maxPages) : 10,
       aiCredits: Number.isFinite(aiCredits) ? Math.trunc(aiCredits) : 0,
       maxPalettes: Number.isFinite(maxPalettes) ? Math.trunc(maxPalettes) : -1,
+      maxDomains: Number.isFinite(maxDomains) ? Math.trunc(maxDomains) : -1,
+      maxThemeChanges: Number.isFinite(maxThemeChanges) ? Math.trunc(maxThemeChanges) : -1,
       popular: Boolean(body.popular),
       sortOrder: (await db.plan.count()) + 1,
     },

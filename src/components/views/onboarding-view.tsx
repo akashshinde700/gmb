@@ -3,14 +3,15 @@
 // 3 steps: Business → Contact → Create. Nothing is chosen up front: design,
 // colours, services, photos and copy are generated for the business type and
 // edited later from the dashboard.
-// Draft persists to localStorage (DRAFT_KEY); cleared after success.
+// Draft persists to localStorage (ONBOARDING_DRAFT_KEY); cleared after success
+// and on sign-out — see src/lib/onboarding-draft.ts for why.
 import { useEffect, useState } from "react";
 import { useUnsavedChanges } from "@/hooks/use-unsaved-changes";
 import { useRouter } from "next/navigation";
 import { TRIAL_LABEL } from "@/lib/trial";
 import {
   AlertCircle, ArrowLeft, ArrowRight, Briefcase, Building2, Check, Globe, Loader2, LogOut, MapPin,
-  Phone, Plus, Rocket, Search, X,
+  Phone, Plus, Repeat, Rocket, Search, X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,14 +27,17 @@ import { api, ApiError } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 import type { AiSiteContent } from "@/lib/sections";
 import { isValidUpiId } from "@/lib/site-utils";
-import { fallbackServices, industryByKey, industryFor, isPresetCategory } from "@/lib/industries";
+import { clearOnboardingDraft, ONBOARDING_DRAFT_KEY } from "@/lib/onboarding-draft";
+import { industryFor, isPresetCategory } from "@/lib/industries";
+import { blueprintFor, designSeed } from "@/lib/blueprint";
 import { useApp } from "@/store/app-store";
 import type { BusinessWithMeta } from "@/store/app-store";
 
 // ---------------------------------------------------------------- constants
 
 // v2: the wizard shrank from 7 steps to 3, so older drafts are not restored.
-const DRAFT_KEY = "websetu_onboarding_draft_v2";
+// The key itself lives in lib so the store can clear it on sign-out.
+const DRAFT_KEY = ONBOARDING_DRAFT_KEY;
 const TOTAL_STEPS = 4;
 const STEP_LABELS = ["Business", "Services", "Contact", "Create"];
 
@@ -123,6 +127,13 @@ interface OnboardingForm {
   ai: AiSiteContent | null;
   /** Which business type the generated fields above belong to. */
   industryKey: string;
+  /**
+   * Every colour option for this trade, and the trade's full service list —
+   * both from lib/blueprint.ts, the same function the server runs, so what the
+   * customer picks here is what gets written and previewed.
+   */
+  paletteChoices: [string, string, string][];
+  suggestedServices: { name: string; description: string }[];
 }
 
 const DEFAULT_FORM: OnboardingForm = {
@@ -151,6 +162,8 @@ const DEFAULT_FORM: OnboardingForm = {
   tone: "professional",
   ai: null,
   industryKey: "",
+  paletteChoices: [],
+  suggestedServices: [],
 };
 
 const WIZARD_STYLES = `
@@ -261,8 +274,18 @@ export default function OnboardingView() {
   }
 
   /**
-   * Generate services and colours for the chosen business type. A trade the
-   * presets do not know is written by the AI instead.
+   * Generate services and colours for the chosen business type.
+   *
+   * Every choice comes from lib/blueprint.ts — the same function the server
+   * runs when it writes the site. That is deliberate: this used to set the
+   * colours to one fixed palette per trade and post them to the API, where they
+   * overrode the per-business palette the server had drawn. Two customers in
+   * one trade therefore got the identical website, and the per-business
+   * variation that already existed could never be reached. One seed, one
+   * function, one answer — and the customer can override the colours right here.
+   *
+   * A trade the presets do not know is still written by the AI first, and what
+   * the model returns feeds into the blueprint.
    */
   async function applyIndustry(cat: string) {
     const preset = industryFor(cat);
@@ -271,10 +294,10 @@ export default function OnboardingView() {
     if (form.industryKey === key) return;
     const vars = { name: form.name.trim(), city: form.city.trim(), category: cat };
 
-    let services = fallbackServices(cat, vars);
-    let look = preset;
     let ai: AiSiteContent | null = form.ai;
     if (!listed) {
+      // A trade the presets do not know has no services without the model, so
+      // this one has to finish before the step is usable.
       setIndustryLoading(true);
       try {
         const res = await api.post<{ content: AiSiteContent }>("/api/ai/generate", {
@@ -282,23 +305,42 @@ export default function OnboardingView() {
           description: form.description.trim(), tone: form.tone,
         });
         ai = res.content;
-        if (ai.services?.length) services = ai.services.map((x) => ({ name: x.name, description: x.description, icon: x.icon || "sparkles" }));
-        look = industryByKey(ai.industry) ?? preset;
       } catch {
-        // Generic services are still a usable start; the customer can edit them.
+        // The trade's own services are a usable start; the customer edits them.
       } finally {
         setIndustryLoading(false);
       }
+    } else {
+      // A listed trade already has a good, trade-correct list, so the wizard
+      // does not wait for the model: the step opens instantly on the blueprint
+      // and the model's own version — written around the owner's description —
+      // replaces it a moment later. Waiting here made "Next" feel broken on a
+      // slow model, and the customer can edit the list either way.
+      void tailorServicesInBackground(cat, vars);
     }
+
+    // Built from what the customer has typed so far, so the services are
+    // ordered towards what they actually described.
+    const blueprint = blueprintFor({
+      name: vars.name || "Your business",
+      city: vars.city,
+      category: cat,
+      industryKey: ai?.industry,
+      description: form.description.trim(),
+      seed: designSeed(vars.name || "your business", vars.city),
+    });
+    const services = ai?.services?.length ? ai.services : blueprint.services;
 
     setForm((f) => ({
       ...f,
       industryKey: key,
       ai,
-      services: services.map((x, i) => ({ id: `auto_${look.key}_${i}`, name: x.name, description: x.description })),
-      brandPrimary: look.palette[0],
-      brandSecondary: look.palette[1],
-      brandAccent: look.palette[2],
+      paletteChoices: blueprint.paletteChoices.map((c) => [c[0], c[1], c[2]] as [string, string, string]),
+      suggestedServices: blueprint.suggestedServices,
+      services: services.map((x, i) => ({ id: `auto_${blueprint.industryKey}_${i}`, name: x.name, description: x.description })),
+      brandPrimary: blueprint.palette[0],
+      brandSecondary: blueprint.palette[1],
+      brandAccent: blueprint.palette[2],
     }));
     toast({
       title: listed ? `Set up for ${preset.label}` : `Website content created for ${cat}`,
@@ -314,7 +356,7 @@ export default function OnboardingView() {
     setForm((f) => ({ ...f, [key]: value }));
   }
 
-  function addService(name: string) {
+  function addService(name: string, description = "") {
     const n = name.trim();
     if (!n) return;
     if (form.services.some((s) => s.name.toLowerCase() === n.toLowerCase())) {
@@ -323,8 +365,48 @@ export default function OnboardingView() {
     }
     setForm((f) => ({
       ...f,
-      services: [...f.services, { id: `own_${Date.now().toString(36)}`, name: n, description: "" }],
+      services: [...f.services, { id: `own_${Date.now().toString(36)}`, name: n, description }],
     }));
+  }
+
+  /**
+   * Ask the model for services written around what this owner described, and
+   * swap them in when they arrive.
+   *
+   * Only rows the wizard generated (`auto_…`) are replaced. Anything the
+   * customer typed themselves (`own_…`), or edited, is left exactly as it is —
+   * a response landing two seconds late must never undo their typing.
+   */
+  async function tailorServicesInBackground(cat: string, vars: { name: string; city: string; category: string }) {
+    setIndustryLoading(true);
+    try {
+      const res = await api.post<{ content: AiSiteContent; generated: boolean }>("/api/ai/generate", {
+        name: vars.name, category: cat, city: vars.city, services: [],
+        description: form.description.trim(), tone: form.tone,
+      });
+      // `generated: false` means the deterministic template came back — the
+      // blueprint version is already on screen and is at least as good.
+      if (!res.generated || !res.content?.services?.length) return;
+      const written = res.content.services.filter((x) => x.name).map((x) => ({ name: x.name, description: x.description ?? "" }));
+      setForm((f) => ({
+        ...f,
+        ai: res.content,
+        services: [
+          ...f.services.filter((x) => !x.id.startsWith("auto_")),
+          ...written.map((x, i) => ({ id: `auto_ai_${Date.now().toString(36)}_${i}`, name: x.name, description: x.description })),
+        ],
+      }));
+    } catch {
+      // Offline, rate-limited or out of credits: the blueprint list stands.
+    } finally {
+      setIndustryLoading(false);
+    }
+  }
+
+  /** Remove by name — used by the suggestion chips, which have no id. */
+  function removeServiceByName(name: string) {
+    const n = name.trim().toLowerCase();
+    setForm((f) => ({ ...f, services: f.services.filter((s) => s.name.trim().toLowerCase() !== n) }));
   }
 
   function updateService(id: string, field: "name" | "description", value: string) {
@@ -388,14 +470,16 @@ export default function OnboardingView() {
         mapsUrl: form.mapsUrl.trim(),
         ai,
         services: form.services.map((s) => ({ name: s.name, description: s.description })),
+        // The palette the customer chose (or the one we drew for them) travels
+        // with the form. The API used to accept these and nothing ever sent
+        // them, so the colours picked on this step never reached the site.
+        brandPrimary: form.brandPrimary,
+        brandSecondary: form.brandSecondary,
+        brandAccent: form.brandAccent,
       });
       const biz = res.business;
       setBusiness(biz);
-      try {
-        localStorage.removeItem(DRAFT_KEY);
-      } catch {
-        // ignore
-      }
+      clearOnboardingDraft();
       toast({
         title: "🎉 Your website is ready!",
         description: `${biz.name} was created — ${TRIAL_LABEL} started.`,
@@ -736,6 +820,39 @@ export default function OnboardingView() {
                   </div>
                 )}
 
+                {form.suggestedServices.length > 0 && (
+                  <div className="rounded-xl border border-dashed border-border bg-muted/30 p-3">
+                    <p className="text-xs font-semibold text-muted-foreground">
+                      Typical for {industryFor(finalCategory).label} — tap to add or remove
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {form.suggestedServices.map((sv) => {
+                        const picked = form.services.some(
+                          (x) => x.name.trim().toLowerCase() === sv.name.trim().toLowerCase(),
+                        );
+                        return (
+                          <button
+                            key={sv.name}
+                            type="button"
+                            aria-pressed={picked}
+                            title={sv.description}
+                            onClick={() => (picked ? removeServiceByName(sv.name) : addService(sv.name, sv.description))}
+                            className={cn(
+                              "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+                              picked
+                                ? "border-emerald-600 bg-emerald-600 text-white"
+                                : "border-border bg-card text-foreground hover:border-emerald-300 hover:bg-emerald-50",
+                            )}
+                          >
+                            {picked ? <Check className="h-3.5 w-3.5" aria-hidden="true" /> : <Plus className="h-3.5 w-3.5" aria-hidden="true" />}
+                            {sv.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
                 {form.services.length > 0 && (
                   <ul className="space-y-2">
                     {form.services.map((sv) => (
@@ -795,6 +912,60 @@ export default function OnboardingView() {
                   >
                     <Plus className="h-4 w-4" aria-hidden="true" /> Add
                   </Button>
+                </div>
+
+                {/* Colours. Every business starts on its own palette, drawn from the ones
+                    that suit its trade — so two shops in one trade do not look alike —
+                    and this is where the customer changes it if they want to. */}
+                <div className="rounded-xl border border-border p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-sm font-semibold text-foreground">Your colours</p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="rounded-lg"
+                      disabled={form.paletteChoices.length < 2}
+                      onClick={() => {
+                        const i = form.paletteChoices.findIndex((c) => c[0] === form.brandPrimary);
+                        const next = form.paletteChoices[(i + 1) % form.paletteChoices.length];
+                        setForm((f) => ({ ...f, brandPrimary: next[0], brandSecondary: next[1], brandAccent: next[2] }));
+                      }}
+                    >
+                      <Repeat className="h-3.5 w-3.5" aria-hidden="true" />
+                      Show me another
+                    </Button>
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Picked to suit {finalCategory || "your business"}. Tap any palette to use it.
+                  </p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {(form.paletteChoices.length
+                      ? form.paletteChoices
+                      : ([[form.brandPrimary, form.brandSecondary, form.brandAccent]] as [string, string, string][])
+                    ).map((c, i) => {
+                      const active = c[0].toLowerCase() === form.brandPrimary.toLowerCase();
+                      return (
+                        <button
+                          key={`${c[0]}-${i}`}
+                          type="button"
+                          aria-label={`Use palette ${i + 1}`}
+                          aria-pressed={active}
+                          onClick={() =>
+                            setForm((f) => ({ ...f, brandPrimary: c[0], brandSecondary: c[1], brandAccent: c[2] }))
+                          }
+                          className={cn(
+                            "flex h-9 w-16 overflow-hidden rounded-lg border-2 transition-transform hover:scale-105",
+                            active ? "border-emerald-600 ring-2 ring-emerald-200" : "border-border",
+                          )}
+                        >
+                          <span className="h-full flex-1" style={{ background: c[0] }} />
+                          <span className="h-full flex-1" style={{ background: c[1] }} />
+                          <span className="h-full flex-1" style={{ background: c[2] }} />
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
 
                 <p className="text-xs text-muted-foreground">

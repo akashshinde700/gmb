@@ -2,6 +2,7 @@
 // WebSetu — global app state (session, routing, notifications)
 import { create } from "zustand";
 import { api } from "@/lib/api-client";
+import { clearOnboardingDraft } from "@/lib/onboarding-draft";
 import type { AppearanceAllowance, Business, Plan, SessionUser, Subscription, WebsiteData } from "@/lib/types";
 import { DEFAULT_PLATFORM_THEME, type PlatformTheme } from "@/lib/platform-theme";
 
@@ -197,6 +198,9 @@ export const useApp = create<AppState>((set, get) => ({
     // request is in flight; the cookie is httpOnly, so only the server can
     // actually remove it.
     set({ user: null, business: null, view: "home", unreadNotifications: 0 });
+    // A half-filled onboarding draft is business PII sitting in localStorage:
+    // signing out is the customer saying "not on this device any more".
+    clearOnboardingDraft();
     // Clear the session before navigating, not alongside it. The cookie is
     // httpOnly, so only the server can remove it — and the landing page is
     // server-rendered, so leaving while the request is still in flight renders
@@ -210,6 +214,7 @@ export const useApp = create<AppState>((set, get) => ({
   logoutEverywhere: async () => {
     await api.post("/api/auth/logout", { everywhere: true });
     set({ user: null, business: null, view: "home", unreadNotifications: 0 });
+    clearOnboardingDraft();
     navigate?.("/");
   },
 }));

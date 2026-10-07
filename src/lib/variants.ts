@@ -9,6 +9,8 @@
 // The industry preset still decides what is *appropriate* for the trade; this
 // decides which of several appropriate options that business gets.
 
+import { STITCH_DESIGNS } from "@/lib/stitch-designs";
+
 export type Palette = readonly [string, string, string];
 
 /**
@@ -307,8 +309,22 @@ const SHARED_PALETTES: readonly Palette[] = [
 export function variantsFor(key: string): IndustryVariants {
   const base = VARIANTS[key] ?? VARIANTS.general;
   const seen = new Set(base.palettes.map((p) => p.join()));
+  const add = (items: readonly Palette[]) =>
+    items.filter((p) => {
+      const k = p.join();
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
   return {
     ...base,
-    palettes: [...base.palettes, ...SHARED_PALETTES.filter((p) => !seen.has(p.join()))],
+    palettes: [
+      ...base.palettes,
+      // Designs generated from Google Stitch (tools/stitch-palettes.mjs), which
+      // sit right behind the trade's own colours — so a business can be seeded
+      // on one of them and the picker offers them next to the rest.
+      ...add(STITCH_DESIGNS[key]?.map((d) => d.colors) ?? []),
+      ...add(SHARED_PALETTES),
+    ],
   };
 }

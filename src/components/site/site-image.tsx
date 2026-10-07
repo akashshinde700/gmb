@@ -27,6 +27,12 @@ export interface SiteImageProps {
   sizes?: string;
   /** Above the fold — skips lazy loading and raises fetch priority. */
   priority?: boolean;
+  /**
+   * Inline style for the picture itself. Used by the Design DNA's image
+   * treatment (a slight desaturation, say) — a filter cannot be expressed as a
+   * class here because the value comes from the site's own theme at runtime.
+   */
+  imgStyle?: React.CSSProperties;
 }
 
 /** Same-origin paths are the ones the optimiser is allowed to touch. */
@@ -41,6 +47,7 @@ export default function SiteImage({
   className = "",
   sizes = "100vw",
   priority = false,
+  imgStyle,
 }: SiteImageProps) {
   if (!src) return null;
 
@@ -56,6 +63,7 @@ export default function SiteImage({
           src={src}
           alt={alt}
           className={`absolute inset-0 h-full w-full ${className}`.trim()}
+          style={imgStyle}
           loading={priority ? "eager" : "lazy"}
           decoding="async"
           {...(priority ? { fetchPriority: "high" as const } : {})}
@@ -72,6 +80,7 @@ export default function SiteImage({
         fill
         sizes={sizes}
         className={className}
+        style={imgStyle}
         priority={priority}
         // Uploads are content-addressed by a generated name and never rewritten,
         // so a cached derivative can never go stale.

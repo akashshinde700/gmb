@@ -9,7 +9,11 @@ import { tenantBaseUrl } from "@/lib/site-utils";
 import { starterFaqs, starterPosts } from "@/lib/starter-content";
 import { fallbackServices, fillCopy, industryServices, isPresetCategory, resolveIndustry } from "@/lib/industries";
 import { fetchStockPhotos, searchesFor } from "@/lib/stock-images";
-import { pick, pickN, stream, variantsFor } from "@/lib/variants";
+import { blueprintFor, resolveColors, designSeed } from "@/lib/blueprint";
+import { bestCandidate, profileFromSite, uniquenessPercent, type SiteProfile } from "@/lib/uniqueness";
+import { checkSite } from "@/lib/site-quality";
+import { posterUrl } from "@/lib/site-art";
+import { rng, seedFrom } from "@/lib/variants";
 import { SITE_ICON_KEYS } from "@/lib/site-icon-keys";
 
 /** POST /api/onboarding — create the tenant business + generated website + free trial */
@@ -47,15 +51,11 @@ export const POST = route(async (req: Request) => {
 
   // The wizard makes services mandatory but the payload was being dropped, so
   // every new site opened with an empty Services section.
-  // The slug is unique per business, so it is the seed that keeps two shops in
-  // the same trade from getting the same colours, services and photos.
   const slug = await uniqueSlug(name);
-  const draw = (label: string) => stream(slug, label);
 
   // The AI may have mapped an unlisted trade ("Event DJ") to the closest
   // preset; an unknown key from the client is simply ignored.
   const preset = resolveIndustry(category, ai?.industry);
-  const variants = variantsFor(preset.key);
   const vars = { name, city, category };
   const aiServices = (Array.isArray(ai?.services) ? ai.services : [])
     .map((x) => ({
@@ -67,12 +67,25 @@ export const POST = route(async (req: Request) => {
   // A trade the wizard lists uses its preset; a typed-in one uses what the AI
   // wrote for it, or a fallback that leads with the trade's own name.
   const presetServices = isPresetCategory(category)
-    ? pickN(draw("services"), industryServices(category, vars), 6)
+    ? industryServices(category, vars)
     : aiServices.length
     ? aiServices.map((x) => ({ ...x, icon: x.icon || preset.motif.icons[0] || "sparkles" }))
     : fallbackServices(category, vars);
+
+  /**
+   * What this business gets, from one place.
+   *
+   * The wizard builds the same blueprint from the same seed to show the
+   * customer their colours and services, so the preview and the site that gets
+   * written cannot disagree — the divergence between two separate draws here is
+   * exactly what made every business in a trade come out identical.
+   */
+
   const iconFor = (svcName: string) =>
-    presetServices.find((p) => p.name.toLowerCase() === svcName.toLowerCase())?.icon ?? "";
+    presetServices.find((p) => p.name.toLowerCase() === svcName.toLowerCase())?.icon ??
+    aiServices.find((p) => p.name.toLowerCase() === svcName.toLowerCase())?.icon ??
+    "";
+
   const submitted = (Array.isArray(body.services) ? body.services : [])
     .map((raw) => {
       const row = (raw || {}) as Record<string, unknown>;
@@ -80,15 +93,52 @@ export const POST = route(async (req: Request) => {
     })
     .filter((sv) => sv.name)
     .slice(0, 24);
-  // An empty list still gets a full, industry-appropriate services section.
-  const services = (submitted.length ? submitted : presetServices).map((sv) => ({
-    ...sv,
-    icon: iconFor(sv.name) || preset.motif.icons[0] || "sparkles",
+  // The sites already built in this trade. They decide two things below: which
+  // palette this business starts on (so it is not the same as the last one),
+  // and which of three candidate genomes is genuinely unlike the rest.
+  const tradeMates = await db.business.findMany({
+    where: { category },
+    select: {
+      brandPrimary: true, brandSecondary: true, brandAccent: true,
+      website: { select: { themeJson: true, sectionsJson: true } },
+    },
+    take: 500,
+  });
+  const takenPalettes = tradeMates.map((b) => `${b.brandPrimary},${b.brandSecondary},${b.brandAccent}`);
+
+  // Three genomes, from which the most distinct is kept (see the comparison
+  // below). The first one also supplies the services and search terms used
+  // before the winner is known.
+  const candidates = [0, 1, 2].map((attempt) =>
+    blueprintFor({
+      name,
+      city,
+      category,
+      industryKey: ai?.industry,
+      description,
+      taken: takenPalettes,
+      seed: designSeed(name, city),
+      attempt,
+    }),
+  );
+  const firstDraft = candidates[0];
+
+  // An empty list still gets a full, industry-appropriate services section —
+  // the blueprint's list for this business, which is not the same six rows the
+  // next business in the trade will get.
+  const services = (
+    submitted.length ? submitted : firstDraft.services.length ? firstDraft.services : presetServices
+  ).map((sv): { name: string; description: string; icon: string } => ({
+    name: sv.name,
+    description: sv.description,
+    icon: (("icon" in sv && typeof sv.icon === "string" && sv.icon) || "") || iconFor(sv.name) || preset.motif.icons[0] || "sparkles",
   }));
   const serviceNames = services.map((sv) => sv.name);
 
-
-  // Brand colors follow the chosen template (or defaults)
+  // Brand colours follow what the customer chose, else this business's own
+  // blueprint. A chosen template can still contribute layout below, but it no
+  // longer decides colours: one template shared by two customers is another way
+  // for two sites to come out identical.
   const template = templateId ? await db.template.findUnique({ where: { id: templateId } }) : null;
   const templateTheme = template ? (JSON.parse(template.themeJson || "{}") as Record<string, unknown>) : {};
 
@@ -99,33 +149,147 @@ export const POST = route(async (req: Request) => {
     throw new HttpError("No subscription plans are configured yet. Please contact support.", 503);
   }
 
-  // The colours the customer saw in the wizard (pre-filled from their
-  // industry) win; then the template's; then the industry palette.
-  const hex = (v: unknown) => (typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v) ? v : "");
-  const palette = pick(draw("palette"), variants.palettes);
-  const brandPrimary = hex(body.brandPrimary) || hex(templateTheme.primary) || palette[0];
-  const brandSecondary = hex(body.brandSecondary) || hex(templateTheme.secondary) || palette[1];
-  const brandAccent = hex(body.brandAccent) || hex(templateTheme.accent) || palette[2];
+  // What the customer chose in the wizard, kept raw until the genome is chosen
+  // (below): their pick always wins, and anything they did not choose comes
+  // from the winning candidate's own palette.
+  const submittedColors = { primary: body.brandPrimary, secondary: body.brandSecondary, accent: body.brandAccent };
+
   const mapsUrl = str(body.mapsUrl, 1000);
   const trialEnds = trialEndsAt();
 
   // No photo of their own yet: start them with real photos of their trade —
   // a cover, one beside the About text, and a gallery — which they can swap.
+  // Search terms put the owner's own words first — their description and the
+  // service names they chose — before the trade's generic queries. Two
+  // jewellers who described different specialities then search for different
+  // things, instead of both getting "jewellery".
   const searches = searchesFor({
     category,
     description,
-    curated: [pick(draw("imgq"), variants.imageQueries), ...variants.imageQueries, "business"],
+    services,
+    curated: [...firstDraft.imageQueries.slice(0, 2), "business"],
   });
   const suggested = str(ai?.imageQuery, 60).replace(/[^\w\s-]/g, "");
-  const photoPage = 1 + Math.floor(draw("page")() * 5);
+  const photoPage = 1 + Math.floor(rng(seedFrom(`${firstDraft.seed}::imgpage`))() * 5);
   const stock = coverUrl ? [] : await fetchStockPhotos(searches[0], 8, photoPage, [...searches.slice(1), suggested], slug);
-  // The hero keeps its animated industry scene unless the OWNER gave a photo:
-  // a stock picture in the hero makes every site in a trade look alike, while
-  // the scene is what reads as designed. Stock photos go to About and Gallery,
-  // and the first one still backs link previews.
-  const finalCover = coverUrl || stock[0]?.url || "";
+
+  // The hero always keeps its animated scene unless the OWNER uploaded a photo.
+  // Putting a stock picture there was what made every site in a trade open with
+  // the same image; stock photos belong in About and the gallery, where they
+  // are one tile among several rather than the whole first impression.
+  const heroImage = coverUrl;
+  // A brand-new site with no photos still needs a cover for link previews, the
+  // dashboard card and the OG tags — its own generated poster, which is
+  // different for every business and matches the chosen palette.
+  const finalCover = coverUrl || posterUrl(slug);
   const aboutImage = stock[0]?.url;
-  const galleryPhotos = stock.slice(1);
+  // Gallery: real photos first, then generated posters of this business so a
+  // thin photo search never leaves the section empty or repeated.
+  const galleryPhotos = [
+    ...stock.slice(1),
+    ...Array.from({ length: Math.max(0, 3 - stock.slice(1).length) }, (_, i) => ({
+      url: posterUrl(slug, "square", i + 1),
+      alt: `${name} — ${category} in ${city || "India"}`.trim(),
+    })),
+  ];
+
+  // The copy is written around the services the customer actually kept: the
+  // model's original list must not reappear in the hero subheading after they
+  // deleted or renamed rows on the services step.
+  const siteAi: AiSiteContent | null = ai ? { ...ai, services } : null;
+
+  // A first draft, built from the first candidate. Its only job is to let the
+  // candidates be compared like-for-like (same copy, same photos, different
+  // genome); the winner is rebuilt properly a few lines below.
+  const draftSite = generateSite({
+    business: {
+      name, category, tagline, description, city, phone, whatsapp, email, address,
+      establishedYear: str(body.establishedYear, 4),
+      brandPrimary: firstDraft.palette[0], brandSecondary: firstDraft.palette[1], brandAccent: firstDraft.palette[2],
+      coverUrl, mapsUrl,
+      state: str(body.state, 100),
+      pincode: str(body.pincode, 10),
+    },
+    ai: siteAi,
+    industry: preset.key,
+    aboutImage,
+    heroImage,
+    blueprint: firstDraft,
+    seed: firstDraft.seed,
+  });
+
+  // Business + website + trial + welcome notice are one unit: a partial
+  // onboarding left an account stuck with a business but no website to edit.
+  /* --- pick the most distinct genome, then build the site from it ---------- */
+
+  const existingProfiles: SiteProfile[] = tradeMates
+    .map((b) => {
+      try {
+        const theme = b.website ? (JSON.parse(b.website.themeJson || "{}") as Record<string, never>) : {};
+        const sections = b.website
+          ? (JSON.parse(b.website.sectionsJson || "[]") as { type: string; content?: Record<string, unknown>; visible?: boolean }[])
+          : [];
+        return profileFromSite({
+          brandPrimary: b.brandPrimary,
+          brandSecondary: b.brandSecondary,
+          brandAccent: b.brandAccent,
+          theme,
+          sections,
+        });
+      } catch {
+        // A row with unreadable JSON must not stop a signup.
+        return null;
+      }
+    })
+    .filter((x): x is SiteProfile => x !== null);
+
+  /** What a candidate would ship with, the customer's own choice included. */
+  const coloursOf = (candidate: (typeof candidates)[number]) => resolveColors(submittedColors, candidate);
+
+  const profileOf = (candidate: (typeof candidates)[number]): SiteProfile => {
+    const colours = coloursOf(candidate);
+    // Only the genome differs between candidates, so the draft's copy and
+    // photos are used for all of them — the comparison is about design.
+    const sections = draftSite.sections.map((sec) => {
+      const planned = candidate.dna.sectionPlan.find((c) => c.type === sec.type);
+      return {
+        type: sec.type,
+        visible: sec.visible,
+        content: { visible: sec.visible, variant: planned?.variant ?? sec.content?.variant },
+      };
+    });
+    return profileFromSite({
+      brandPrimary: colours.primary,
+      brandSecondary: colours.secondary,
+      brandAccent: colours.accent,
+      theme: {
+        ...draftSite.theme,
+        font: candidate.look.font,
+        radius: candidate.look.radius,
+        cardStyle: candidate.look.cardStyle,
+        shadow: candidate.dna.design.shadow,
+        spacing: candidate.dna.design.spacing,
+        button: candidate.dna.design.button,
+        header: candidate.dna.design.header,
+        footer: candidate.dna.design.footer,
+        imageTreatment: candidate.dna.design.imageTreatment,
+        motion: candidate.dna.motion,
+        ...((templateTheme.layout as object) || {}),
+      },
+      sections,
+      services,
+    });
+  };
+
+  const picked = bestCandidate(candidates, profileOf, existingProfiles);
+
+  // The winner is rebuilt properly — its own colours, section order and copy.
+  const blueprint = picked.chosen;
+  const selectedColors = coloursOf(blueprint);
+  const brandPrimary = selectedColors.primary;
+  const brandSecondary = selectedColors.secondary;
+  const brandAccent = selectedColors.accent;
+  const uniqueness = uniquenessPercent(picked.score);
 
   const site = generateSite({
     business: {
@@ -135,11 +299,38 @@ export const POST = route(async (req: Request) => {
       state: str(body.state, 100),
       pincode: str(body.pincode, 10),
     },
-    ai,
+    ai: siteAi,
     industry: preset.key,
     aboutImage,
-    seed: slug,
+    heroImage,
+    blueprint,
+    seed: blueprint.seed,
   });
+
+  // The site is scored before it is saved: an unreadable headline, a page with
+  // no way to make contact or a missing meta description are all detectable
+  // without a model, and the owner is shown exactly what to fix rather than
+  // being handed a site that only looks finished.
+  const quality = checkSite({
+    sections: site.sections,
+    theme: site.theme,
+    colors: { primary: brandPrimary, secondary: brandSecondary, accent: brandAccent },
+    seoTitle: site.seoTitle,
+    seoDescription: site.seoDescription,
+    business: { phone, whatsapp, email, city, description },
+    services,
+    galleryCount: galleryPhotos.length,
+    // The score is shown with the other eight, so the uniqueness the director
+    // just measured is part of it rather than a number on a different screen.
+    uniqueness,
+    // The same FAQ rows the transaction is about to write, so the checker
+    // scores what the site will actually contain.
+    faqCount: starterFaqs({
+      name, category, city, phone, services: serviceNames, ai,
+      industryFaqs: preset.faqs.map((f) => ({ question: fillCopy(f.question, vars), answer: fillCopy(f.answer, vars) })),
+    }).length,
+  });
+  const siteWithQuality = { ...site, theme: { ...site.theme, quality } };
 
   // Publish straight away when nothing is missing. The wizard already asked for
   // everything the publish rules need, and the customer just pressed a button
@@ -159,8 +350,7 @@ export const POST = route(async (req: Request) => {
     },
   );
 
-  // Business + website + trial + welcome notice are one unit: a partial
-  // onboarding left an account stuck with a business but no website to edit.
+
   const businessId = await db.$transaction(async (tx) => {
     const business = await tx.business.create({
       data: {
@@ -202,8 +392,15 @@ export const POST = route(async (req: Request) => {
         seoTitle: site.seoTitle,
         seoDescription: site.seoDescription,
         keywords: site.keywords,
-        themeJson: JSON.stringify({ ...site.theme, ...((templateTheme.layout as object) || {}) }),
-        sectionsJson: JSON.stringify(site.sections),
+        // Uniqueness is stored with the genome so the owner (and the dashboard)
+        // can see how different this site is from the rest of its trade, and so
+        // a later regeneration knows what to beat.
+        themeJson: JSON.stringify({
+          ...siteWithQuality.theme,
+          ...((templateTheme.layout as object) || {}),
+          uniqueness,
+        }),
+        sectionsJson: JSON.stringify(siteWithQuality.sections),
       },
     });
 

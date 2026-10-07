@@ -15,8 +15,10 @@
     "test:race": "node tests/coupon-race.mjs",
     "seed": "npx --yes tsx prisma/seed.ts",
     "test:palettes": "node tests/palettes.mjs",
-    "test:all": "node --experimental-strip-types tests/hours.test.mts && node --experimental-strip-types tests/expiry.test.mts && node --experimental-strip-types tests/phone.test.mts && node --experimental-strip-types tests/domains.test.mts && node --experimental-strip-types tests/billing.test.mts && node --experimental-strip-types tests/llm.test.mts && node --experimental-strip-types tests/appearance.test.mts && node --experimental-strip-types tests/publish.test.mts && node --experimental-strip-types tests/section-editor.test.mts && node tests/platform.mjs && node tests/palettes.mjs && node tests/admin-customers.mjs && node tests/coupon-race.mjs && node tests/api-smoke.mjs",
+    "test:all": "node --experimental-strip-types tests/hours.test.mts && node --experimental-strip-types tests/expiry.test.mts && node --experimental-strip-types tests/phone.test.mts && node --experimental-strip-types tests/domains.test.mts && node --experimental-strip-types tests/billing.test.mts && node --experimental-strip-types tests/llm.test.mts && node --experimental-strip-types tests/appearance.test.mts && node --experimental-strip-types tests/publish.test.mts && node --experimental-strip-types --import ./tests/path-alias.mjs tests/section-editor.test.mts && node --experimental-strip-types --import ./tests/path-alias.mjs tests/design.test.mts && node tests/platform.mjs && node tests/palettes.mjs && node tests/admin-customers.mjs && node tests/distinct-sites.mjs && node tests/usage-race.mjs && node tests/coupon-race.mjs && node tests/api-smoke.mjs",
     "test:admin": "node tests/admin-customers.mjs",
+    "test:distinct": "node tests/distinct-sites.mjs",
+    "test:usage": "node tests/usage-race.mjs",
     "test:hours": "node --experimental-strip-types tests/hours.test.mts",
     "test:expiry": "node --experimental-strip-types tests/expiry.test.mts",
     "test:platform": "node tests/platform.mjs",
@@ -27,7 +29,7 @@
     "sms:check": "node scripts/sms-check.mjs",
     "test:phone": "node --experimental-strip-types tests/phone.test.mts",
     "test:publish": "node --experimental-strip-types tests/publish.test.mts",
-    "test:sections": "node --experimental-strip-types tests/section-editor.test.mts",
+    "test:sections": "node --experimental-strip-types --import ./tests/path-alias.mjs tests/section-editor.test.mts",
     "test:domains": "node --experimental-strip-types tests/domains.test.mts",
     "test:billing": "node --experimental-strip-types tests/billing.test.mts",
     "backfill:blog": "node scripts/backfill-blog-section.mjs",
@@ -39,7 +41,8 @@
     "server:inspect": "python scripts/server-inspect.py",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
-    "test:e2e:report": "playwright show-report"
+    "test:e2e:report": "playwright show-report",
+    "test:design": "node --experimental-strip-types --import ./tests/path-alias.mjs tests/design.test.mts"
   },
   "dependencies": {
     "@prisma/client": "^6.11.1",

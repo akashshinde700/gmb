@@ -29,6 +29,55 @@ const FREE_AI_CREDITS = 5;
 const AI_PERIOD_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
+ * Claim one generation from the tenant's monthly allowance.
+ *
+ * The allowance used to be read, compared and then incremented in a separate
+ * write, so two requests arriving together could both pass the check and spend
+ * one credit more than the plan includes — the same shape billing.ts already
+ * avoids for coupon redemptions. The claim is therefore a conditional
+ * `updateMany`: it increments only while the counter is still below the
+ * allowance (or while the period row is still the one that was read, so two
+ * requests cannot both roll the month over). A losing writer matches zero rows,
+ * re-reads once and either retries against the count as it is now or reports
+ * the exhausted allowance honestly.
+ *
+ * Returns false when the allowance is genuinely used up.
+ */
+async function reserveAiCredit(businessId: string, allowance: number): Promise<boolean> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const row = await db.business.findUnique({
+      where: { id: businessId },
+      select: { aiUsedCount: true, aiPeriodStart: true },
+    });
+    if (!row) return false;
+
+    const periodExpired = Date.now() - row.aiPeriodStart.getTime() >= AI_PERIOD_MS;
+    const claim = periodExpired
+      ? // Guarded on the period start that was read: whoever wins resets the
+        // counter, and the loser's claim matches nothing instead of adding to
+        // the new period's count.
+        await db.business.updateMany({
+          where: { id: businessId, aiPeriodStart: row.aiPeriodStart },
+          data: { aiUsedCount: 1, aiPeriodStart: new Date() },
+        })
+      : await db.business.updateMany({
+          where: {
+            id: businessId,
+            // Negative means unlimited: the counter is still incremented (it is
+            // shown to admins as usage) but never blocks.
+            ...(allowance >= 0
+              ? { aiUsedCount: { lt: allowance } }
+              : { aiUsedCount: row.aiUsedCount }),
+          },
+          data: { aiUsedCount: { increment: 1 } },
+        });
+
+    if (claim.count > 0) return true;
+  }
+  return false;
+}
+
+/**
  * POST /api/ai/generate — AI website content generator (USP feature).
  * Generates hero, about, stats, why-us, FAQs and SEO meta from minimal business info.
  * Falls back to smart template content if the AI service is unavailable.
@@ -62,25 +111,19 @@ export const POST = route(async (req: Request) => {
   // template, so charging a credit for it would bill the customer for nothing.
   const providerReady = activeProvider() !== "none";
 
+  // Set when a credit has actually been claimed, so it can be given back if the
+  // model fails and the wizard is served template copy instead (see below).
+  let creditReserved = false;
+
   if (business && providerReady) {
     const allowance = business.subscription?.plan?.aiCredits ?? FREE_AI_CREDITS;
-    const periodExpired = Date.now() - business.aiPeriodStart.getTime() >= AI_PERIOD_MS;
-    const used = periodExpired ? 0 : business.aiUsedCount;
-
-    // -1 (or any negative allowance) means unlimited on that plan.
-    if (allowance >= 0 && used >= allowance) {
+    if (!(await reserveAiCredit(business.id, allowance))) {
       throw new HttpError(
         `You have used all ${allowance} AI generations included in your plan this month. Upgrade for more.`,
         402,
       );
     }
-
-    await db.business.update({
-      where: { id: business.id },
-      data: periodExpired
-        ? { aiUsedCount: 1, aiPeriodStart: new Date() }
-        : { aiUsedCount: { increment: 1 } },
-    });
+    creditReserved = true;
   }
 
   const tone = str(body.tone, 40) || "professional";
@@ -137,6 +180,19 @@ Return this exact JSON structure:
     ? await generateJson<AiSiteContent>({ system: systemPrompt, prompt: userPrompt, maxTokens: 2400 })
     : null;
   const content: AiSiteContent | null = generated?.content ? cleanAi(generated.content) : null;
+
+  // A configured provider can still fail — timeout, quota, unparseable output —
+  // and every one of those paths lands here as `null` and is served the
+  // deterministic template below. The credit was already claimed by then, so
+  // give it back: charging a customer one of five monthly generations for
+  // template copy they could have had with no AI configured at all is billing
+  // for nothing. The refund is best-effort; a failed write must not fail the
+  // response the customer is waiting for.
+  if (creditReserved && !content && business) {
+    await db.business
+      .update({ where: { id: business.id }, data: { aiUsedCount: { decrement: 1 } } })
+      .catch((e) => console.error("[ai] credit refund failed:", e));
+  }
 
   // Deterministic fallback — trade-specific copy from the industry preset.
   const serviceList = services.length ? services : preset.services.map((s) => s.name);

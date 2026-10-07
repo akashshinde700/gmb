@@ -1972,12 +1972,17 @@ function CustomerPaletteBody({
 interface PlanForm {
   name: string; tagline: string; priceMonthly: string; priceYearly: string;
   features: string; maxPages: string; aiCredits: string; maxPalettes: string;
+  maxDomains: string; maxThemeChanges: string;
   popular: boolean; active: boolean;
 }
 
 const EMPTY_PLAN: PlanForm = {
   name: "", tagline: "", priceMonthly: "499", priceYearly: "4999", features: "",
-  maxPages: "10", aiCredits: "20", maxPalettes: "-1", popular: false, active: true,
+  maxPages: "10", aiCredits: "20", maxPalettes: "-1",
+  // Both default to unlimited: metering a feature nobody asked to meter is a
+  // support ticket, not a business model.
+  maxDomains: "-1", maxThemeChanges: "-1",
+  popular: false, active: true,
 };
 
 function PlansTab() {
@@ -2097,6 +2102,11 @@ function PlansTab() {
                 <p className="mt-3 text-xs text-muted-foreground">
                   {p.maxPages === -1 ? "Unlimited pages" : `${p.maxPages} pages`} · {p.aiCredits} AI credits/mo ·{" "}
                   {(p.maxPalettes ?? -1) === -1 ? "all palettes" : `${p.maxPalettes} palettes`}
+                  {/* Only mentioned when a plan actually meters them: "unlimited
+                      design changes" on every card is noise, and the customer
+                      only meets the limit when it is a real number. */}
+                  {(p.maxThemeChanges ?? -1) >= 0 ? ` · ${p.maxThemeChanges} design changes` : ""}
+                  {(p.maxDomains ?? -1) >= 0 ? ` · ${p.maxDomains} custom domains` : ""}
                 </p>
               </CardContent>
               <div className="flex justify-end gap-2 border-t border-border px-4 py-3">
@@ -2179,6 +2189,8 @@ function PlanFormBody({
           maxPages: String(plan.maxPages),
           aiCredits: String(plan.aiCredits),
           maxPalettes: String(plan.maxPalettes ?? -1),
+          maxDomains: String(plan.maxDomains ?? -1),
+          maxThemeChanges: String(plan.maxThemeChanges ?? -1),
           popular: plan.popular,
           active: plan.active,
         }
@@ -2208,6 +2220,8 @@ function PlanFormBody({
       maxPages: Math.trunc(Number(form.maxPages)) || 0,
       aiCredits: Math.trunc(Number(form.aiCredits)) || 0,
       maxPalettes: Number.isFinite(Number(form.maxPalettes)) ? Math.trunc(Number(form.maxPalettes)) : -1,
+      maxDomains: Number.isFinite(Number(form.maxDomains)) ? Math.trunc(Number(form.maxDomains)) : -1,
+      maxThemeChanges: Number.isFinite(Number(form.maxThemeChanges)) ? Math.trunc(Number(form.maxThemeChanges)) : -1,
       popular: form.popular,
       ...(isEdit ? { active: form.active } : {}),
     };
@@ -2312,6 +2326,30 @@ function PlanFormBody({
               />
               <p className="text-xs text-muted-foreground">
                 How many palettes this plan may pick from. -1 means the whole library.
+              </p>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="plan-design-changes">Design changes</Label>
+              <Input
+                id="plan-design-changes"
+                type="number"
+                value={form.maxThemeChanges}
+                onChange={(e) => set("maxThemeChanges", e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Restyles included before the customer is asked to upgrade. -1 means unlimited.
+              </p>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="plan-domains">Custom domains</Label>
+              <Input
+                id="plan-domains"
+                type="number"
+                value={form.maxDomains}
+                onChange={(e) => set("maxDomains", e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Domains bundled into this plan; paid add-on credits are added on top. -1 means unlimited.
               </p>
             </div>
           </div>

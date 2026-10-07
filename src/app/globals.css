@@ -213,6 +213,11 @@
 /* Content arriving after a skeleton, or a tab's panel appearing. Kept to a
    fade plus a few pixels: a large slide reads as the page moving, not as
    content settling. */
+@keyframes ws-fade-in {
+  from { opacity: 0 }
+  to { opacity: 1 }
+}
+
 @keyframes ws-enter {
   from { opacity: 0; transform: translateY(4px); }
   to   { opacity: 1; transform: none; }
@@ -428,5 +433,86 @@
   /* The hero scenes are pure decoration; with motion off they are just noise. */
   .ws-scene {
     display: none !important;
+  }
+}
+
+/* The hero's moving band. One copy of the chips sits beside an identical copy,
+   and the pair slides by exactly half its own width — so the loop is seamless
+   without measuring anything in JavaScript. Readers who prefer less motion get
+   the same band standing still (the global reduced-motion rule above). */
+@keyframes ws-marquee {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(-50%, 0, 0); }
+}
+
+.ws-marquee-wrap {
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent);
+}
+
+.ws-marquee {
+  display: flex;
+  width: max-content;
+  animation: ws-marquee 34s linear infinite;
+}
+
+.ws-marquee:hover { animation-play-state: paused; }
+
+/* ---------------------------------------------------------------- motion DNA
+   The generator gives every business an animation intensity (0–4, capped at 3
+   in the renderer) and the site carries it as data-anim. These rules let one
+   stylesheet serve all of them instead of the generator fetching a different
+   one per site:
+
+     0–1  calm: reveals become a short fade, the moving extras stop
+     2    the default every existing site already gets
+     3    expressive: a little more travel and a longer, slower reveal
+
+   The moving band and the (optional) floating shapes are the first things to go
+   as intensity drops, because they are decoration on top of content, and the
+   reveal stays in every case so a section never appears half-built. */
+.site-renderer[data-anim="0"] .ws-marquee,
+.site-renderer[data-anim="1"] .ws-marquee,
+.site-renderer[data-anim="0"] .ws-float,
+.site-renderer[data-anim="1"] .ws-float {
+  animation: none !important;
+}
+
+.site-renderer[data-anim="0"] .ws-reveal,
+.site-renderer[data-anim="1"] .ws-reveal {
+  animation-name: ws-fade-in !important;
+  animation-duration: 420ms !important;
+}
+
+/* A genome that asked for almost no motion freezes the hero scene rather than
+   hiding it: the shapes are part of the hero's look, they simply stop moving,
+   and a stopped element costs the phone nothing to composite. */
+.site-renderer[data-anim="0"] .ws-scene *,
+.site-renderer[data-anim="1"] .ws-scene * {
+  animation: none !important;
+}
+
+.site-renderer[data-anim="3"] .ws-shine {
+  animation-duration: 2.2s;
+}
+
+/* A gentle float used by expressive layouts. Transform-only, so it never
+   triggers layout, and it is switched off entirely below intensity 2. */
+@keyframes ws-float {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  50% { transform: translate3d(0, -10px, 0); }
+}
+
+.ws-float {
+  animation: ws-float 7s ease-in-out infinite;
+}
+
+/* Phones: one notch down, whatever the genome asked for. The animation is
+   decided once, at generation, and this only ever reduces it. */
+@media (max-width: 640px) {
+  .site-renderer[data-anim="3"] .ws-float,
+  .site-renderer[data-anim="2"] .ws-float {
+    animation: none;
   }
 }

@@ -60,6 +60,77 @@ export type SectionType =
   | "hero" | "about" | "stats" | "services" | "products" | "whyUs"
   | "gallery" | "testimonials" | "faq" | "blog" | "cta" | "payment" | "contact" | "hours";
 
+/**
+ * The genome behind a generated site, kept with the site itself.
+ *
+ * It is what makes a later change possible without rebuilding the whole page:
+ * the section plan says which arrangement each section uses, and the business
+ * genome says what the design was trying to be, so one section can be re-rolled
+ * or re-written on its own.
+ *
+ * The shapes are repeated here rather than imported from lib/design-dna.ts,
+ * which imports this file — the two must not depend on each other in a circle.
+ */
+export interface SiteDna {
+  /** The stable seed every design choice was drawn from. */
+  seed?: string;
+  /** Human-readable design direction, e.g. "Premium editorial". */
+  styleName: string;
+  /** How the animation pack reads to a person, e.g. "Confident, unhurried motion". */
+  motionLabel: string;
+  business: {
+    industry: string;
+    subType: string;
+    audience: string;
+    personality: string;
+    positioning: string;
+    tone: string;
+  };
+  sectionPlan: { type: SectionType; variant: string }[];
+  /**
+   * What the site is for, decided by the director before anything was drawn:
+   * a clinic earns appointments, a manufacturer earns quotation requests.
+   */
+  goal?: {
+    key: string;
+    label: string;
+    primary: string;
+    secondary: string | null;
+    action: string;
+  };
+  /**
+   * The director's brief, stage by stage — business understood, audience,
+   * positioning, goal, design direction, page structure, components, content
+   * and animation. Shown to the owner, because a person who can read the plan
+   * can disagree with one line of it instead of disliking the whole site.
+   */
+  stages?: { name: string; detail: string }[];
+}
+
+/**
+ * What the quality checker found when the site was generated.
+ *
+ * The shapes are structural copies of QualityIssue / QualityReport in
+ * lib/site-quality.ts (which imports this file, so the dependency cannot run
+ * the other way). `dimensions` is the eight scores the dashboard shows.
+ */
+export interface SiteQualityReport {
+  score: number;
+  dimensions?: Record<
+    "design" | "mobile" | "seo" | "accessibility" | "performance" | "content" | "conversion" | "uniqueness",
+    number
+  >;
+  issues: {
+    area: string;
+    dimension?: string;
+    message: string;
+    penalty: number;
+    /** Set when the platform can apply this fix itself. */
+    fix?: string;
+  }[];
+  checkedAt: string;
+}
+
 export interface SiteSection {
   id: string;
   type: SectionType;
@@ -77,6 +148,41 @@ export interface SiteTheme {
   motif?: "auto" | "none";
   /** Industry preset key that drives look & animation; absent means "from category". */
   industry?: string;
+  /**
+   * The rest of the Design DNA (see lib/design-dna.ts). All optional: a site
+   * generated before these existed, or edited by hand, must keep rendering —
+   * the renderer falls back to the old behaviour for anything absent.
+   */
+  shadow?: "none" | "soft" | "lifted" | "dramatic";
+  button?: "solid" | "outline" | "soft" | "gradient" | "square";
+  spacing?: "tight" | "normal" | "airy";
+  header?: "sticky" | "minimal" | "topbar" | "centred";
+  footer?: "columned" | "compact" | "statement";
+  imageTreatment?: "plain" | "duotone" | "framed" | "soft-focus";
+  /** Animation pack and intensity 0–4; the renderer gates motion by level. */
+  motion?: { pack: "minimal" | "corporate" | "modern" | "premium" | "playful"; level: number };
+  /** The genome this site was built from, so it can be shown and regenerated. */
+  dna?: SiteDna;
+  /**
+   * How unlike the other sites in this trade this one is, 0–100, measured when
+   * the site was generated. 100 means nothing similar existed, or this is the
+   * first business in the trade.
+   */
+  uniqueness?: number;
+  /** Output of the quality checker (lib/site-quality.ts). */
+  quality?: SiteQualityReport;
+  /**
+   * Autopilot: the platform's own maintenance pass over a published site.
+   * Absent means "on" — a customer should not have to find a switch to get
+   * their site kept in order.
+   */
+  autopilot?: {
+    enabled?: boolean;
+    lastRunAt?: string;
+    /** What the last pass changed, in the owner's language. */
+    lastChanged?: string[];
+    lastScore?: number;
+  };
 }
 
 export interface WebsiteData {
@@ -120,6 +226,10 @@ export interface Plan {
   maxPages: number; aiCredits: number;
   /** How many brand palettes this plan may choose from; -1 = the whole library. */
   maxPalettes: number;
+  /** Custom domains bundled into this plan; -1 = unlimited. Add-on credits add to it. */
+  maxDomains: number;
+  /** Design changes allowed on this plan; -1 = unlimited (the default). */
+  maxThemeChanges: number;
   popular: boolean; active: boolean; sortOrder: number;
   /** Set when the plan is dedicated to one customer (hidden from public pricing). */
   customForBusinessId?: string | null;

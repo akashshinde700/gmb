@@ -21,6 +21,9 @@ import { useApp } from "@/store/app-store";
 import type { BusinessWithMeta, DashboardTab } from "@/store/app-store";
 import { computeHealth } from "@/lib/health";
 import { DEFAULT_THEME, SECTION_LIBRARY } from "@/lib/sections";
+import { VARIANT_LABELS } from "@/lib/design-dna";
+import { QUALITY_DIMENSIONS } from "@/lib/site-quality";
+import { suggestionHeadline, suggestionsFor } from "@/lib/suggestions";
 import { INDUSTRY_PRESETS, industryByKey, resolveIndustry } from "@/lib/industries";
 import { usePalettes } from "@/hooks/use-palettes";
 import { openCheckout } from "@/lib/checkout";
@@ -226,25 +229,47 @@ function truncate(s: string, n: number): string {
   return s.length > n ? `${s.slice(0, n)}…` : s;
 }
 
-/** Small data-fetching hook */
-function useFetch<T>(fn: () => Promise<T>, deps: unknown[] = []) {
+/**
+ * Small data-fetching hook: run `fn` once, expose the result and a manual
+ * `refetch`.
+ *
+ * It used to take a caller-supplied `deps` array and hand it straight to
+ * useCallback, which the lint rule cannot verify (a dependency list that is not
+ * an array literal, plus a missing `fn`) — the two warnings that sat in
+ * `npm run lint` forever, next to an eslint-disable comment naming a rule that
+ * was not the one firing. Every call site passed an empty array, so the
+ * parameter was a promise this hook never had to keep: `fn` is read through a
+ * ref instead, which also means an inline arrow (a new identity every render)
+ * cannot restart the fetch in a loop.
+ */
+function useFetch<T>(fn: () => Promise<T>) {
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  const latest = useRef(fn);
+  useEffect(() => {
+    latest.current = fn;
+  });
+
   const run = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      setData(await fn());
+      setData(await latest.current());
     } catch (e) {
       setError(errMsg(e));
     } finally {
       setLoading(false);
     }
-    // `deps` is supplied by the caller, which the lint rule cannot verify.
-    // eslint-disable-next-line react-hooks/use-memo
-  }, deps);
+  }, []);
+
   useEffect(() => {
+    // Fetching on mount is the entire purpose of the hook: the state this sets
+    // is the response, not a render cascade, and the rule cannot see through
+    // the `await`. A data-library would remove the exception at the cost of a
+    // dependency this dashboard does not otherwise need.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void run();
   }, [run]);
   return { data, loading, error, refetch: run };
@@ -941,7 +966,7 @@ function OverviewTab({ business, content, contentLoading }: {
 }) {
   const setDashboardTab = useApp((s) => s.setDashboardTab);
   const openSite = useApp((s) => s.openSite);
-  const { data: summary } = useFetch<AnalyticsSummary>(() => api.get<AnalyticsSummary>("/api/analytics/summary"), []);
+  const { data: summary } = useFetch<AnalyticsSummary>(() => api.get<AnalyticsSummary>("/api/analytics/summary"));
 
   const counts = useMemo(
     () => ({
@@ -952,6 +977,45 @@ function OverviewTab({ business, content, contentLoading }: {
   );
   const health = useMemo(() => computeHealth(business, business.website ?? null, counts), [business, counts]);
   const ringColor = health.score >= 80 ? "text-emerald-600" : health.score >= 50 ? "text-amber-600" : "text-red-600";
+
+  // What the platform would tell this owner to do next, from its own data: the
+  // quality report, the visitor and enquiry numbers, and the gaps in the
+  // business's own facts. Publishing is the middle of the job, not the end.
+  const theme = business.website?.theme;
+  const suggestions = useMemo(
+    () =>
+      suggestionsFor({
+        quality: theme?.quality,
+        business: {
+          phone: business.phone, whatsapp: business.whatsapp, city: business.city,
+          address: business.address, description: business.description,
+        },
+        counts,
+        activity: summary
+          ? { visits: summary.visits, leads: summary.leads, ctaCalls: summary.ctaCalls, ctaWhatsapp: summary.ctaWhatsapp }
+          : undefined,
+        uniqueness: theme?.uniqueness,
+        goal: theme?.dna?.goal?.label ?? null,
+      }),
+    [business, counts, summary, theme],
+  );
+  const [applying, setApplying] = useState(false);
+  const [applied, setApplied] = useState<string[] | null>(null);
+  const patchBusiness = useApp((s) => s.patchBusiness);
+
+  async function applyImprovements() {
+    setApplying(true);
+    setApplied(null);
+    try {
+      const res = await api.post<{ changed: string[]; website: WebsiteData }>("/api/website/fix");
+      setApplied(res.changed.length ? res.changed : ["nothing left to do automatically"]);
+      patchBusiness({ website: res.website });
+    } catch (e) {
+      setApplied([e instanceof Error ? e.message : "Could not apply the changes"]);
+    } finally {
+      setApplying(false);
+    }
+  }
 
   const plans = useApp((s) => s.plans);
   const sub = business.subscription;
@@ -972,6 +1036,70 @@ function OverviewTab({ business, content, contentLoading }: {
         title={`Namaste, ${business.ownerName || business.name} 👋`}
         subtitle="Here is how your website is performing and what to improve next."
       />
+
+      {/* The marketing agent: what to do next, in order, from the platform's own
+          numbers rather than from a model's opinion. */}
+      {suggestions.length > 0 && (
+        <Card className="rounded-2xl p-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="flex items-center gap-2 text-sm font-bold text-foreground">
+                <Sparkles className="h-4 w-4 text-amber-500" /> What to do next
+              </h2>
+              <p className="mt-1 text-xs text-muted-foreground">{suggestionHeadline(suggestions)}</p>
+            </div>
+            {suggestions.some((s) => s.kind === "auto") && (
+              <Button
+                size="sm"
+                onClick={applyImprovements}
+                disabled={applying}
+                className="rounded-lg bg-emerald-600 text-xs hover:bg-emerald-700"
+              >
+                {applying ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                Apply what we can do now
+              </Button>
+            )}
+          </div>
+          <ul className="mt-4 space-y-3">
+            {suggestions.map((item) => (
+              <li key={item.id} className="flex items-start gap-3">
+                <span
+                  className={cn(
+                    "mt-0.5 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase",
+                    item.impact === "high"
+                      ? "bg-red-50 text-red-600"
+                      : item.impact === "medium"
+                        ? "bg-amber-50 text-amber-700"
+                        : "bg-muted text-muted-foreground",
+                  )}
+                >
+                  {item.impact}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-foreground">{item.title}</p>
+                  <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{item.why}</p>
+                </div>
+                {item.kind === "owner" && item.tab && (
+                  <button
+                    type="button"
+                    onClick={() => setDashboardTab(item.tab as DashboardTab)}
+                    className="shrink-0 rounded-lg border px-2.5 py-1 text-[11px] font-semibold text-foreground transition hover:bg-muted"
+                  >
+                    Do it
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+          {applied && (
+            <ul className="mt-3 space-y-1 rounded-xl bg-emerald-50 px-3 py-2 text-xs text-emerald-800 ring-1 ring-emerald-100">
+              {applied.map((line) => (
+                <li key={line}>· {line}</li>
+              ))}
+            </ul>
+          )}
+        </Card>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-3">
         {/* Health card */}
@@ -1456,6 +1584,7 @@ function BuilderTab({ business, content }: { business: BusinessWithMeta; content
             />
           ) : (
             <>
+              <DesignDnaPanel theme={theme} onFixed={(w) => { setTheme({ ...DEFAULT_THEME, ...(w.theme ?? {}) }); setSections(w.sections ?? []); setSeo({ seoTitle: w.seoTitle ?? "", seoDescription: w.seoDescription ?? "", keywords: w.keywords ?? "" }); }} />
               <ThemePanel
                 theme={theme}
                 setTheme={(t) => { setTheme(t); setDirty(true); }}
@@ -1566,6 +1695,307 @@ function BuilderTab({ business, content }: { business: BusinessWithMeta; content
         </div>
       </div>
     </div>
+  );
+}
+
+/* ------------------------------- design DNA -------------------------------- */
+
+/**
+ * What the generator decided for this business, in the owner's language.
+ *
+ * Every site is built from a genome rather than a template: the same business
+ * always produces the same genome, and two businesses in one trade never get
+ * the same one. Until now that was invisible — the owner saw a finished page
+ * and had no name for its direction, nothing to compare against the sites that
+ * already exist in their trade, and no way to tell whether the generator had
+ * done a good job. This card shows the genome, the uniqueness score measured
+ * against same-trade sites, and anything the quality checker flagged.
+ */
+function DesignDnaPanel({ theme, onFixed }: { theme: SiteTheme; onFixed: (w: WebsiteData) => void }) {
+  const [open, setOpen] = useState(false);
+  const [fixing, setFixing] = useState(false);
+  const [fixedNote, setFixedNote] = useState<string[] | null>(null);
+  const [ask, setAsk] = useState("");
+  const [restyling, setRestyling] = useState(false);
+  const [restyleNote, setRestyleNote] = useState<{ label: string; note: string; changed: string[] } | null>(null);
+  const [restyleError, setRestyleError] = useState<string | null>(null);
+  const dna = theme.dna;
+  // A site generated before the DNA existed has none of this, and one the owner
+  // has hand-edited may have lost it. The card simply does not appear.
+  if (!dna || typeof dna !== "object") return null;
+
+  const quality = theme.quality;
+  const uniqueness = theme.uniqueness;
+  // Only the issues the platform can fix on its own get a button; the rest are
+  // things only the owner can answer (a phone number, reviews, three services).
+  const fixable = (quality?.issues ?? []).filter((i) => i.fix).length;
+
+  /**
+   * "Make it more premium" — a design request in the owner's own words.
+   *
+   * The server interprets it, changes the design language (not the content) and
+   * answers with the specific decisions that moved, which is what makes the
+   * result reviewable rather than magic.
+   */
+  async function restyle() {
+    const text = ask.trim();
+    if (!text) return;
+    setRestyling(true);
+    setRestyleError(null);
+    setRestyleNote(null);
+    try {
+      const res = await api.post<{
+        intent: { label: string; note: string };
+        changed: string[];
+        website: WebsiteData;
+      }>("/api/website/restyle", { text });
+      setRestyleNote({ label: res.intent.label, note: res.intent.note, changed: res.changed });
+      onFixed(res.website);
+      setAsk("");
+    } catch (e) {
+      setRestyleError(e instanceof Error ? e.message : "Could not apply that change");
+    } finally {
+      setRestyling(false);
+    }
+  }
+
+  async function fixAll() {
+    setFixing(true);
+    setFixedNote(null);
+    try {
+      const res = await api.post<{ changed: string[]; website: WebsiteData }>("/api/website/fix");
+      setFixedNote(res.changed.length ? res.changed : ["nothing left to fix automatically"]);
+      onFixed(res.website);
+    } catch (e) {
+      setFixedNote([e instanceof Error ? e.message : "Could not fix the issues right now"]);
+    } finally {
+      setFixing(false);
+    }
+  }
+  const chips = [dna.business?.subType, dna.business?.personality, dna.business?.audience].filter(Boolean) as string[];
+  const level = Math.max(0, Math.min(4, theme.motion?.level ?? 2));
+  const issueCount = quality?.issues?.length ?? 0;
+  const score = quality?.score ?? 0;
+  const qualityTone =
+    score >= 90 ? "text-emerald-600" : score >= 75 ? "text-amber-600" : "text-red-600";
+
+  return (
+    <Card className="rounded-2xl p-4">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Sparkles className="h-4 w-4 text-amber-500" />
+          <h2 className="text-sm font-bold text-foreground">Design DNA</h2>
+        </div>
+        {dna.styleName && <Badge className="rounded-full bg-emerald-50 text-[10px] font-semibold text-emerald-700 ring-1 ring-emerald-200">{dna.styleName}</Badge>}
+      </div>
+
+      {dna.goal && (
+        <p className="mt-3 rounded-xl bg-emerald-50 px-3 py-2 text-[11px] leading-relaxed text-emerald-900 ring-1 ring-emerald-100">
+          <span className="font-semibold">Built to earn {dna.goal.label.toLowerCase()}.</span>{" "}
+          {dna.goal.primary}
+          {dna.goal.secondary ? `, then ${dna.goal.secondary}` : ""}.
+        </p>
+      )}
+
+      {chips.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {chips.map((chip) => (
+            <span key={chip} className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+              {chip}
+            </span>
+          ))}
+        </div>
+      )}
+
+      <dl className="mt-4 space-y-2 text-[11px]">
+        <div className="flex items-center justify-between gap-3">
+          <dt className="flex items-center gap-1.5 text-muted-foreground">
+            <Clock className="h-3.5 w-3.5" /> Motion
+          </dt>
+          <dd className="flex items-center gap-1.5 text-right font-medium text-foreground">
+            <span className="line-clamp-1">{dna.motionLabel || theme.motion?.pack || "Standard"}</span>
+            <span className="flex gap-0.5" aria-label={`Animation intensity ${level} of 4`}>
+              {[0, 1, 2, 3].map((i) => (
+                <span key={i} className={cn("h-1.5 w-1.5 rounded-full", i < level ? "bg-emerald-500" : "bg-muted-foreground/25")} />
+              ))}
+            </span>
+          </dd>
+        </div>
+
+        <div className="flex items-center justify-between gap-3">
+          <dt className="flex items-center gap-1.5 text-muted-foreground">
+            <LayoutTemplate className="h-3.5 w-3.5" /> Uniqueness
+          </dt>
+          <dd className="text-right font-medium text-foreground">
+            {typeof uniqueness === "number" ? (
+              <span>
+                {uniqueness}% <span className="font-normal text-muted-foreground">vs other {dna.business?.industry || "same-trade"} sites</span>
+              </span>
+            ) : (
+              <span className="font-normal text-muted-foreground">Measured on the next publish</span>
+            )}
+          </dd>
+        </div>
+
+        {quality && (
+          <div className="flex items-center justify-between gap-3">
+            <dt className="flex items-center gap-1.5 text-muted-foreground">
+              <ShieldCheck className="h-3.5 w-3.5" /> Site check
+            </dt>
+            <dd className={cn("text-right font-semibold", qualityTone)}>
+              {score}/100
+              <span className="ml-1 font-normal text-muted-foreground">
+                {issueCount === 0 ? "no issues found" : `${issueCount} to fix`}
+              </span>
+            </dd>
+          </div>
+        )}
+      </dl>
+
+      {/* The eight scores, so "82/100" becomes something the owner can act on. */}
+      {quality?.dimensions && (
+        <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5">
+          {QUALITY_DIMENSIONS.map(({ key, label }) => {
+            const value = quality.dimensions?.[key] ?? 100;
+            return (
+              <div key={key} className="flex items-center gap-2 text-[11px]">
+                <span className="w-20 shrink-0 text-muted-foreground">{label}</span>
+                <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+                  <span
+                    className={cn("block h-full rounded-full", value >= 90 ? "bg-emerald-500" : value >= 70 ? "bg-amber-400" : "bg-red-400")}
+                    style={{ width: `${Math.max(4, value)}%` }}
+                  />
+                </span>
+                <span className="w-6 shrink-0 text-right font-medium text-foreground">{value}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {typeof uniqueness === "number" && (
+        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted" role="img" aria-label={`Uniqueness ${uniqueness}%`}>
+          <div className="h-full rounded-full bg-emerald-500" style={{ width: `${Math.max(4, Math.min(100, uniqueness))}%` }} />
+        </div>
+      )}
+
+      {/* The restyle box. Shown on every generated site, because "this does not
+          feel like us yet" is the first thing an owner thinks. */}
+      <div className="mt-4 border-t pt-3">
+        <label className="mb-1.5 block text-[11px] font-semibold text-foreground" htmlFor="ws-restyle">
+          Make my website better
+        </label>
+        <div className="flex gap-2">
+          <input
+            id="ws-restyle"
+            value={ask}
+            onChange={(e) => setAsk(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") void restyle(); }}
+            placeholder="more premium · simpler · for older customers"
+            className="h-8 min-w-0 flex-1 rounded-lg border bg-background px-2.5 text-[11px] outline-none focus:ring-2 focus:ring-emerald-500"
+          />
+          <Button size="sm" onClick={restyle} disabled={restyling || !ask.trim()} className="h-8 rounded-lg text-[11px]">
+            {restyling ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Apply"}
+          </Button>
+        </div>
+        <div className="mt-1.5 flex flex-wrap gap-1.5">
+          {["more premium", "simpler", "more professional", "for older customers", "bolder", "warmer"].map((chip) => (
+            <button
+              key={chip}
+              type="button"
+              onClick={() => setAsk(chip)}
+              className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground transition hover:bg-muted-foreground/15"
+            >
+              {chip}
+            </button>
+          ))}
+        </div>
+        {restyleError && <p className="mt-2 rounded-lg bg-red-50 px-2 py-1.5 text-[11px] text-red-700">{restyleError}</p>}
+        {restyleNote && (
+          <div className="mt-2 rounded-lg bg-emerald-50 px-2.5 py-2 text-[11px] text-emerald-900 ring-1 ring-emerald-100">
+            <p className="font-semibold">{restyleNote.label} applied</p>
+            <p className="mt-0.5 leading-relaxed">{restyleNote.note}</p>
+            {restyleNote.changed.length > 0 && (
+              <ul className="mt-1 space-y-0.5 text-emerald-800">
+                {restyleNote.changed.map((line) => (
+                  <li key={line}>· {line}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+      </div>
+
+      {fixable > 0 && (
+        <Button
+          size="sm"
+          onClick={fixAll}
+          disabled={fixing}
+          className="mt-3 h-8 w-full rounded-lg bg-emerald-600 text-[11px] hover:bg-emerald-700"
+        >
+          {fixing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+          Fix {fixable} issue{fixable > 1 ? "s" : ""} automatically
+        </Button>
+      )}
+      {fixedNote && (
+        <ul className="mt-2 space-y-1 rounded-lg bg-emerald-50 px-3 py-2 text-[11px] text-emerald-800 ring-1 ring-emerald-100">
+          {fixedNote.map((line) => (
+            <li key={line} className="flex gap-1.5">
+              <Check className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+              <span>{line}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {issueCount > 0 && (
+        <ul className="mt-3 space-y-1.5">
+          {quality?.issues?.slice(0, 4).map((issue) => (
+            <li key={issue.message} className="flex gap-1.5 text-[11px] text-muted-foreground">
+              <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" aria-hidden="true" />
+              <span>{issue.message}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <Collapsible open={open} onOpenChange={setOpen}>
+        <CollapsibleTrigger asChild>
+          <button type="button" className="mt-3 flex w-full items-center justify-between text-[11px] font-semibold text-muted-foreground" aria-expanded={open}>
+            The director's brief — how this site was planned
+            <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", open && "rotate-180")} />
+          </button>
+        </CollapsibleTrigger>
+        <CollapsibleContent className="mt-2 space-y-3">
+          {/* The director's brief, in the order it was decided. This is the
+              answer to "why does my site look like this?", and the thing a
+              restyle or a manual change is measured against. */}
+          {(dna.stages ?? []).length > 0 && (
+            <ol className="space-y-2">
+              {(dna.stages ?? []).map((stage, i) => (
+                <li key={stage.name} className="flex gap-2 text-[11px]">
+                  <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-muted text-[9px] font-semibold text-muted-foreground">
+                    {i + 1}
+                  </span>
+                  <span>
+                    <span className="font-semibold text-foreground">{stage.name}</span>
+                    <span className="mt-0.5 block leading-relaxed text-muted-foreground">{stage.detail}</span>
+                  </span>
+                </li>
+              ))}
+            </ol>
+          )}
+          <div className="space-y-1 border-t pt-2">
+            {(dna.sectionPlan ?? []).map((entry) => (
+              <div key={`${entry.type}-${entry.variant}`} className="flex items-baseline gap-2 text-[11px]">
+                <span className="w-16 shrink-0 font-mono text-[10px] uppercase text-muted-foreground">{entry.type}</span>
+                <span className="text-foreground">{VARIANT_LABELS[`${entry.type}:${entry.variant}`] ?? entry.variant}</span>
+              </div>
+            ))}
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
+    </Card>
   );
 }
 
@@ -3058,7 +3488,7 @@ function SeoTab({ business, content }: { business: BusinessWithMeta; content: Co
 const CHART_COLORS = { emerald: "#059669", amber: "#d97706", zinc: "#a1a1aa" };
 
 function AnalyticsTab() {
-  const { data: summary, loading } = useFetch<AnalyticsSummary>(() => api.get<AnalyticsSummary>("/api/analytics/summary"), []);
+  const { data: summary, loading } = useFetch<AnalyticsSummary>(() => api.get<AnalyticsSummary>("/api/analytics/summary"));
 
   const chartData = useMemo(
     () => (summary?.daily ?? []).map((d) => ({
@@ -3184,7 +3614,7 @@ function SubscriptionTab({ business, servicesCount }: { business: BusinessWithMe
     gateway: string | null;
     testMode: boolean;
     gstRate: number;
-  }>(() => api.get("/api/subscription"), []);
+  }>(() => api.get("/api/subscription"));
 
   const sub = business.subscription ?? (data?.subscription as BusinessWithMeta["subscription"] ?? null);
   // Seeded from the current subscription rather than synced in an effect: the
@@ -3640,7 +4070,6 @@ function SettingsTab() {
   // nothing was ever sent to the server, so a reload silently reverted them.
   const { data: account, loading, error, refetch } = useFetch<AccountInfo>(
     () => api.get<AccountInfo>("/api/account"),
-    [],
   );
   const [prefs, setPrefs] = useState<AccountInfo["prefs"] | null>(null);
   const [savingPref, setSavingPref] = useState<string | null>(null);

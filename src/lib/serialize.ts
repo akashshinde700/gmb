@@ -43,7 +43,7 @@ export function serializeWebsite(w: {
 export function serializeSub(s: {
   id: string; planId: string; cycle: string; status: string; amount: number;
   startedAt: Date; renewsAt: Date | null; trialEndsAt: Date | null;
-  plan?: { id: string; name: string; slug: string; tagline: string; priceMonthly: number; priceYearly: number; featuresJson: string; maxPages: number; aiCredits: number; maxPalettes: number; popular: boolean; active: boolean; sortOrder: number } | null;
+  plan?: { id: string; name: string; slug: string; tagline: string; priceMonthly: number; priceYearly: number; featuresJson: string; maxPages: number; aiCredits: number; maxPalettes: number; maxDomains: number; maxThemeChanges: number; popular: boolean; active: boolean; sortOrder: number } | null;
 }) {
   return {
     id: s.id, planId: s.planId, cycle: s.cycle as "MONTHLY" | "YEARLY", status: s.status,
@@ -54,6 +54,7 @@ export function serializeSub(s: {
       priceMonthly: s.plan.priceMonthly, priceYearly: s.plan.priceYearly,
       features: parseJson<string[]>(s.plan.featuresJson, []),
       maxPages: s.plan.maxPages, aiCredits: s.plan.aiCredits, maxPalettes: s.plan.maxPalettes,
+      maxDomains: s.plan.maxDomains, maxThemeChanges: s.plan.maxThemeChanges,
       popular: s.plan.popular,
       active: s.plan.active, sortOrder: s.plan.sortOrder,
     } : undefined,
@@ -63,12 +64,14 @@ export function serializeSub(s: {
 export function serializePlan(p: {
   id: string; name: string; slug: string; tagline: string; priceMonthly: number; priceYearly: number;
   featuresJson: string; maxPages: number; aiCredits: number; maxPalettes: number;
+  maxDomains: number; maxThemeChanges: number;
   popular: boolean; active: boolean; sortOrder: number; customForBusinessId?: string | null;
 }) {
   return {
     id: p.id, name: p.name, slug: p.slug, tagline: p.tagline, priceMonthly: p.priceMonthly,
     priceYearly: p.priceYearly, features: parseJson<string[]>(p.featuresJson, []),
     maxPages: p.maxPages, aiCredits: p.aiCredits, maxPalettes: p.maxPalettes,
+    maxDomains: p.maxDomains, maxThemeChanges: p.maxThemeChanges,
     popular: p.popular, active: p.active, sortOrder: p.sortOrder,
     customForBusinessId: p.customForBusinessId ?? null,
   };

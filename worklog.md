@@ -247,3 +247,64 @@ Work Log:
 
 Stage Summary:
 - ALL IMPROVEMENTS BROWSER-VERIFIED END-TO-END. Real file uploads (4MB, /api/uploads/* immutable cache) replace dataURL storage across dashboard + onboarding; UPI/QR setup now part of onboarding; duplicate-item productivity; tenant sites get LocalBusiness JSON-LD + lightbox + lazy images + category filter + back-to-top; admin gets template CRUD + customers CSV
+---
+Task ID: 10-a
+Agent: main (Arena Agent)
+Task: Every customer gets a different website (same-trade services/colours were identical) + customer-facing service & palette controls + business-specific generated art
+
+Work Log:
+- Root cause: wizard copied one fixed per-trade palette into the form; the server drew its own palette but the client's value won (and the wizard never even sent the field, so chosen colours were dropped); services were the trade's six rows reshuffled; the hero used a stock photo shared by the whole trade
+- src/lib/blueprint.ts (new): one deterministic source per business — palette (rotated away from colours already used in the same trade), look (font/radius/cards), hero scene variant, value promise, services (ranked by the owner's description, then varied per business), section order, image queries; shared by wizard preview and API so they cannot disagree
+- src/lib/site-art.ts (new) + GET /api/art/[slug].svg: self-contained SVG poster per business (own colours/composition), slow per-business CSS motion, reduced-motion respected, ETag/304 + long cache, no script or external reference
+- Onboarding: stock hero removed (animated industry scene stays), generated cover + gallery tiles fill in, stock search terms built from the owner's words and chosen services; chosen palette now actually travels with the form and wins server-side
+- Wizard step 2: "Typical for <trade>" suggestion chips (tap to add/remove), add/edit/remove service rows, "Your colours" palette picker (8 trade-appropriate options + Show me another); AI still writes services in the background but never overwrites what the customer typed
+- Admin-created customers get the same blueprint treatment (were all fixed green)
+- tools/stitch-palettes.mjs now writes src/lib/stitch-designs.ts (merge across runs, dedupe) instead of only printing; variantsFor() appends Stitch palettes to the trade's list — keys stay design-time only (30–90s + metered credit per call, and a mid-signup failure would leave a customer with no site)
+- tests/distinct-sites.mjs (new, in test:all): onboards same-trade businesses and asserts palettes, services, look, section order, covers and art all differ; a chosen palette survives; the hero is not a stock photo
+
+Stage Summary:
+- npm run test:all on a fresh server: every suite green, exit 0. Verified with a stubbed Stitch MCP endpoint that the generator writes, merges and dedupes correctly
+- Commits on arena/cd3fcf8e-gmb: 6ebb538 (blueprint + art + wizard controls), 74756e1 (Stitch wiring + same-trade palette rotation)
+---
+Task ID: 11-a
+Agent: main (Arena Agent)
+Task: AI Website Generation Engine v2 — Business DNA → Design DNA → section composition, controlled randomness, motion DNA, measurable uniqueness, quality gate
+
+Work Log:
+- src/lib/design-dna.ts (new): SUB_TYPES (3 profiles for each of 14 trades + a general fallback), profileFor() draws the Business DNA (sub-type, audience, personality, premium/budget, tone) from the business seed; the owner's own description overrides it (a "premium implant studio" gets the premium profile). Token tables SHADOWS / RADIUS / SPACING / MOTION_PACKS, SECTION_VARIANTS (every arrangement the renderer can draw), sectionPlanFor() and designDnaFor() assemble the genome; cssFromDna() exports the tokens as CSS variables
+- src/lib/uniqueness.ts (new): similarity() scores two sites per dimension — colour .30, layout .25, typography .15, components .15, motion .10, content .05 — and overall; bestCandidate() picks the most distinct of three genomes against the same-trade sites that already exist; profileFromSite() reads a stored site back into a profile so the comparison is about pages, not intentions; paletteSimilarity() weights the primary hardest, because that is what a visitor sees
+- src/lib/site-quality.ts (new): checkSite() — no reachable contact −20, no headline −15, fewer than three services or no CTA −12, missing About −8, unreadable brand colours on white (WCAG, < 3:1) −10 … weighted into a 0–100 score with a list of issues; contrastRatio() is plain WCAG maths
+- Onboarding and provisioning: three candidate genomes per business, each compared through the theme generateSite would really write (draftSite → profileOf) so the comparison sees the finished page; the winner is rebuilt properly (its own colours, section order and copy). themeJson now stores dna {styleName, business, motionLabel, sectionPlan}, uniqueness and quality
+- Renderer: every arrangement in SECTION_VARIANTS is drawn — hero banner/split/editorial/centred, stats row/cards/band, about split/timeline/bento, services cards/process/list, whyUs cards/numbered/bento, gallery grid/masonry/filmstrip, testimonials cards/wall/spotlight, FAQ list/two-col, CTA band/split, blog cards/list, contact form-side/form-below; header layout from theme.header (sticky/topbar/minimal); motion intensity reaches the DOM as data-anim, is capped at 3, drops the decorative extras at 0–1, is reduced again on phones, and prefers-reduced-motion turns it off entirely
+- Dashboard: a Design DNA card showing the style name, the business genome (sub-type · personality · audience), the motion pack with its intensity, the uniqueness score against same-trade sites with a bar, the quality score with any issues, and a plain-English list of how the page is assembled (VARIANT_LABELS in design-dna.ts)
+- tests/design.test.mts (new, npm run test:design, in test:all): a business always produces the same genome; two businesses in one trade differ; every arrangement is one the renderer knows; a premium or budget description changes the direction; a palette change moves the colour dimension and the overall score; the quality checker catches a missing contact route, thin services and unreadable colours; the blueprint carries the genome and a second attempt differs
+- tests/distinct-sites.mjs: added the genome checks (present, describes every section, no two alike, arrangements all renderable), the quality and uniqueness scores, and that a second read of a site returns the same genome
+- Live probe (3 dental businesses through the real API): palettes #0d9488/#134e4a/#a5f3fc, #3f3f46/#18181b/#f59e0b, #6366f1/#312e81/#fde047; styles "Premium modern", "Trusted modern", "Trusted grid"; motion premium/3, modern/2, modern/3; quality 100 with 0 issues for all three; uniqueness 100 / 60 / 54 (measured, not assumed); blog cards vs list and contact form-side vs form-below verified in the served HTML
+
+- The genome reached the generated artwork too (commit 94b30f0): the poster's finish follows imageTreatment (framed border at the site's own corner radius, duotone wash, soft-focus lights, plain), a genome drawn at intensity 0–1 paints a still poster, and the same intensity freezes the hero scene instead of only the stylesheet extras
+
+Stage Summary:
+- npm run test:all (fresh dev server, seeded DB): every suite green, 105/0 in api-smoke; npx tsc --noEmit 0; npx eslint . 0
+- Deliberately not LLM-driven: design planning is deterministic maths over the genome — instant, free, and it cannot fail on a bad network or a provider outage. The LLM stays where it earns its cost: the copy
+- Commit on arena/cd3fcf8e-gmb: 4b99d65. Roadmap still open: three concept previews, per-section AI regeneration from the stored dna, a website critic, brand kit/logo, versioning, A/B tests, analytics recommendations, health monitoring
+---
+Task ID: 12-a
+Agent: main (Arena Agent)
+Task: Market response — AI Director, Business Goal Engine, eight-dimension quality score with automatic fixes, "make my website better", and the post-publish marketing agent
+
+Work Log:
+- Competitor read: Wix (AI + editing + business tools), Framer (design quality + iterative AI editing), 10Web (multi-agent pipeline, white-label/API, URL-to-site), Durable (speed/CRM), Hostinger (all-in-one cheap), Webflow (control), Squarespace (premium templates). Their common ground is generation + editing + business tooling; none of them generate per-business artwork or check their own output. WebSetu's moat stays: a different, directed, conversion-focused site per business, improved continuously after publishing
+- src/lib/director.ts (new): the pipeline before generation — business understood, audience, positioning, goal, design direction, page structure, components, content rules, animation — stored as dna.stages and shown to the owner
+- Business Goal Engine: 11 goals (appointments, bookings, orders, menu, quotes, consults, admissions, site visits, service bookings, store visits, supply) mapped from the trade and overridden by the owner's own words ("order online", "walk-in", "quotation"). The goal sets the hero and band buttons AND their destination (tel:/wa.me/maps/#services/#contact) via ctaTarget(), and reorders the page so what that trade looks for first comes up; nothing is added or removed
+- src/lib/site-quality.ts: rewritten — eight dimensions (design, mobile, seo, accessibility, performance, content, conversion, uniqueness), each 100 minus its own issues, overall still 100 minus everything; issues carry a `fix` id when the platform can do them itself
+- src/lib/site-fixes.ts (new) + POST /api/website/fix: "Fix all issues" re-checks the stored site, brings switched-off sections back (the owner's own content, not a placeholder), adds a missing About/CTA/contact, and writes the page title and search description from the business's own name, trade, city and phone. Nothing about the business is invented; pressing twice is a no-op
+- src/lib/restyle.ts (new) + POST /api/website/restyle: seven directions understood from plain words (premium, simpler, more professional, warmer, bolder, easier for older customers, younger). Changes type, corners, shadows, buttons, spacing, header, footer, image treatment, motion pack and section arrangements; never touches the owner's words, photos or chosen colours; deterministic and answered with the list of decisions that changed
+- src/lib/suggestions.ts (new): the marketing agent — traffic with no enquiries, missing WhatsApp, thin services, no reviews/photos/FAQs, a design too close to the trade's, structural problems, no blog. Every line is a statement about the platform's own data, ordered by what is costing the most, and the structural ones are applied by the button
+- Dashboard: the Design DNA card now shows the goal and the director's brief stage by stage; a "What to do next" card leads the Overview tab; the Site check shows the eight bars with "Fix N issues automatically" and a "Make my website better" box with example chips
+- Providers: design planning is local and deterministic (₹0, cannot fail), content uses the ordered provider chain in lib/llm.ts (custom → Groq → OpenRouter → Gemini → Z.ai → NVIDIA → OpenAI → Anthropic → Ollama, then the deterministic fallback), validation is local (the quality checker), artwork is generated locally as SVG. Keys stay server-side; LLM_PROVIDER pins the chain
+- tests/design.test.mts: 62 checks now (director/goal, quality dimensions and fixability, fix-all idempotence and "nothing invented", restyle determinism and safety, suggestions ordering)
+
+Stage Summary:
+- Live probes: dental → "Book an Appointment" → #contact; tiffin service → "Order on WhatsApp" → wa.me; fabricator → "Get a Quotation" → #contact; travel → "Check Availability" → #contact, each with its own page order. A site with its About and CTA switched off and SEO blanked: fix took it 61 → 86 with two issues left, both owner-only. Restyles changed 8 design decisions and 3–7 section layouts while the copy and palette stayed byte-identical
+- npm run test:all green on a fresh server (105/0 api-smoke), tsc 0, eslint 0. Commits: efa8e83 (director + goal), a40b4fe (quality + fixes), 0981ad6 (restyle), ae36b86 (marketing agent)
+- Still open from the competitor read: Google Business Profile import for verified local data, per-section AI regeneration from the stored genome, versioning + restore, A/B testing, three concept previews, provider cost/quota dashboard, per-trade artwork variety, URL-to-site recreation
