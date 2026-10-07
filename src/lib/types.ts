@@ -52,6 +52,12 @@ export interface Business {
   paymentQrUrl: string;
   hours: BusinessHours;
   socials: SocialLinks;
+  /**
+   * Where each imported detail came from — { phone: { value, source, at } }.
+   * Anything not listed here was typed by the owner, and nothing in it was
+   * invented (see lib/places.ts).
+   */
+  facts?: Record<string, { value: string; source: "google" | "link" | "owner"; at?: string }>;
   status: BusinessStatus;
   createdAt: string;
 }

@@ -39,6 +39,20 @@ export interface SuggestionInput {
   uniqueness?: number;
   /** The action the site was built to earn, so the advice fits the trade. */
   goal?: string | null;
+  /**
+   * What the platform knows from the business's Google profile — how many
+   * reviews came back with it, whether the profile is linked, and whether
+   * opening hours were imported. Absent when nothing was ever looked up.
+   */
+  google?: {
+    linked: boolean;
+    /** Reviews saved onto the site from Google. */
+    reviewsOnSite?: number;
+    /** Rating and count Google reported, when a lookup managed to fetch them. */
+    rating?: number | null;
+    reviewCount?: number | null;
+    hoursImported?: boolean;
+  } | null;
 }
 
 export interface Suggestion {
@@ -178,6 +192,45 @@ export function suggestionsFor(input: SuggestionInput): Suggestion[] {
       impact: "low",
       kind: "owner",
       tab: "blog",
+    });
+  }
+
+  // Google data the platform already fetched but has not put to work yet. These
+  // are cheap to say and embarrassing to leave lying: a business with 40 Google
+  // reviews and two on its website is leaving its best sales copy in a tab
+  // nobody opens.
+  const g = input.google;
+  if (g && !g.linked) {
+    out.push({
+      id: "google-link",
+      title: "Link your Google Business Profile",
+      why: "Your Google listing is what search shows first for your name, and the " +
+        "site does not point at it yet. Businesses with a linked profile get more direction requests and calls.",
+      impact: "medium",
+      kind: "owner",
+      tab: "business",
+    });
+  }
+  if (g && typeof g.reviewCount === "number" && g.reviewCount >= 5 && (g.reviewsOnSite ?? 0) < 3) {
+    out.push({
+      id: "google-reviews",
+      title: `Bring your ${plural(g.reviewCount, "Google review")} onto the site`,
+      why: `${g.rating ? `${g.rating}★ from ` : ""}${plural(g.reviewCount, "review")} on your Google profile` +
+        `${g.reviewsOnSite ? ` and only ${plural(g.reviewsOnSite, "one")} on the website` : ", and not one of them is on the website"}. ` +
+        "Visitors who have not heard of you trust the reviews more than anything you write about yourself.",
+      impact: "high",
+      kind: "owner",
+      tab: "business",
+    });
+  }
+  if (g && g.hoursImported === false) {
+    out.push({
+      id: "google-hours",
+      title: "Put your opening hours on the site",
+      why: "Your Google profile lists opening hours that the website does not show — and \"are you open now?\" is the most common reason somebody checks a local business page.",
+      impact: "medium",
+      kind: "owner",
+      tab: "business",
     });
   }
 

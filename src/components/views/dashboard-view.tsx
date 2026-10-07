@@ -996,6 +996,17 @@ function OverviewTab({ business, content, contentLoading }: {
           : undefined,
         uniqueness: theme?.uniqueness,
         goal: theme?.dna?.goal?.label ?? null,
+        // What a Google lookup already fetched. The reviews it brought onto the
+        // site are the ones tagged "Google review"; the rating travels in facts.
+        google: business.facts
+          ? {
+              linked: Boolean(business.gmbUrl),
+              reviewsOnSite: counts.testimonials,
+              rating: Number(business.facts.rating?.value) || null,
+              reviewCount: Number(business.facts.reviews?.value) || null,
+              hoursImported: Object.keys(business.hours ?? {}).length > 0,
+            }
+          : null,
       }),
     [business, counts, summary, theme],
   );
@@ -2064,6 +2075,191 @@ function DesignDnaPanel({ theme, onFixed }: { theme: SiteTheme; onFixed: (w: Web
   );
 }
 
+/* ------------------------------ google import ------------------------------- */
+
+interface GoogleOption {
+  id: string; field: string; label: string; current: string; next: string; source: string; display: string;
+}
+interface GoogleLookup {
+  via: "link" | "places-api";
+  partial: boolean;
+  note: string | null;
+  found: string[];
+  options: GoogleOption[];
+  reviews: { author: string; text: string; rating: number }[];
+  totalReviews: number;
+  rating: number | null;
+  photoCount: number;
+  categories: string[];
+}
+
+/**
+ * Bring the business's Google details onto the site, with the owner's consent.
+ *
+ * Two things make this different from pasting a link into a form. First, the
+ * lookup shows its work: every line says what Google said and what the site has
+ * now, so nothing changes on the strength of a guess. Second, what was applied
+ * is remembered per field — the footer below lists which details came from
+ * Google and when, because a website that quietly presents imported data as the
+ * owner's own words is a website nobody should trust.
+ */
+function GoogleImportCard({ business, onApplied }: {
+  business: BusinessWithMeta;
+  onApplied: (b: Business) => void;
+}) {
+  const patchBusiness = useApp((s) => s.patchBusiness);
+  const [input, setInput] = useState(business.gmbUrl ?? "");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<GoogleLookup | null>(null);
+  const [chosen, setChosen] = useState<string[]>([]);
+  const [withReviews, setWithReviews] = useState(false);
+
+  async function find() {
+    setBusy(true);
+    setResult(null);
+    try {
+      const res = await api.post<GoogleLookup>("/api/business/google", { mode: "lookup", input });
+      setResult(res);
+      // Additions are ticked; anything that would replace something the owner
+      // already typed is offered but left alone until they say so.
+      setChosen(res.options.filter((o) => !o.current).map((o) => o.id));
+      setWithReviews(res.reviews.length > 0);
+    } catch (e) {
+      toast({ title: "Could not look that up", description: errMsg(e), variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function apply() {
+    if (!result) return;
+    setBusy(true);
+    try {
+      const res = await api.post<{ applied: { label: string; value: string }[]; reviewsSaved: number; business: Business }>(
+        "/api/business/google",
+        { mode: "apply", input, fields: chosen, reviews: withReviews },
+      );
+      patchBusiness(res.business);
+      onApplied(res.business);
+      toast({
+        title: res.applied.length ? `${res.applied.length} detail(s) brought over` : "Google reviews saved",
+        description: [
+          res.applied.map((a) => a.label).join(", "),
+          res.reviewsSaved ? `${res.reviewsSaved} reviews saved to your site` : "",
+        ].filter(Boolean).join(" · ") || undefined,
+      });
+      setResult(null);
+    } catch (e) {
+      toast({ title: "Could not apply that", description: errMsg(e), variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const verified = Object.entries((business.facts ?? {}) as Record<string, { source?: string; value?: string; at?: string }>)
+    .filter(([, f]) => f.source === "google" || f.source === "link");
+
+  return (
+    <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-3">
+      <div className="flex items-center gap-2">
+        <Search className="h-4 w-4 text-emerald-700" />
+        <p className="text-sm font-semibold text-foreground">Bring your Google details over</p>
+      </div>
+      <p className="mt-1 text-[11px] text-muted-foreground">
+        Paste your Google Maps link (or type your business name and city). You will see exactly what Google says
+        before anything is written — and nothing is invented.
+      </p>
+
+      <div className="mt-2 flex gap-2">
+        <Input
+          className="h-9 rounded-lg bg-white text-xs"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder="https://maps.app.goo.gl/… or “Skyline Dental, Pune”"
+          aria-label="Google link or business search"
+        />
+        <Button size="sm" className="h-9 shrink-0 rounded-lg bg-emerald-600 text-xs hover:bg-emerald-700" onClick={find} disabled={busy || !input.trim()}>
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
+          Find
+        </Button>
+      </div>
+
+      {result && (
+        <div className="mt-3 rounded-lg border bg-white p-3">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            {result.via === "places-api" ? "From Google" : "From the link you pasted"}
+          </p>
+          {result.found.length > 0 && (
+            <ul className="mt-1 space-y-0.5 text-[11px] text-foreground">
+              {result.found.slice(0, 6).map((line) => <li key={line}>· {line}</li>)}
+            </ul>
+          )}
+          {result.note && <p className="mt-1 text-[11px] text-amber-700">{result.note}</p>}
+
+          {result.options.length > 0 && (
+            <div className="mt-2 space-y-1.5 border-t pt-2">
+              {result.options.map((o) => (
+                <label key={o.id} className="flex cursor-pointer items-start gap-2 text-[11px]">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 h-3.5 w-3.5 accent-emerald-600"
+                    checked={chosen.includes(o.id)}
+                    onChange={(e) => setChosen((p) => (e.target.checked ? [...p, o.id] : p.filter((id) => id !== o.id)))}
+                  />
+                  <span className="min-w-0">
+                    <span className="font-medium text-foreground">{o.label}</span>
+                    {o.current
+                      ? <span className="block truncate text-muted-foreground">{o.current} → <span className="text-foreground">{o.display}</span></span>
+                      : <span className="block truncate text-muted-foreground">{o.display}</span>}
+                  </span>
+                </label>
+              ))}
+            </div>
+          )}
+
+          {result.reviews.length > 0 && (
+            <label className="mt-2 flex cursor-pointer items-start gap-2 border-t pt-2 text-[11px]">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-3.5 w-3.5 accent-emerald-600"
+                checked={withReviews}
+                onChange={(e) => setWithReviews(e.target.checked)}
+              />
+              <span>
+                <span className="font-medium text-foreground">Use my {result.reviews.length} Google reviews</span>
+                <span className="block text-muted-foreground">
+                  Saved onto your site, credited to the reviewer and marked as coming from Google.
+                </span>
+              </span>
+            </label>
+          )}
+
+          {result.options.length === 0 && result.reviews.length === 0 && (
+            <p className="mt-2 text-[11px] text-muted-foreground">
+              Everything here already matches your site.
+              {result.totalReviews > 0 ? ` Your profile shows ${result.rating ?? "–"}★ from ${result.totalReviews} reviews.` : ""}
+            </p>
+          )}
+
+          {(result.options.length > 0 || result.reviews.length > 0) && (
+            <Button size="sm" className="mt-2 h-8 w-full rounded-lg bg-emerald-600 text-[11px] hover:bg-emerald-700" onClick={apply} disabled={busy || (chosen.length === 0 && !withReviews)}>
+              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+              Use what I ticked
+            </Button>
+          )}
+        </div>
+      )}
+
+      {verified.length > 0 && (
+        <p className="mt-2 text-[11px] text-muted-foreground">
+          Verified by Google: {verified.map(([field]) => field).join(", ")}
+          {verified[0]?.[1]?.at ? ` · last checked ${new Date(verified[0][1].at as string).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}` : ""}
+        </p>
+      )}
+    </div>
+  );
+}
+
 /* -------------------------------- autopilot --------------------------------- */
 
 /**
@@ -2894,6 +3090,14 @@ function BusinessTab({ business }: { business: BusinessWithMeta }) {
                 onChange={(v) => setF("coverUrl", v)}
                 hint="Wide photo of your shop, team or work — used in the hero & about sections."
                 maxWidth={1400}
+              />
+              <GoogleImportCard
+                business={business}
+                onApplied={(b) => setForm((p) => ({
+                  ...p,
+                  name: b.name, phone: b.phone, address: b.address, city: b.city, pincode: b.pincode,
+                  gmbUrl: b.gmbUrl, mapsUrl: b.mapsUrl,
+                }))}
               />
               <Labeled label="Google Business Profile URL" hint="Link your GMB listing for local SEO">
                 <Input className="rounded-xl" value={form.gmbUrl} onChange={(e) => setF("gmbUrl", e.target.value)} placeholder="https://business.google.com/…" />

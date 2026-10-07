@@ -75,6 +75,10 @@ model Business {
   // Appearance edits (theme / brand colours) used while on a free or trial plan.
   themeChangesUsed    Int       @default(0)
   // Google reviews cached from the Places API, with the time they were fetched.
+  // Per-field provenance of anything imported from a named source:
+  // { phone: { value, source: "google"|"link"|"owner", at } }. What is not in
+  // here was typed by the owner, and nothing here was invented.
+  factsJson           String    @default("{}")
   googleReviewsJson   String    @default("[]")
   googleReviewsAt     DateTime?
   aiPeriodStart       DateTime  @default(now()) // rolls forward every 30 days

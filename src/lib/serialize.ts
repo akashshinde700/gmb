@@ -3,6 +3,7 @@ import { DEFAULT_THEME, parseJson } from "@/lib/sections";
 import type {
   BusinessHours, SocialLinks, SiteSection, SiteTheme,
 } from "@/lib/types";
+import type { Facts } from "@/lib/places";
 
 type BizRow = {
   id: string; name: string; slug: string; category: string; tagline: string; description: string;
@@ -11,6 +12,7 @@ type BizRow = {
   coverUrl: string; brandPrimary: string; brandSecondary: string; brandAccent: string; templateId: string;
   gmbUrl: string; mapsUrl: string; placeId: string; upiId: string; paymentQrUrl: string;
   hoursJson: string; socialsJson: string; status: string;
+  factsJson?: string;
   createdAt: Date;
 };
 
@@ -25,6 +27,9 @@ export function serializeBusiness(b: BizRow) {
     placeId: b.placeId, upiId: b.upiId, paymentQrUrl: b.paymentQrUrl,
     hours: parseJson<BusinessHours>(b.hoursJson, {}),
     socials: parseJson<SocialLinks>(b.socialsJson, {}),
+    // Where each imported fact came from, so the dashboard can say "Google"
+    // beside a field instead of silently presenting it as the owner's own.
+    facts: parseJson<Facts>(b.factsJson ?? "{}", {}),
     status: b.status, createdAt: b.createdAt.toISOString(),
   };
 }
