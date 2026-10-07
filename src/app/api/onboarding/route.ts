@@ -9,7 +9,7 @@ import { tenantBaseUrl } from "@/lib/site-utils";
 import { starterFaqs, starterPosts } from "@/lib/starter-content";
 import { fallbackServices, fillCopy, industryServices, isPresetCategory, resolveIndustry } from "@/lib/industries";
 import { fetchStockPhotos, searchesFor } from "@/lib/stock-images";
-import { blueprintFor, resolveColors, designSeed } from "@/lib/blueprint";
+import { candidateBlueprints, resolveColors, designSeed } from "@/lib/blueprint";
 import { bestCandidate, profileFromSite, uniquenessPercent, type SiteProfile } from "@/lib/uniqueness";
 import { checkSite } from "@/lib/site-quality";
 import { recordVersion } from "@/lib/site-history";
@@ -110,18 +110,16 @@ export const POST = route(async (req: Request) => {
   // Three genomes, from which the most distinct is kept (see the comparison
   // below). The first one also supplies the services and search terms used
   // before the winner is known.
-  const candidates = [0, 1, 2].map((attempt) =>
-    blueprintFor({
-      name,
-      city,
-      category,
-      industryKey: ai?.industry,
-      description,
-      taken: takenPalettes,
-      seed: designSeed(name, city),
-      attempt,
-    }),
-  );
+  const candidates = candidateBlueprints({
+    name,
+    city,
+    category,
+    industryKey: ai?.industry,
+    description,
+    taken: takenPalettes,
+    seed: designSeed(name, city),
+  });
+
   const firstDraft = candidates[0];
 
   // An empty list still gets a full, industry-appropriate services section —
@@ -282,10 +280,17 @@ export const POST = route(async (req: Request) => {
     });
   };
 
+  // The wizard offers three concepts (see /api/onboarding/concepts) and the
+  // owner picks one. When they did, that genome is used — a choice the owner
+  // made outranks the similarity score, which only exists to pick a sensible
+  // default when nobody is looking. Otherwise the most distinct one is kept.
+  const chosenKey = Number(body.concept);
+  const chosen = Number.isInteger(chosenKey) && candidates[chosenKey] ? candidates[chosenKey] : null;
+
   const picked = bestCandidate(candidates, profileOf, existingProfiles);
 
   // The winner is rebuilt properly — its own colours, section order and copy.
-  const blueprint = picked.chosen;
+  const blueprint = chosen ?? picked.chosen;
   const selectedColors = coloursOf(blueprint);
   const brandPrimary = selectedColors.primary;
   const brandSecondary = selectedColors.secondary;

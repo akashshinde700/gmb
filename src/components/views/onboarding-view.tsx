@@ -11,7 +11,7 @@ import { useRouter } from "next/navigation";
 import { TRIAL_LABEL } from "@/lib/trial";
 import {
   AlertCircle, ArrowLeft, ArrowRight, Briefcase, Building2, Check, Globe, Loader2, LogOut, MapPin,
-  Phone, Plus, Repeat, Rocket, Search, X,
+  Phone, Plus, Repeat, Rocket, Search, Sparkles, X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,6 +28,8 @@ import { cn } from "@/lib/utils";
 import type { AiSiteContent } from "@/lib/sections";
 import { isValidUpiId } from "@/lib/site-utils";
 import { clearOnboardingDraft, ONBOARDING_DRAFT_KEY } from "@/lib/onboarding-draft";
+import SiteRenderer from "@/components/site/site-renderer";
+import type { Concept } from "@/lib/concepts";
 import { industryFor, isPresetCategory } from "@/lib/industries";
 import { blueprintFor, designSeed } from "@/lib/blueprint";
 import { useApp } from "@/store/app-store";
@@ -197,6 +199,10 @@ export default function OnboardingView() {
   const [industryLoading, setIndustryLoading] = useState(false);
   const [svcName, setSvcName] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  // The three concepts the generator drew, shown before anything is created.
+  const [concepts, setConcepts] = useState<Concept[] | null>(null);
+  const [conceptKey, setConceptKey] = useState<number | null>(null);
+  const [drawingConcepts, setDrawingConcepts] = useState(false);
   const [success, setSuccess] = useState<BusinessWithMeta | null>(null);
 
   const finalCategory = form.category === "Other" ? form.customCategory.trim() : form.category;
@@ -449,6 +455,37 @@ export default function OnboardingView() {
         ai = null;
       }
     }
+    // Three finished looks are drawn before the site exists, and the owner
+    // picks. Choosing is a step in this flow, not a setting to find later: a
+    // generator that decides everything and shows you afterwards is the model
+    // every competitor already ships.
+    if (!concepts) {
+      setDrawingConcepts(true);
+      try {
+        const drawn = await api.post<{ concepts: Concept[] }>("/api/onboarding/concepts", {
+          name: form.name.trim(), category: finalCategory, tagline: form.tagline.trim(),
+          description: form.description.trim(), city: form.city.trim(), phone: form.phone.trim(),
+          whatsapp, email: form.email.trim(), address: form.address.trim(), state: form.state.trim(),
+          pincode: form.pincode.trim(), establishedYear: form.establishedYear.trim(),
+          mapsUrl: form.mapsUrl.trim(), ai,
+          services: form.services.map((s) => ({ name: s.name, description: s.description })),
+          brandPrimary: form.brandPrimary, brandSecondary: form.brandSecondary, brandAccent: form.brandAccent,
+        });
+        setConcepts(drawn.concepts);
+        setSubmitting(false);
+        setDrawingConcepts(false);
+        return;
+      } catch (e) {
+        // A failed draw must not block the signup — the generator's own choice
+        // is a perfectly good website, and it is what used to happen anyway.
+        setDrawingConcepts(false);
+        toast({
+          title: "Could not draw the previews",
+          description: e instanceof ApiError ? e.message : "We will pick the most different design for you.",
+        });
+      }
+    }
+
     try {
       const res = await api.post<{ business: BusinessWithMeta }>("/api/onboarding", {
         name: form.name.trim(),
@@ -476,6 +513,9 @@ export default function OnboardingView() {
         brandPrimary: form.brandPrimary,
         brandSecondary: form.brandSecondary,
         brandAccent: form.brandAccent,
+        // The concept the owner picked, when they picked one. The API uses it
+        // instead of choosing the most distinct genome on their behalf.
+        ...(conceptKey !== null ? { concept: conceptKey } : {}),
       });
       const biz = res.business;
       setBusiness(biz);
@@ -485,6 +525,7 @@ export default function OnboardingView() {
         description: `${biz.name} was created — ${TRIAL_LABEL} started.`,
       });
       setSuccess(biz);
+      setConcepts(null);
       window.scrollTo({ top: 0 });
     } catch (e) {
       const msg2 = e instanceof ApiError ? e.message : "Something went wrong. Please try again.";
@@ -493,6 +534,110 @@ export default function OnboardingView() {
     } finally {
       setSubmitting(false);
     }
+  }
+
+  // =============================================================== CONCEPTS
+
+  // Three drawn websites, rendered by the real site renderer in preview mode.
+  // Nothing has been created yet: the pick is what creates the site, with that
+  // genome.
+  if (concepts) {
+    return (
+      <div className="min-h-screen bg-background">
+        <style>{WIZARD_STYLES}</style>
+        <main className="mx-auto max-w-6xl px-4 py-10">
+          <div className="text-center">
+            <Badge className="rounded-full bg-emerald-100 text-emerald-800 hover:bg-emerald-100">
+              Drawn for {form.name.trim() || "your business"}
+            </Badge>
+            <h1 className="mt-4 text-3xl font-bold text-foreground">Three websites. Pick the one you like.</h1>
+            <p className="mx-auto mt-2 max-w-2xl text-sm text-muted-foreground">
+              Every one of these is a real website built from your details — same words, same services, different
+              design. The one you choose is the one you get, and you can change the look any time from your dashboard.
+            </p>
+          </div>
+
+          <div className="mt-8 grid gap-5 md:grid-cols-3">
+            {concepts.map((c) => (
+              <div
+                key={c.key}
+                className={cn(
+                  "overflow-hidden rounded-2xl border bg-card transition",
+                  conceptKey === c.key ? "border-emerald-600 ring-2 ring-emerald-600/30" : "border-border hover:border-emerald-300",
+                )}
+              >
+                <button
+                  type="button"
+                  onClick={() => setConceptKey(c.key)}
+                  className="block w-full text-left"
+                  aria-pressed={conceptKey === c.key}
+                >
+                  {/* The preview is the site itself, scaled down: the same
+                      renderer the customer's visitors will get. */}
+                  <div className="relative h-[320px] overflow-hidden border-b bg-white">
+                    <div className="pointer-events-none absolute left-0 top-0 h-[1100px] w-[1100px] origin-top-left scale-[0.36]">
+                      <SiteRenderer payload={c.payload} mode="preview" device="desktop" />
+                    </div>
+                  </div>
+                  <div className="p-4">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm font-bold text-foreground">
+                        {c.styleName}
+                        <span className="ml-1.5 text-xs font-medium text-muted-foreground">{c.colourName}</span>
+                      </p>
+                      <span className="flex gap-1">
+                        {[c.colors.primary, c.colors.secondary, c.colors.accent].map((hex) => (
+                          <span key={hex} className="h-4 w-4 rounded-full border" style={{ backgroundColor: hex }} />
+                        ))}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-[11px] text-muted-foreground">{c.character}</p>
+                    <div className="mt-2 flex flex-wrap gap-1.5 text-[10px]">
+                      <span className="rounded-full bg-muted px-2 py-0.5 font-medium text-muted-foreground">
+                        Score {c.quality}/100
+                      </span>
+                      <span className="rounded-full bg-muted px-2 py-0.5 font-medium text-muted-foreground">
+                        {c.uniqueness}% unlike your area&rsquo;s sites
+                      </span>
+                      <span className="rounded-full bg-muted px-2 py-0.5 font-medium text-muted-foreground">
+                        {c.motion.level <= 1 ? "No heavy animation" : c.motion.level >= 3 ? "Animated" : "Light animation"}
+                      </span>
+                    </div>
+                  </div>
+                </button>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-8 flex flex-col items-center gap-3">
+            <Button
+              size="lg"
+              className="h-12 w-full max-w-sm rounded-xl bg-emerald-600 text-base hover:bg-emerald-700"
+              disabled={conceptKey === null || submitting}
+              onClick={submitOnboarding}
+            >
+              {submitting ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <Sparkles className="mr-2 h-5 w-5" />}
+              {submitting ? "Building your website…" : "Build this one"}
+            </Button>
+            <button
+              type="button"
+              className="text-xs font-medium text-muted-foreground underline hover:text-foreground"
+              disabled={submitting}
+              onClick={() => {
+                // Nobody has to choose: the generator keeps the most distinct
+                // design, which is what it did before this step existed.
+                setConceptKey(null);
+                setConcepts(null);
+                setSubmitting(false);
+                void submitOnboarding();
+              }}
+            >
+              I can&rsquo;t decide — pick the one that suits my business
+            </button>
+          </div>
+        </main>
+      </div>
+    );
   }
 
   // =============================================================== SUCCESS
@@ -1231,15 +1376,19 @@ export default function OnboardingView() {
                     type="button"
                     size="lg"
                     onClick={submitOnboarding}
-                    disabled={submitting || industryLoading}
+                    disabled={submitting || drawingConcepts || industryLoading}
                     className="h-12 w-full rounded-xl bg-emerald-600 px-6 text-base font-semibold text-white shadow-lg shadow-emerald-600/25 hover:bg-emerald-700 sm:w-auto"
                   >
-                    {submitting ? (
+                    {submitting || drawingConcepts ? (
                       <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" />
                     ) : (
                       <Rocket className="h-5 w-5" aria-hidden="true" />
                     )}
-                    {submitting ? "Creating your website…" : "Create My Website"}
+                    {drawingConcepts
+                      ? "Drawing three designs for you…"
+                      : submitting
+                        ? "Creating your website…"
+                        : "Create My Website"}
                   </Button>
                   <p className="text-xs text-muted-foreground">
                     {TRIAL_LABEL} starts today — no payment now. Colours, photos, services and text can all be
@@ -1277,15 +1426,15 @@ export default function OnboardingView() {
                 <Button
                   type="button"
                   onClick={submitOnboarding}
-                  disabled={submitting}
+                  disabled={submitting || drawingConcepts}
                   className="rounded-xl bg-emerald-600 text-white hover:bg-emerald-700"
                 >
-                  {submitting ? (
+                  {submitting || drawingConcepts ? (
                     <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
                   ) : (
                     <Rocket className="h-4 w-4" aria-hidden="true" />
                   )}
-                  Create My Website 🚀
+                  {drawingConcepts ? "Drawing three designs…" : "Create My Website 🚀"}
                 </Button>
               )}
             </div>

@@ -184,7 +184,13 @@ export function blueprintFor(input: BlueprintInput): SiteBlueprint {
   const seed = input.seed || designSeed(input.name, input.city || "");
 
   // Independent streams: colours, layout, copy and order must not correlate.
-  const drawPalette = rng(seedFrom(`${seed}::palette`));
+  //
+  // The palette stream carries the attempt number, so the three genomes drawn
+  // for one business differ in colour as well as in type and layout — which is
+  // the whole point of offering three concepts to choose between. Attempt 0
+  // keeps the original stream, so nothing already built changes.
+  const attemptTag = input.attempt ? `:${input.attempt}` : "";
+  const drawPalette = rng(seedFrom(`${seed}::palette${attemptTag}`));
   const drawOrder = rng(seedFrom(`${seed}::order`));
   const drawServices = rng(seedFrom(`${seed}::services`));
 
@@ -305,6 +311,30 @@ export function blueprintFor(input: BlueprintInput): SiteBlueprint {
 }
 
 /** Hex-colour guard shared by every caller that accepts colours from a client. */
+/**
+ * The three genomes offered for one business (see lib/concepts.ts).
+ *
+ * Drawn in sequence, with each chosen palette added to the "already taken"
+ * list before the next one is drawn — otherwise one business's three concepts
+ * can share colours, and a choice between three websites that look the same is
+ * not a choice. Both the concept preview and the signup that rebuilds the
+ * chosen one call this, so "they picked concept 2" always means the same
+ * genome.
+ */
+export function candidateBlueprints(
+  input: Omit<BlueprintInput, "attempt" | "taken"> & { taken?: readonly string[] },
+  count = 3,
+): SiteBlueprint[] {
+  const taken: string[] = [...(input.taken ?? [])];
+  const out: SiteBlueprint[] = [];
+  for (let attempt = 0; attempt < count; attempt++) {
+    const blueprint = blueprintFor({ ...input, taken, attempt });
+    taken.push(blueprint.palette.join(","));
+    out.push(blueprint);
+  }
+  return out;
+}
+
 export function isHexColor(v: unknown): v is string {
   return typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v);
 }
