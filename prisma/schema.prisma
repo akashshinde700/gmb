@@ -407,6 +407,35 @@ model AuditLog {
   @@index([createdAt])
 }
 
+/// One provider attempt — what the AI manager routed where, and what it cost.
+///
+/// Every call to a model is recorded, including the failures: the whole point of
+/// the provider chain is that a provider can be rate-limited, overloaded or
+/// out of credit without the customer noticing, and the only way to know that is
+/// happening is to count it.
+model LlmUsage {
+  id         String   @id @default(cuid())
+  /// What was being written: content | copy | seo | faq | chat.
+  task       String   @default("content")
+  provider   String
+  model      String   @default("")
+  ok         Boolean  @default(true)
+  /// How long the attempt took, whether or not it succeeded.
+  latencyMs  Int      @default(0)
+  tokensIn   Int      @default(0)
+  tokensOut  Int      @default(0)
+  /// Estimated, from the price table — not a bill.
+  costUsd    Float    @default(0)
+  /// First line of the failure, for the admin view.
+  error      String   @default("")
+  businessId String   @default("")
+  createdAt  DateTime @default(now())
+
+  @@index([provider, createdAt])
+  @@index([task, createdAt])
+  @@index([createdAt])
+}
+
 /// A customer's own domain pointed at their WebSetu site.
 ///
 /// The hostname is the routing key: `proxy.ts` looks up the incoming Host

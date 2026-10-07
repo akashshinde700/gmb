@@ -10,7 +10,7 @@ export type View = "home" | "auth" | "onboarding" | "dashboard" | "admin" | "sit
 export type DashboardTab =
   | "overview" | "builder" | "business" | "services" | "products" | "gallery"
   | "testimonials" | "faqs" | "blog" | "leads" | "seo" | "analytics" | "subscription" | "settings";
-export type AdminTab = "overview" | "customers" | "plans" | "templates" | "coupons" | "leads" | "blog" | "appearance" | "domains";
+export type AdminTab = "overview" | "customers" | "plans" | "templates" | "coupons" | "leads" | "blog" | "appearance" | "domains" | "ai";
 
 export interface BusinessWithMeta extends Business {
   website: WebsiteData | null;

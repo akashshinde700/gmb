@@ -74,6 +74,10 @@ export const POST = route(async (req: Request) => {
         instruction,
       }),
       maxTokens: 700,
+      // One section's words: short, and it has to sound like a person wrote it —
+      // a different list of providers from the whole-site copy.
+      task: "copy",
+      businessId: business.id,
     });
     if (!written) throw new HttpError(COPY_UNAVAILABLE, 503);
     const withCopy = applyCopy(next, written.content ?? {});

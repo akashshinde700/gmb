@@ -30,49 +30,16 @@
 // configured (or all failing) `generateJson` returns null and the caller keeps
 // its deterministic fallback: the feature degrades, it never breaks.
 
-export type LlmProvider =
-  | "custom" | "groq" | "openrouter" | "gemini" | "zai"
-  | "nvidia" | "openai" | "anthropic" | "ollama" | "none";
+import { PROVIDER_ORDER, activeProvider, providerChain, type LlmProvider } from "@/lib/llm-chain";
+import { chainForTask, estimateTokens, estimateCost, TASK_PROFILES, type LlmTask } from "@/lib/llm-router";
+export type { LlmTask };
+export { TASK_PROFILES, chainForTask };
+import { recordUsage } from "@/lib/llm-usage";
 
-/** Cheapest-first: free providers are tried before paid ones. */
-const PROVIDER_ORDER: { provider: LlmProvider; env: string }[] = [
-  // An explicitly configured endpoint is a deliberate choice, so it goes first.
-  { provider: "custom", env: "CUSTOM_LLM_BASE_URL" },
-  // Groq leads the free providers: measured on the real prompt it answered in
-  // 2.9s with a dedicated free tier (30 RPM / 14,400 per day), against
-  // OpenRouter's shared pool and Gemini's 503s under load.
-  { provider: "groq", env: "GROQ_API_KEY" },
-  { provider: "openrouter", env: "OPENROUTER_API_KEY" },
-  { provider: "gemini", env: "GEMINI_API_KEY" },
-  // Z.ai's Flash models are free but slow — 16s on the real prompt — so they
-  // sit behind the quicker free tiers rather than in front of them.
-  { provider: "zai", env: "ZAI_API_KEY" },
-  { provider: "nvidia", env: "NVIDIA_API_KEY" },
-  { provider: "openai", env: "OPENAI_API_KEY" },
-  { provider: "anthropic", env: "ANTHROPIC_API_KEY" },
-  { provider: "ollama", env: "OLLAMA_URL" },
-];
-
-/**
- * Every provider that can be tried, in the order they will be tried.
- * `LLM_PROVIDER` pins the chain to one provider (or disables it with "none").
- */
-export function providerChain(): LlmProvider[] {
-  const forced = (process.env.LLM_PROVIDER || "").trim().toLowerCase();
-  if (forced === "none") return [];
-  if (forced) {
-    const match = PROVIDER_ORDER.find((p) => p.provider === forced);
-    // A pinned provider is used even if its key is missing, so a typo surfaces
-    // as a loud failure rather than silently falling through to another one.
-    if (match) return [match.provider];
-  }
-  return PROVIDER_ORDER.filter((p) => process.env[p.env]).map((p) => p.provider);
-}
-
-/** The provider that will be tried first — what the UI and credit check use. */
-export function activeProvider(): LlmProvider {
-  return providerChain()[0] ?? "none";
-}
+// The chain of providers is defined in lib/llm-chain.ts; re-exported here so
+// callers and tests keep importing the adapter they already know.
+export { PROVIDER_ORDER, activeProvider, providerChain };
+export type { LlmProvider };
 
 /** Model per provider — overridable with LLM_MODEL. */
 function modelFor(provider: LlmProvider): string {
@@ -362,18 +329,30 @@ async function generateWith<T>(
 }
 
 /**
- * Ask the configured providers for a JSON object, in order, stopping at the
- * first that answers. Returns null when none is configured or all fail — the
- * caller must always have its own fallback.
+ * Ask the providers for a JSON object, in order, stopping at the first that
+ * answers. Returns null when none is configured or all fail — the caller must
+ * always have its own fallback.
+ *
+ * Which providers, in which order, is the AI manager's decision (lib/llm-router),
+ * made per task: the whole site's copy and one section's rewrite are different
+ * jobs with different right answers. Every attempt — including the failures — is
+ * recorded, because a chain that hides its failures should at least count them.
  */
 export async function generateJson<T>(opts: {
   system: string;
   prompt: string;
   maxTokens?: number;
+  /** What is being written; decides the routing. Defaults to the site copy. */
+  task?: LlmTask;
+  /** Whose website this is for, so the usage can be attributed. */
+  businessId?: string;
 }): Promise<{ content: T; provider: LlmProvider; model: string } | null> {
-  const chain = providerChain();
+  const task: LlmTask = opts.task ?? "content";
+  const chain = await chainForTask(task);
   if (!chain.length) return null;
 
+  const maxTokens = opts.maxTokens ?? TASK_PROFILES[task]?.maxTokens;
+  const tokensIn = estimateTokens(opts.system) + estimateTokens(opts.prompt);
   const deadline = Date.now() + BUDGET_MS;
   for (const provider of chain) {
     const left = deadline - Date.now();
@@ -383,11 +362,25 @@ export async function generateJson<T>(opts: {
       console.error(`[llm] out of time after ${provider === chain[0] ? "first" : "previous"} provider — using template copy`);
       return null;
     }
+    const started = Date.now();
     try {
-      return await generateWith<T>(provider, opts, left);
+      const result = await generateWith<T>(provider, { ...opts, maxTokens }, left);
+      const ms = Date.now() - started;
+      const tokensOut = estimateTokens(JSON.stringify(result.content ?? ""));
+      void recordUsage({
+        task, provider, model: result.model, ok: true, latencyMs: ms,
+        tokensIn, tokensOut, costUsd: estimateCost(provider, tokensIn, tokensOut),
+        businessId: opts.businessId,
+      });
+      return result;
     } catch (e) {
       // Provider errors never reach the customer; the next one gets a turn.
-      console.error(`[llm] ${provider} failed:`, e instanceof Error ? e.message : e);
+      const message = e instanceof Error ? e.message : String(e);
+      console.error(`[llm] ${provider} failed:`, message);
+      void recordUsage({
+        task, provider, model: modelFor(provider), ok: false, latencyMs: Date.now() - started,
+        tokensIn, error: message, businessId: opts.businessId,
+      });
     }
   }
   return null;

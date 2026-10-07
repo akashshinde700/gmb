@@ -177,7 +177,15 @@ Return this exact JSON structure:
   // With none configured this returns null and the industry preset copy below is
   // used — the wizard never blocks on the model being reachable.
   const generated = providerReady
-    ? await generateJson<AiSiteContent>({ system: systemPrompt, prompt: userPrompt, maxTokens: 2400 })
+    ? await generateJson<AiSiteContent>({
+        system: systemPrompt,
+        prompt: userPrompt,
+        maxTokens: 2400,
+        // The AI manager routes this one by task: the whole site's copy is a long,
+        // strictly-shaped job and gets the providers that return complete JSON.
+        task: "content",
+        businessId: business?.id ?? "",
+      })
     : null;
   const content: AiSiteContent | null = generated?.content ? cleanAi(generated.content) : null;
 

@@ -13,7 +13,7 @@ import {
   LogOut, BadgeCheck, Ban, CalendarX2, Check, Crown, Download, ExternalLink,
   Globe, Inbox, Layers, LayoutDashboard, LayoutTemplate, Loader2, Menu, MoreVertical,
   Pencil, Plus, Power, RotateCcw, Search, TicketPercent, Timer, Trash2, TrendingUp,
-  KeyRound, LogIn, MessageSquare, Newspaper, Palette, Sparkles, UserPlus, Users, Wallet, type LucideIcon,
+  KeyRound, LogIn, MessageSquare, Newspaper, Palette, Sparkles, UserPlus, Users, Wallet, Cpu, type LucideIcon,
 } from "lucide-react";
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api } from "@/lib/api-client";
@@ -207,6 +207,7 @@ const NAV: { id: AdminTab; label: string; icon: LucideIcon }[] = [
   { id: "blog", label: "Blog", icon: Newspaper },
   { id: "appearance", label: "Appearance", icon: Palette },
   { id: "domains", label: "Domains", icon: Globe },
+  { id: "ai", label: "AI Manager", icon: Cpu },
 ];
 
 export default function AdminView() {
@@ -295,6 +296,7 @@ export default function AdminView() {
           {adminTab === "leads" && <PlatformLeadsTab />}
           {adminTab === "blog" && <BlogTab />}
           {adminTab === "appearance" && <AppearanceTab />}
+          {adminTab === "ai" && <AiManagerTab />}
           {adminTab === "domains" && <DomainRequestsTab />}
         </main>
 
@@ -3227,6 +3229,214 @@ const EMPTY_PALETTE = {
  * pages use. Selecting a platform palette applies it immediately — there is no
  * separate save step.
  */
+/**
+ * The AI manager: which providers are configured, what each kind of work is
+ * routed to, how much of every free tier is left today, and what has been
+ * failing.
+ *
+ * Read entirely from the recorded attempts. The environment variables say what
+ * *should* work; this says what did.
+ */
+interface AiUsage {
+  configured: string[];
+  firstChoice: string;
+  local: { task: string; note: string }[];
+  totals: { calls7d: number; failures7d: number; costUsd7d: number; costInr7d: number; perGenerationUsd: number };
+  services: {
+    provider: string; env: string; configured: boolean; budget: number | null; price: string;
+    usedToday: number; leftToday: number | null; calls7d: number; failures7d: number; avgMs: number;
+    costUsd7d: number; lastError: string; inChain: boolean;
+  }[];
+  tasks: { task: string; label: string; order: string[]; calls7d: number; failures7d: number; costUsd7d: number; servedBy: string }[];
+}
+
+function AiManagerTab() {
+  const [data, setData] = useState<AiUsage | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      setData(await api.get<AiUsage>("/api/admin/ai-usage"));
+      setError("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not read the AI usage");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void load();
+  }, [load]);
+
+  if (loading) {
+    return <div className="space-y-3"><Skeleton className="h-24 rounded-2xl" /><Skeleton className="h-64 rounded-2xl" /></div>;
+  }
+  if (error || !data) {
+    return (
+      <Card className="rounded-2xl">
+        <CardContent className="flex items-center justify-between gap-3 p-5">
+          <p className="text-sm text-muted-foreground">{error || "No data"}</p>
+          <Button size="sm" variant="outline" onClick={load}>Try again</Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const percent = (calls: number, failures: number) => (calls ? Math.round((failures / calls) * 100) : 0);
+
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-4 sm:grid-cols-3">
+        <Card className="rounded-2xl">
+          <CardHeader className="pb-2"><CardDescription>Model calls (7 days)</CardDescription></CardHeader>
+          <CardContent>
+            <p className="text-2xl font-bold text-foreground">{data.totals.calls7d.toLocaleString("en-IN")}</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {data.totals.failures7d} failed silently and moved to the next provider
+            </p>
+          </CardContent>
+        </Card>
+        <Card className="rounded-2xl">
+          <CardHeader className="pb-2"><CardDescription>Estimated model spend</CardDescription></CardHeader>
+          <CardContent>
+            <p className="text-2xl font-bold text-foreground">₹{data.totals.costInr7d.toFixed(2)}</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              ${data.totals.costUsd7d.toFixed(4)} · about ${data.totals.perGenerationUsd.toFixed(4)} per website
+            </p>
+          </CardContent>
+        </Card>
+        <Card className="rounded-2xl">
+          <CardHeader className="pb-2"><CardDescription>First choice right now</CardDescription></CardHeader>
+          <CardContent>
+            <p className="text-2xl font-bold capitalize text-foreground">{data.firstChoice}</p>
+            <p className="mt-1 text-xs text-muted-foreground">{data.configured.length} provider(s) configured</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card className="rounded-2xl">
+        <CardHeader>
+          <CardTitle className="text-base">Providers</CardTitle>
+          <CardDescription>
+            Order is set per task below. A provider that is out of quota or failing is skipped without the customer
+            noticing — this is the only place it shows.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="overflow-x-auto">
+          <table className="w-full min-w-[760px] text-left text-sm">
+            <thead className="text-xs uppercase tracking-wider text-muted-foreground">
+              <tr>
+                <th className="pb-2">Provider</th>
+                <th className="pb-2">Key</th>
+                <th className="pb-2">Today</th>
+                <th className="pb-2">7 days</th>
+                <th className="pb-2">Failures</th>
+                <th className="pb-2">Avg time</th>
+                <th className="pb-2">Cost</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.services.map((s) => (
+                <tr key={s.provider} className="border-t border-border">
+                  <td className="py-2">
+                    <span className="font-medium capitalize text-foreground">{s.provider}</span>
+                    {s.configured && s.leftToday !== null && s.leftToday <= 0 && (
+                      <span className="ml-2 text-[10px] text-amber-700">over quota — routed around</span>
+                    )}
+                    {s.lastError && (
+                      <span className="block max-w-[260px] truncate text-[10px] text-red-600" title={s.lastError}>
+                        last: {s.lastError}
+                      </span>
+                    )}
+                  </td>
+                  <td className="py-2">
+                    <Badge variant={s.configured ? "secondary" : "outline"} className="rounded-full text-[10px]">
+                      {s.configured ? "set" : s.env}
+                    </Badge>
+                  </td>
+                  <td className="py-2 text-muted-foreground">
+                    {s.usedToday}
+                    {s.budget !== null ? ` / ${s.budget}` : ""}
+                    {s.leftToday !== null && s.leftToday <= 0 && <span className="ml-1 text-red-600">empty</span>}
+                  </td>
+                  <td className="py-2 text-muted-foreground">{s.calls7d}</td>
+                  <td className="py-2">
+                    <span className={percent(s.calls7d, s.failures7d) > 30 ? "text-red-600" : "text-muted-foreground"}>
+                      {s.failures7d}
+                      {s.calls7d > 0 ? ` (${percent(s.calls7d, s.failures7d)}%)` : ""}
+                    </span>
+                  </td>
+                  <td className="py-2 text-muted-foreground">{s.avgMs ? `${(s.avgMs / 1000).toFixed(1)}s` : "—"}</td>
+                  <td className="py-2 text-muted-foreground">{s.price}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
+
+      <Card className="rounded-2xl">
+        <CardHeader>
+          <CardTitle className="text-base">What each job is routed to</CardTitle>
+          <CardDescription>
+            A long, strictly-shaped website copy is not the same job as rewriting one headline, so they do not get the
+            same list.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {data.tasks.map((t) => (
+            <div key={t.task} className="rounded-xl border border-border p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm font-medium text-foreground">{t.label}</p>
+                <p className="text-xs text-muted-foreground">
+                  {t.calls7d} call(s) in 7 days{t.failures7d ? ` · ${t.failures7d} failed` : ""}
+                  {t.servedBy ? ` · mostly ${t.servedBy}` : ""}
+                </p>
+              </div>
+              <ol className="mt-2 flex flex-wrap gap-1.5 text-[11px]">
+                {t.order.map((provider, i) => (
+                  <li key={provider} className="flex items-center gap-1.5">
+                    <span
+                      className={`rounded-full px-2 py-0.5 font-medium capitalize ${
+                        i === 0 ? "bg-emerald-100 text-emerald-800" : "bg-muted text-muted-foreground"
+                      }`}
+                    >
+                      {provider}
+                    </span>
+                    {i < t.order.length - 1 && <span className="text-muted-foreground">→</span>}
+                  </li>
+                ))}
+                {t.order.length === 0 && <li className="text-muted-foreground">No provider configured — the deterministic copy is used.</li>}
+              </ol>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+
+      <Card className="rounded-2xl">
+        <CardHeader>
+          <CardTitle className="text-base">What never reaches a model</CardTitle>
+          <CardDescription>
+            The expensive parts of the pipeline are local and deterministic: instant, free, and they cannot fail on a
+            bad network.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-2 sm:grid-cols-3">
+          {data.local.map((l) => (
+            <div key={l.task} className="rounded-xl bg-muted p-3">
+              <p className="text-sm font-medium capitalize text-foreground">{l.task}</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">{l.note}</p>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 function AppearanceTab() {
   const storeTheme = useApp((s) => s.platformTheme);
   const setPlatformTheme = useApp((s) => s.setPlatformTheme);
